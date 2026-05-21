@@ -1,0 +1,549 @@
+KIA DMS AUTOMATION PROJECT CONTEXT
+Last updated: 2026-05-21
+
+Purpose
+This file is the living context file for the KIA DMS automation project.
+Update this file whenever a new cron/report feature is added, report navigation changes, storage behavior changes, or testing mode changes.
+
+Do not store secrets in this file.
+Do not paste passwords, bot tokens, Supabase keys, OTPs, or private URLs here.
+
+
+CURRENT ARCHITECTURE
+
+Stack:
+- Node.js
+- Playwright
+- Express webhook server for Android SMS Forwarder OTP
+- dotenv
+- node-cron
+- Supabase JS SDK
+- xlsx parser
+
+Main runtime flow:
+1. Login to KIA DMS using Playwright.
+2. Use saved browser storage state when possible.
+3. If login needs OTP, OTP is received through the local webhook server.
+4. Run selected report modules in the authenticated browser session.
+   - KIA DMS reports require KIA DMS login and OTP/session handling.
+   - External reports such as RSA Report can skip KIA DMS login and open their own portal session.
+5. Parse downloaded Excel files.
+6. Store report data into Supabase table:
+   public.business_excellence_am_kia_new
+
+Supabase storage model:
+- One row per report/sheet.
+- brand = kia
+- sheet_name identifies the report dataset.
+- headers stores JSON array of column headers.
+- rows stores JSON array of row objects.
+- uploaded_at is refreshed on every successful update.
+- Existing sheet rows are merged by brand + sheet_name.
+- Existing data must not be removed or replaced during normal report uploads.
+- Incoming rows are compared against existing rows using a stable row signature.
+- Only rows that are not already present are appended.
+- Duplicate incoming rows are skipped.
+- Headers are preserved and extended with any new incoming columns.
+
+
+IMPORTANT CONFIG
+
+Primary config file:
+- .env
+
+Example config file:
+- .env.example
+
+Config update policy:
+- For active development/testing changes, update .env directly.
+- Do not rely on .env.example for runtime behavior.
+- Keep .env.example as documentation/template only unless the user explicitly asks to update it.
+- Never print or store real secrets in PROJECT_CONTEXT.txt.
+
+Important report selection setting:
+- REPORTS_TO_RUN
+
+Current development/testing mode:
+- REPORTS_TO_RUN defaults to rsa-report.
+- This means only the new RSA Report runs during testing.
+- Sequential all-report execution is temporarily disabled for faster development.
+
+To restore all reports later:
+- Set REPORTS_TO_RUN=all
+
+To run selected reports only:
+- Use comma-separated report ids.
+- Example:
+  REPORTS_TO_RUN=ro-billing,kia-call-center-complaints,open-ro-yearly,psf-yearly,ew-report,mcp-report,rsa-report
+
+
+PAGINATION / LOCAL EXPORT POLICY
+
+All report modules should use the shared paged export flow when exporting Kendo grids.
+
+Shared helper:
+- src/reports/paged-export.js
+
+Behavior:
+1. Detect visible Kendo pager.
+2. Export page 1.
+3. If more pages exist, move through each page and export every page separately.
+4. Save page exports temporarily under downloads/report-chunks/.
+5. Parse and merge all exported Excel files.
+6. Normalize headers by preserving first-seen header order.
+7. Upsert the merged dataset into Supabase.
+8. Delete local export folder only after Supabase upload succeeds.
+9. If upload fails, keep local export files for debugging.
+
+
+OTP / WEBHOOK FLOW
+
+OTP provider:
+- Android SMS Forwarder sends SMS text to the Express webhook.
+- The webhook extracts the OTP using the configured OTP regex.
+- Login waits for OTP from the webhook provider.
+
+Webhook server command:
+- npm run otp:webhook
+
+Main report/login command:
+- npm run reports
+
+
+REPORT MODULES
+
+1. RO Billing Report
+
+Report id:
+- ro-billing
+
+Sheet name:
+- RO Billing Report March 25
+
+Navigation:
+- Service MIS sidebar
+- Repair Billing
+- R/O Billing Report
+
+Key selectors:
+- Start date: #sBillDateFromDate
+- End date: #sBillDateToDate
+- Search: #btnSearch
+- Excel export: a.k-grid-excel
+
+Date logic:
+- End date = current execution date.
+- Start date = one month before + one day.
+
+Storage:
+- Uses shared paged export flow.
+- Temporary page exports are deleted after successful Supabase upload.
+
+Status:
+- Working.
+
+
+2. Kia Call Center Complaints
+
+Report id:
+- kia-call-center-complaints
+
+Sheet name:
+- Kia call center complaints
+
+Navigation:
+- CRM sidebar
+- Complaint
+- KIN Call Center Complaint List
+
+Menu selector:
+- data-viewid="VIEW-D-00721"
+- data-url="/crm/crmb/selectHmiCallCenterComplaintList.dms"
+- data-title="KIN Call Center Complaint List"
+
+Filters:
+- Business Type = Service
+- Start date: #sCompStartDate
+- End date: #sCompEndDate
+
+Date logic:
+- End date = current execution date.
+- Start date = exactly three months before current execution date.
+
+Storage:
+- Uses shared paged export flow.
+- Temporary page exports are deleted after successful Supabase upload.
+
+Status:
+- Implemented.
+
+
+3. Open RO Yearly
+
+Report id:
+- open-ro-yearly
+
+Sheet name:
+- Open RO Yearly
+
+Navigation:
+- Service MIS sidebar
+- Repair Order
+- Repair Order List
+
+Menu selector:
+- li.nav_ser_mis
+- data-viewid="VIEW-D-00608"
+- data-url="/mis/misc/selectRepairOrderListMain.dms"
+- data-title="Repair Order List"
+
+Filters:
+- R/O Status = Open
+- Start date: #sRoDateFromDate
+- End date: #sRoDateToDate
+
+Date logic:
+- Start date = 2025-03-01 by default.
+- End date = current execution date.
+- Date ranges are split into 30-day inclusive chunks because the portal rejects larger ranges.
+- Example:
+  2025-03-01 to 2025-03-30
+  2025-03-31 to 2025-04-29
+  2025-04-30 to 2025-05-29
+
+Important date-entry behavior:
+- Fill end date first, then start date.
+- This prevents the portal from briefly seeing start date greater than end date and clearing the field.
+
+Local chunk storage:
+- Chunk files are temporarily saved under:
+  downloads/report-chunks/open-ro-yearly/YYYY-MM-DD/
+
+Chunk filename example:
+- open_ro_2025_03_01_to_2025_03_30.xlsx
+
+Post-processing:
+- Each 30-day chunk may also have multiple Kendo pages.
+- Export every page for every chunk.
+- Parse every exported chunk/page file.
+- Merge rows into a single dataset.
+- Normalize headers by preserving first-seen header order.
+- Upload merged dataset to Supabase sheet_name = Open RO Yearly.
+- After Supabase upload succeeds, delete the local chunk folder.
+- If Supabase upload fails, keep local chunk files for debugging.
+
+Status:
+- Working after date-entry fix.
+
+
+4. PSF Yearly
+
+Report id:
+- psf-yearly
+
+Sheet name:
+- PSF Yearly
+
+Navigation:
+- Service MIS sidebar
+- Customer Followup / Report
+- Post Service Follow Up Report
+
+Menu selector:
+- li.nav_ser_mis
+- data-viewid="VIEW-D-00591"
+- data-url="/mis/misc/selectPostServiceFollowUpReportMain.dms"
+- data-title="Post Service Follow Up Report"
+
+Filters:
+- Start date: #sRODateFromDate
+- End date: #sRODateToDate
+
+Date logic:
+- End date = current execution date.
+- Start date = exactly two months before current execution date.
+- The selected date range should not exceed two months.
+- The portal rejects date ranges greater than 30 days, so the two-month range is split into 30-day inclusive chunks.
+- Example:
+  2026-03-21 to 2026-04-19
+  2026-04-20 to 2026-05-19
+  2026-05-20 to 2026-05-21
+
+Pagination:
+- Uses shared paged export flow.
+- Exports every visible Kendo grid page separately for each date chunk.
+- Example temporary filenames:
+  psf_yearly_YYYY-MM-DD_to_YYYY-MM-DD_page_1.xlsx
+  psf_yearly_YYYY-MM-DD_to_YYYY-MM-DD_page_2.xlsx
+
+Storage:
+- Merge exported chunk/page files.
+- Upload merged dataset to Supabase sheet_name = PSF Yearly.
+- Delete local export files after successful Supabase upload.
+- Uses grouped-header parsing because the PSF Excel has multi-row Kendo grid headers.
+
+Status:
+- Implemented with 30-day chunking and grouped-header parsing. Needs live portal retest.
+
+
+5. EW Report
+
+Report id:
+- ew-report
+
+Sheet name:
+- EW Report
+
+Navigation:
+- Service MIS sidebar
+- Ext. Warranty
+- Extended Warranty Report
+
+Menu selector:
+- li.nav_ser_mis
+- data-viewid="VIEW-D-00592"
+- data-url="/mis/misc/selectExtendedWarrantyReportMain.dms"
+- data-title="Extended Warranty Report"
+
+Filters:
+- Regional dropdown remains as currently selected in portal, expected North.
+- Regional field DOM: #sDlrmRgnOfceNo
+- Start date: #sRegDateFromDate
+- End date: #sRegDateToDate
+
+Date logic:
+- Start date = first day of current month.
+- End date = current execution date.
+- Example for 2026-05-21:
+  2026-05-01 to 2026-05-21
+
+Pagination:
+- Uses shared paged export flow.
+- Exports every visible Kendo grid page separately.
+
+Storage:
+- Merge exported page files.
+- Upload merged dataset to Supabase sheet_name = EW Report.
+- Delete local export files after successful Supabase upload.
+
+Status:
+- Implemented. Needs live portal test.
+
+
+6. MCP Report
+
+Report id:
+- mcp-report
+
+Sheet name:
+- MCP Report
+
+Navigation:
+- Service sidebar
+- My Convenience
+- My Convenience List
+
+Menu selector:
+- li.nav_ser
+- data-viewid="VIEW-D-01182"
+- data-url="/ser/serf/selectMyConvenienceListMain.dms"
+- data-title="My Convenience List"
+
+Filters:
+- Regional dropdown remains as currently selected in portal, expected North.
+- Regional field DOM: #sDlrmRgnOfceNo
+- Start date: #sFromRegDate
+- End date: #sToRegDate
+
+Date logic:
+- Start date = first day of current month.
+- End date = current execution date.
+- Example for 2026-05-21:
+  2026-05-01 to 2026-05-21
+
+Pagination:
+- Uses shared paged export flow.
+- Exports every visible Kendo grid page separately.
+
+Storage:
+- Merge exported page files.
+- Upload merged dataset to Supabase sheet_name = MCP Report.
+- Existing sheet data is preserved; only new non-duplicate rows are appended.
+- Delete local export files after successful Supabase upload.
+
+Status:
+- Implemented. Needs live portal test.
+
+
+7. RSA Report
+
+Report id:
+- rsa-report
+
+Sheet name:
+- RSA Report
+
+Portal:
+- https://kia.awpassistance.in/report
+
+Login:
+- Uses RSA_USER_ID and RSA_PASSWORD from .env.
+- No OTP is required.
+- Uses separate browser storage state:
+  ./storage/rsa-portal-state.json
+- When only rsa-report is selected, scheduler skips KIA DMS login entirely.
+- If the portal shows a concurrent session warning, search for any visible Logout from everywhere button, click it, wait for the modal to close, then click Login again.
+- Concurrent-session handling should be button-first because the modal wrapper/text can vary between RSA portal builds.
+
+Navigation:
+- After login, let the RSA dashboard load.
+- Click the Report link/button from the dashboard.
+- Do not force /report immediately after concurrent-session logout because the app returns to login first.
+- Prioritize dashboard/header selectors:
+  a[href="/report"]:has-text("Report")
+  a[text-content="Report"]
+  nx-header-navigation a:has-text("Report")
+- Do not treat generic inputs as proof that the report interface loaded.
+- The RSA report page is considered ready only when .nx-dropdown__container is visible.
+
+Report type:
+- Dropdown container: .nx-dropdown__container
+- Select option: Policy Sale Detailed Report
+
+Date fields:
+- Start date: #nx-input-0
+- End date: #nx-input-1
+- After selecting Policy Sale Detailed Report, the portal does a small async reload before date fields are usable.
+- Wait for loaders/network plus RSA_REPORT_PAGE_LOAD_DELAY_MS before filling dates.
+- If fixed nx-input ids are not visible, fall back to the first two visible non-login inputs on the report filter form.
+
+Date format:
+- MM/DD/YYYY
+
+Date logic:
+- Start date = first day of current month.
+- End date = current execution date.
+- Example for 2026-05-21:
+  05/01/2026 to 05/21/2026
+
+Search:
+- Click GET DETAILS.
+- Wait for network/loaders.
+- Additional wait comes from RSA_REPORT_POST_SEARCH_DELAY_MS because the table loads asynchronously.
+- RSA flow uses human-like random pauses and slow typing to reduce captcha triggers.
+- Timing config:
+  RSA_HUMAN_DELAY_MIN_MS
+  RSA_HUMAN_DELAY_MAX_MS
+  RSA_TYPING_DELAY_MS
+- Captcha handling is a manual pause, not a bypass.
+- If a visible reCAPTCHA image challenge appears, the automation waits for the user to solve it and then continues.
+- Captcha wait config:
+  RSA_CAPTCHA_TIMEOUT_MS
+- RSA can run with a reusable browser identity:
+  RSA_USE_PERSISTENT_PROFILE=true
+  RSA_USER_DATA_DIR=./storage/rsa-chrome-profile
+- RSA can also attach to an already-running Chrome if Chrome is started with remote debugging and RSA_CDP_ENDPOINT is set.
+- When attached through CDP, the automation leaves the active Chrome session open after the run.
+
+Pagination:
+- Uses RSA-specific generic pagination handling, not Kendo.
+- Exports every page separately with the Export button.
+
+Storage:
+- Merge exported page files.
+- Upload merged dataset to Supabase sheet_name = RSA Report.
+- Existing sheet data is preserved; only new non-duplicate rows are appended.
+- Delete local export files after successful Supabase upload.
+
+Status:
+- Implemented with concurrent-session handling, human pacing, manual captcha pause, and reusable browser profile/CDP attach support. Needs live portal test.
+
+
+KEY FILES
+
+Config:
+- src/config.js
+- .env
+- .env.example
+
+Login:
+- src/auth/login.js
+
+Cron scheduler:
+- src/cron/scheduler.js
+
+Navigation:
+- src/navigation/kia-menu.js
+
+Report registry:
+- src/reports/index.js
+
+Report modules:
+- src/reports/ro-billing.js
+- src/reports/kia-call-center-complaints.js
+- src/reports/open-ro-yearly.js
+- src/reports/psf-yearly.js
+- src/reports/ew-report.js
+- src/reports/mcp-report.js
+- src/reports/rsa-report.js
+
+Common report helpers:
+- src/reports/report-actions.js
+- src/reports/grid.js
+- src/reports/excel-to-supabase.js
+- src/reports/paged-export.js
+
+Excel parser:
+- src/excel/parse-workbook.js
+- Handles normal one-row headers and grouped two-row Excel headers.
+- For grouped headers, merged cells are filled first, then child/subheaders are used as final column names.
+- Example: PSF grouped headers become RO No, RO Dealer, RO Date, VIN, Name, Mobile, etc. instead of Column 3/Column 4.
+
+Supabase:
+- src/supabase/client.js
+- src/supabase/report-store.js
+
+OTP webhook:
+- src/otp/webhook-server.js
+- src/otp/webhook-client.js
+
+
+DEVELOPMENT NOTES
+
+When adding a new report:
+1. Add navigation helper in src/navigation/kia-menu.js if needed.
+2. Add a report module under src/reports/.
+3. Register the report in src/reports/index.js with a stable id.
+4. Add config values in src/config.js and update .env for active testing.
+5. Store results through the existing Supabase report-store flow unless explicitly requested otherwise.
+6. Run npm run check.
+7. Update this PROJECT_CONTEXT.txt file with:
+   - report id
+   - sheet name
+   - navigation path
+   - selectors
+   - date logic
+   - storage behavior
+   - status
+
+Current testing preference:
+- While remaining report crons are being built, run only the report currently under development.
+- Avoid forcing all completed reports to run sequentially during development.
+- Restore sequential all-report behavior after all remaining crons are built and tested.
+
+Delay policy:
+- Intentional per-step sleeps/waits should be 5000ms or less.
+- The config helper caps report post-search/page-load/chunk delays at 5000ms even if a higher value is placed in .env.
+- Long selector/network/login/captcha timeouts may remain higher because they are failure guards or manual-solve windows, not intentional pacing delays.
+
+
+VALIDATION COMMANDS
+
+Syntax check:
+- npm run check
+
+Run selected report flow once:
+- npm run reports
+
+Start OTP webhook server:
+- npm run otp:webhook

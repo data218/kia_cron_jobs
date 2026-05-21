@@ -1,0 +1,25 @@
+{
+  "name": "kia-dms-cron-job",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "login": "node src/auth/login.js",
+    "start": "node src/otp/webhook-server.js",
+    "cron": "node src/cron/scheduler.js",
+    "cron:once": "node src/cron/scheduler.js --once",
+    "reports": "node src/cron/scheduler.js --once",
+    "telegram:test": "node src/telegram/test-otp.js",
+    "telegram:updates": "node src/telegram/inspect-updates.js",
+    "otp:webhook": "node src/otp/webhook-server.js",
+    "check": "node --check src/auth/login.js && node --check src/cron/scheduler.js && node --check src/config.js && node --check src/playwright/browser.js && node --check src/playwright/selectors.js && node --check src/playwright/frame-resolver.js && node --check src/navigation/kia-menu.js && node --check src/excel/parse-workbook.js && node --check src/supabase/client.js && node --check src/supabase/report-store.js && node --check src/reports/index.js && node --check src/reports/ro-billing.js && node --check src/reports/kia-call-center-complaints.js && node --check src/reports/open-ro-yearly.js && node --check src/reports/psf-yearly.js && node --check src/reports/ew-report.js && node --check src/reports/mcp-report.js && node --check src/reports/rsa-report.js && node --check src/reports/paged-export.js && node --check src/reports/report-actions.js && node --check src/reports/excel-to-supabase.js && node --check src/reports/grid.js && node --check src/telegram/client.js && node --check src/telegram/otp-provider.js && node --check src/telegram/test-otp.js && node --check src/telegram/inspect-updates.js && node --check src/utils/logger.js && node --check src/utils/retry.js && node --check src/utils/otp.js && node --check src/utils/date-range.js && node --check src/otp/manual.js && node --check src/otp/file.js && node --check src/otp/webhook-client.js && node --check src/otp/webhook-server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.106.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-cron": "^3.0.3",
+    "playwright": "^1.49.1",
+    "xlsx": "^0.18.5"
+  }
+}

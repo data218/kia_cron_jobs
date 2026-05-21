@@ -1,0 +1,555 @@
+KIA DMS OTP AUTOMATION SETUP GUIDE
+==================================
+
+This guide explains every manual step you need to complete before the automation can log in to KIA DMS automatically.
+
+
+1. INSTALL NODE DEPENDENCIES
+----------------------------
+
+Open PowerShell in this project folder:
+
+  C:\Users\HP\Downloads\Kia_Cron_Job
+
+Run:
+
+  npm install
+  npx playwright install chromium
+
+
+2. CREATE YOUR TELEGRAM BOT
+---------------------------
+
+1. Open Telegram on your phone or desktop.
+2. Search for:
+
+   @BotFather
+
+3. Open BotFather and send:
+
+   /newbot
+
+4. BotFather will ask for a display name. Example:
+
+   KIA DMS OTP Bot
+
+5. BotFather will ask for a username. It must end with "bot". Example:
+
+   kia_dms_otp_yourname_bot
+
+6. BotFather will return a Bot Token.
+
+   It looks similar to:
+
+   1234567890:AAExampleTokenTextHere
+
+7. Save this token. You will put it in .env as:
+
+   TELEGRAM_BOT_TOKEN=your-token-here
+
+Important:
+
+  Keep the bot token private. Anyone with the token can control your bot.
+
+
+3. GET YOUR TELEGRAM CHAT ID
+----------------------------
+
+1. In Telegram, search for your new bot username.
+2. Open the bot chat.
+3. Press Start or send this message:
+
+   hello
+
+4. In PowerShell, run this command. Replace YOUR_BOT_TOKEN with your real token:
+
+   Invoke-RestMethod "https://api.telegram.org/botYOUR_BOT_TOKEN/getUpdates"
+
+5. Look for a JSON field like this:
+
+   "chat":{"id":123456789
+
+6. Copy the number. That is your TELEGRAM_CHAT_ID.
+
+7. Add it to .env:
+
+   TELEGRAM_CHAT_ID=123456789
+
+If getUpdates returns an empty result:
+
+  Send another message to your bot, then run the PowerShell command again.
+
+
+4. CONFIGURE YOUR .env FILE
+---------------------------
+
+In this project folder, create or edit this file:
+
+  .env
+
+Use this format:
+
+  KIA_DMS_URL=https://dms.kiaindia.net/cmm/cmmi/selectLoginMain.dms
+  KIA_USER_ID=EJK4020041
+  KIA_PASSWORD=your-kia-password-here
+
+  OTP_PROVIDER=telegram
+  TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+  TELEGRAM_CHAT_ID=your-telegram-chat-id
+  TELEGRAM_POLL_INTERVAL_MS=3000
+  TELEGRAM_DROP_OLD_UPDATES=true
+  OTP_REGEX=\d{4,6}
+
+  OTP_WEBHOOK_BASE_URL=http://127.0.0.1:3333
+  OTP_WEBHOOK_TOKEN=change-this-token
+  OTP_WEBHOOK_HOST=0.0.0.0
+  OTP_WEBHOOK_PORT=3333
+
+  CRON_SCHEDULE=0 8 * * *
+  HEADLESS=false
+  OTP_TIMEOUT_MS=180000
+  LOGIN_TIMEOUT_MS=60000
+  LOGIN_RETRIES=2
+  RETRY_DELAY_MS=15000
+  SESSION_STATE_PATH=./storage/kia-dms-state.json
+  DOWNLOAD_DIR=./downloads
+
+Password safety:
+
+  The .env file is already ignored by git in this project.
+  Do not send .env to anyone.
+  Do not paste the password into source code.
+
+
+5. ANDROID SMS FORWARDER SETUP
+------------------------------
+
+Goal:
+
+  Your Android phone receives the KIA DMS OTP SMS.
+  The SMS text is sent to Telegram.
+  This Node.js project reads the Telegram message and extracts the OTP.
+
+Recommended simple app:
+
+  SMS2Telegram - SMS Forwarder
+
+Why this app:
+
+  It is built specifically for SMS to Telegram forwarding and uses your own Telegram Bot API key.
+
+Alternative:
+
+  Any Android SMS forwarding app is fine if it can forward incoming SMS text to Telegram or to a custom webhook.
+
+Basic setup steps:
+
+1. Install an SMS forwarding app on the Android phone that receives the KIA OTP.
+2. Give the app SMS permission.
+3. Configure it with your Telegram Bot Token.
+4. Configure it with your Telegram Chat ID if the app asks for one.
+5. Add a filter so it forwards only KIA / DMS / OTP messages if possible.
+6. Test by sending yourself a sample SMS or waiting for a real OTP.
+
+Very important Telegram note:
+
+  Telegram Bot API can read incoming messages sent TO the bot.
+  Telegram Bot API cannot read normal chat history.
+
+  Some Android apps use your bot token to make the bot SEND a message to your chat.
+  That message appears in Telegram, but it may not appear in getUpdates because it was sent by the bot itself.
+
+  If npm run telegram:test does not detect forwarded SMS messages, use one of these reliable options:
+
+  Option A:
+    Configure the SMS app to forward to a custom HTTP webhook instead of Telegram.
+    Then use OTP_PROVIDER=webhook and npm run otp:webhook.
+
+  Option B:
+    Use an SMS forwarding app that supports sending the SMS text as an incoming message/update to your bot.
+
+  Option C:
+    Use manual OTP mode while you validate the KIA selectors:
+    OTP_PROVIDER=manual
+
+
+6. TEST TELEGRAM OTP READING
+----------------------------
+
+Run:
+
+  npm run telegram:test
+
+The terminal will say it is waiting for an OTP.
+
+Now send a message to your bot containing a test OTP, for example:
+
+  KIA OTP is 123456
+
+Expected result:
+
+  The terminal should log:
+
+  Telegram OTP test succeeded
+
+If it times out:
+
+1. Check TELEGRAM_BOT_TOKEN.
+2. Check TELEGRAM_CHAT_ID.
+3. Send a fresh message after starting npm run telegram:test.
+4. Run this project diagnostic:
+
+   npm run telegram:updates
+
+5. If your OTP message is visible in Telegram but npm run telegram:updates does not show it, the SMS app is making the bot SEND the message. Bot API polling cannot read messages sent by the same bot.
+
+
+7. ANDROID HTTP WEBHOOK SETUP
+-----------------------------
+
+Use this option when the Android SMS forwarding app asks for a Webhook URL.
+
+Change .env:
+
+  OTP_PROVIDER=webhook
+  OTP_WEBHOOK_BASE_URL=http://127.0.0.1:3333
+  OTP_WEBHOOK_TOKEN=choose-a-secret-token
+  OTP_WEBHOOK_HOST=0.0.0.0
+  OTP_WEBHOOK_PORT=3333
+
+Start the local webhook server in PowerShell:
+
+  npm run otp:webhook
+
+The Android app must send SMS text to this route:
+
+  /sms?token=choose-a-secret-token
+
+The full URL depends on how your phone can reach your computer.
+
+Option A: Phone and computer are on the same Wi-Fi
+
+1. Find your computer IP address.
+2. In PowerShell, run:
+
+   ipconfig
+
+3. Look for the IPv4 Address of your Wi-Fi adapter. Example:
+
+   192.168.1.25
+
+4. Use this Webhook URL in the Android SMS forwarder app:
+
+   http://192.168.1.25:3333/sms?token=choose-a-secret-token
+
+5. Keep npm run otp:webhook running while testing.
+
+Option B: Phone is not on the same Wi-Fi, or local IP does not work
+
+Use a public tunnel to expose your local port 3333.
+
+With ngrok:
+
+1. Install ngrok.
+2. Run:
+
+   ngrok http 3333
+
+3. Ngrok will show a Forwarding URL like:
+
+   https://abc123.ngrok-free.app
+
+4. Use this Webhook URL in the Android SMS forwarder app:
+
+   https://abc123.ngrok-free.app/sms?token=choose-a-secret-token
+
+Testing the webhook from PowerShell:
+
+  Invoke-RestMethod -Method Post `
+    -Uri "http://127.0.0.1:3333/sms?token=choose-a-secret-token" `
+    -ContentType "application/json" `
+    -Body '{"message":"34117 is your code. Please enter this number in portal."}'
+
+Expected terminal log from npm run otp:webhook:
+
+  Webhook OTP received
+
+After the webhook receives an OTP, the login script can read it from:
+
+  http://127.0.0.1:3333/otp/latest
+
+Important:
+
+  Run npm run otp:webhook in one PowerShell window.
+  Run npm run login or npm run cron:once in another PowerShell window.
+
+
+8. TEST KIA LOGIN ONCE
+----------------------
+
+Keep the browser visible for the first test:
+
+  HEADLESS=false
+
+Run:
+
+  npm run login
+
+Expected flow:
+
+1. Browser opens.
+2. KIA DMS login page loads.
+3. User ID is filled.
+4. Password is filled.
+5. Send OTP is clicked.
+6. Automation waits for OTP from Telegram or webhook, depending on OTP_PROVIDER.
+7. OTP is filled.
+8. Login is submitted.
+9. Session is saved to:
+
+   storage\kia-dms-state.json
+
+If login fails:
+
+  A screenshot is saved as:
+
+  login-error.png
+
+Open that image to see where the page stopped.
+
+
+9. RUN ONE CRON JOB MANUALLY
+----------------------------
+
+Before scheduling the job, run it once:
+
+  npm run reports
+
+This uses the same retry logic as scheduled mode.
+It logs in once, then downloads the configured reports in the same browser session.
+
+Current configured report:
+
+  RO Billing Report
+  Kia Call Center Complaints
+
+Expected output:
+
+  The downloaded Excel is parsed immediately.
+  Data is stored in Supabase table public.business_excellence_am_kia_new.
+  No .xlsx report file is kept in the project.
+
+
+10. START SCHEDULED CRON MODE
+----------------------------
+
+To keep the Node scheduler running:
+
+  npm run cron
+
+The schedule is controlled by:
+
+  CRON_SCHEDULE=0 8 * * *
+
+That example runs every day at 08:00.
+
+Cron examples:
+
+  Every day at 08:00:
+    0 8 * * *
+
+  Every 30 minutes:
+    */30 * * * *
+
+  Monday to Friday at 09:15:
+    15 9 * * 1-5
+
+
+11. WINDOWS TASK SCHEDULER OPTION
+---------------------------------
+
+For reliability on Windows, Task Scheduler is often better than leaving a PowerShell window open.
+
+Create a Basic Task:
+
+1. Open Windows Task Scheduler.
+2. Click Create Basic Task.
+3. Name:
+
+   KIA DMS Cron Login
+
+4. Choose your schedule.
+5. Action:
+
+   Start a program
+
+6. Program/script:
+
+   npm
+
+7. Add arguments:
+
+   run cron:once
+
+8. Start in:
+
+   C:\Users\HP\Downloads\Kia_Cron_Job
+
+9. Save the task.
+
+
+12. HEADLESS MODE
+-----------------
+
+Use this while testing:
+
+  HEADLESS=false
+
+After login works reliably:
+
+  HEADLESS=true
+
+If headless mode behaves differently, keep HEADLESS=false for scheduled runs.
+
+
+13. RETRY AND TIMEOUT SETTINGS
+------------------------------
+
+OTP timeout:
+
+  OTP_TIMEOUT_MS=180000
+
+This means the automation waits up to 3 minutes for OTP.
+
+Login retries:
+
+  LOGIN_RETRIES=2
+
+This means the job gets 1 original attempt plus 2 retries.
+
+Retry delay:
+
+  RETRY_DELAY_MS=15000
+
+This waits 15 seconds between retries.
+
+
+14. SESSION PERSISTENCE
+-----------------------
+
+After login, Playwright saves cookies/session data here:
+
+  storage\kia-dms-state.json
+
+Next run:
+
+1. Loads saved session.
+2. Opens KIA DMS.
+3. If session is still valid, skips OTP.
+4. If session expired, performs full login and requests OTP again.
+
+If you want to force a fresh login:
+
+  Delete storage\kia-dms-state.json
+
+
+15. REPORT DOWNLOADS
+--------------------
+
+After login succeeds, report automation runs from:
+
+  src\reports\index.js
+
+Current report module:
+
+  src\reports\ro-billing.js
+
+The page is already logged in when each report starts.
+To add more reports later, create a new module in src\reports and add it to reportDefinitions in src\reports\index.js.
+
+Reports are stored in Supabase:
+
+  Table:
+    public.business_excellence_am_kia_new
+
+  Required .env:
+    SUPABASE_URL=your-supabase-url
+    SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+    SUPABASE_REPORTS_TABLE=business_excellence_am_kia_new
+
+RO Billing currently updates this report row:
+
+  brand = kia
+  sheet_name = RO Billing Report March 25
+
+Kia Call Center Complaints currently updates this report row:
+
+  brand = kia
+  sheet_name = Kia call center complaints
+
+
+16. COMMON PROBLEMS
+-------------------
+
+Problem:
+  Telegram OTP test works manually, but Android forwarded SMS is not detected.
+
+Reason:
+  The Android app may be using the bot to send a Telegram message. Bot API polling usually does not receive messages sent by the bot itself.
+
+Fix:
+  Use a forwarding app that can send to a webhook, then set OTP_PROVIDER=webhook.
+
+
+Problem:
+  Android SMS forwarder asks for a Webhook URL.
+
+Fix:
+  Start:
+
+  npm run otp:webhook
+
+  Then use one of these URLs:
+
+  Same Wi-Fi:
+    http://YOUR_PC_IP:3333/sms?token=your-token
+
+  Public tunnel:
+    https://YOUR_TUNNEL_DOMAIN/sms?token=your-token
+
+
+Problem:
+  Login fails after clicking Send OTP.
+
+Fix:
+  Open login-error.png and check whether the OTP field appeared.
+  If the KIA page uses different selectors, update:
+
+  src\playwright\selectors.js
+
+
+Problem:
+  OTP arrives too late.
+
+Fix:
+  Increase:
+
+  OTP_TIMEOUT_MS=240000
+
+
+Problem:
+  Session is not reused.
+
+Fix:
+  This may be normal if KIA expires sessions quickly or binds them to IP/device.
+  Keep OTP automation active for each scheduled run.
+
+
+17. SAFETY NOTES
+----------------
+
+1. Use this only for accounts you are authorized to access.
+2. Keep your KIA password and Telegram bot token private.
+3. Use one stable network/IP when possible.
+4. Do not run too frequently. A normal daily or business-hour schedule is safer.
+5. Start with visible browser mode until you confirm the full flow works.

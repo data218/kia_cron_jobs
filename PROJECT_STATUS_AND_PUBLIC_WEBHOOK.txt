@@ -1,0 +1,419 @@
+KIA DMS OTP AUTOMATION - PROJECT STATUS AND PUBLIC WEBHOOK GUIDE
+================================================================
+
+Last updated: 2026-05-20
+
+
+1. WHAT WE BUILT
+----------------
+
+We built a Node.js + Playwright automation system for KIA DMS login.
+
+Main flow:
+
+1. Open KIA DMS login page.
+2. Fill User ID.
+3. Fill password from .env.
+4. Click Send OTP.
+5. Wait for OTP.
+6. Receive OTP from Android SMS Forwarder using HTTP webhook.
+7. Fill OTP in browser.
+8. Submit login.
+9. Save Playwright session/cookies.
+10. Later reuse the saved session when possible.
+
+
+2. IMPORTANT PROJECT FILES
+--------------------------
+
+Login automation:
+
+  src\auth\login.js
+
+Cron runner:
+
+  src\cron\scheduler.js
+
+Browser/session helpers:
+
+  src\playwright\browser.js
+  src\playwright\selectors.js
+
+OTP provider switch:
+
+  src\otp\index.js
+
+Webhook OTP server:
+
+  src\otp\webhook-server.js
+
+Webhook OTP client used by login:
+
+  src\otp\webhook-client.js
+
+Telegram files are still present as fallback/testing:
+
+  src\telegram\
+
+Main setup guide:
+
+  SETUP_GUIDE.txt
+
+
+3. CURRENT WORKING STATUS
+-------------------------
+
+Telegram manual OTP test worked.
+
+But Android SMS-to-Telegram forwarding was not visible to Telegram Bot API polling.
+Reason:
+
+  Some SMS forwarding apps use your bot token to make the bot SEND a message.
+  Telegram Bot API getUpdates cannot read messages sent by the same bot.
+
+So we switched to Android HTTP webhook mode.
+
+Webhook mode is working.
+
+Confirmed log:
+
+  Webhook OTP received
+
+That means Android SMS Forwarder successfully sent the OTP SMS to our Node server.
+
+
+4. CURRENT LOCAL WEBHOOK SETUP
+------------------------------
+
+In .env, use:
+
+  OTP_PROVIDER=webhook
+  OTP_WEBHOOK_BASE_URL=http://127.0.0.1:3333
+  OTP_WEBHOOK_TOKEN=change-me
+  OTP_WEBHOOK_HOST=0.0.0.0
+  OTP_WEBHOOK_PORT=3333
+
+Run webhook server in PowerShell window 1:
+
+  npm run otp:webhook
+
+Run login in PowerShell window 2:
+
+  npm run login
+
+For same Wi-Fi Android testing, the Android app used this kind of URL:
+
+  http://YOUR_PC_WIFI_IP:3333/sms?token=change-me
+
+On this machine, the detected Wi-Fi IP was:
+
+  192.168.1.51
+
+So the local same-Wi-Fi URL was:
+
+  http://192.168.1.51:3333/sms?token=change-me
+
+Important:
+
+  0.0.0.0 is only for the Node server to listen on all interfaces.
+  Do not put 0.0.0.0 in the Android app.
+
+
+5. ANDROID SMS FORWARDER CONFIG THAT WORKED
+-------------------------------------------
+
+Method:
+
+  POST
+
+Webhook URL:
+
+  http://192.168.1.51:3333/sms?token=change-me
+
+The app must send the real SMS body, not a literal placeholder like:
+
+  {sms_body}
+
+The successful setup sent a real OTP message to the webhook and produced:
+
+  Webhook OTP received
+
+Expected KIA OTP message format:
+
+  31086 is your code. Please enter this number in portal or share the same with your Kia consultant for confirmation.
+
+The webhook extracts the OTP using:
+
+  OTP_REGEX=\d{4,6}
+
+
+6. WHY LOCALHOST IS NOT ENOUGH
+------------------------------
+
+This value is correct for the login script running on the same computer:
+
+  OTP_WEBHOOK_BASE_URL=http://127.0.0.1:3333
+
+But Android phone cannot call 127.0.0.1 on your PC.
+
+On Android:
+
+  127.0.0.1 means the phone itself, not your computer.
+
+So the Android app needs either:
+
+1. Same Wi-Fi local PC IP, such as:
+
+   http://192.168.1.51:3333/sms?token=change-me
+
+2. A real public HTTPS URL, such as:
+
+   https://your-domain.com/sms?token=change-me
+
+
+7. HOW TO GET A REAL PUBLIC WEBHOOK URL
+---------------------------------------
+
+There are three practical options.
+
+
+OPTION A - NGROK TUNNEL
+-----------------------
+
+Best for testing quickly.
+
+What it does:
+
+  Creates a public HTTPS URL that forwards to your local Node webhook server.
+
+Steps:
+
+1. Keep webhook server running:
+
+   npm run otp:webhook
+
+2. Install ngrok from:
+
+   https://ngrok.com/
+
+3. In a new PowerShell window, run:
+
+   ngrok http 3333
+
+4. Ngrok will show a public Forwarding URL like:
+
+   https://abc123.ngrok-free.app
+
+5. Put this in the Android SMS Forwarder app:
+
+   https://abc123.ngrok-free.app/sms?token=change-me
+
+6. Keep both running:
+
+   npm run otp:webhook
+   ngrok http 3333
+
+Pros:
+
+  Fastest way to test.
+  Gives HTTPS automatically.
+
+Cons:
+
+  Free ngrok URLs can change when restarted.
+  Your PC must stay on.
+
+
+OPTION B - CLOUDFLARE TUNNEL
+----------------------------
+
+Best free option for a more stable public URL.
+
+What it does:
+
+  Creates a public HTTPS tunnel to your local webhook without opening router ports.
+
+High-level steps:
+
+1. Install cloudflared.
+2. Login to Cloudflare.
+3. Create a tunnel to local port 3333.
+4. Connect a domain/subdomain to the tunnel.
+5. Android app uses:
+
+   https://your-subdomain.your-domain.com/sms?token=change-me
+
+Pros:
+
+  Stable URL.
+  HTTPS.
+  No router port forwarding.
+
+Cons:
+
+  Requires Cloudflare/domain setup.
+
+
+OPTION C - DEPLOY WEBHOOK TO A SERVER
+-------------------------------------
+
+Best long-term production option.
+
+Examples:
+
+  VPS
+  Render
+  Railway
+  Fly.io
+  AWS
+  Azure
+  DigitalOcean
+
+What changes:
+
+  The webhook server runs on the cloud server instead of your PC.
+
+Public URL example:
+
+  https://kia-webhook.your-domain.com/sms?token=change-me
+
+Important:
+
+  If the webhook runs on a cloud server, the login script also needs access to the same OTP.
+
+Recommended production architecture:
+
+  Android phone -> Public webhook -> Database/Redis
+  Cron login script -> Reads OTP from same Database/Redis
+
+For now, local webhook is simpler because:
+
+  Android phone -> Your PC webhook
+  Login script -> Same PC webhook /otp/latest
+
+
+8. RECOMMENDED NEXT STEP
+------------------------
+
+Use ngrok first.
+
+Why:
+
+  It is the fastest way to get a real public HTTPS webhook URL without deploying anything.
+
+Steps:
+
+1. Set .env:
+
+   OTP_PROVIDER=webhook
+   OTP_WEBHOOK_BASE_URL=http://127.0.0.1:3333
+   OTP_WEBHOOK_TOKEN=change-me
+   OTP_WEBHOOK_HOST=0.0.0.0
+   OTP_WEBHOOK_PORT=3333
+
+2. Terminal 1:
+
+   npm run otp:webhook
+
+3. Terminal 2:
+
+   ngrok http 3333
+
+4. Android SMS Forwarder URL:
+
+   https://YOUR-NGROK-URL/sms?token=change-me
+
+5. Terminal 3:
+
+   npm run login
+
+
+9. SECURITY NOTES
+-----------------
+
+Change this token before using a public URL:
+
+  OTP_WEBHOOK_TOKEN=change-me
+
+Use a long random token, for example:
+
+  OTP_WEBHOOK_TOKEN=some-long-random-secret-value
+
+Then Android URL becomes:
+
+  https://YOUR-NGROK-URL/sms?token=some-long-random-secret-value
+
+Do not expose:
+
+  KIA_PASSWORD
+  TELEGRAM_BOT_TOKEN
+  OTP_WEBHOOK_TOKEN
+
+
+10. CURRENT COMMANDS
+--------------------
+
+Check code:
+
+  npm run check
+
+Start webhook:
+
+  npm run otp:webhook
+
+Test login once:
+
+  npm run login
+
+Run login and configured reports once:
+
+  npm run reports
+
+Current report storage:
+
+  Excel downloads are parsed in memory.
+  Report data is upserted into Supabase.
+  No permanent .xlsx report file is saved locally.
+
+Supabase table:
+
+  public.business_excellence_am_kia_new
+
+RO Billing target row:
+
+  brand = kia
+  sheet_name = RO Billing Report March 25
+
+Run cron once:
+
+  npm run cron:once
+
+Run scheduled cron:
+
+  npm run cron
+
+
+11. IMPORTANT REMINDERS
+-----------------------
+
+1. If using webhook OTP, .env must say:
+
+   OTP_PROVIDER=webhook
+
+2. Keep npm run otp:webhook running while login/cron is waiting for OTP.
+
+3. Login script can keep OTP_WEBHOOK_BASE_URL as:
+
+   http://127.0.0.1:3333
+
+   because it runs on the same PC as the webhook server.
+
+4. Android app cannot use 127.0.0.1 for your PC.
+
+5. Android app should use either:
+
+   http://YOUR_PC_WIFI_IP:3333/sms?token=...
+
+   or:
+
+   https://YOUR_PUBLIC_TUNNEL_OR_DOMAIN/sms?token=...

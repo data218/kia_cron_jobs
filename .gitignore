@@ -1,0 +1,8 @@
+.env
+node_modules/
+storage/
+downloads/
+otp-inbox.json
+playwright-report/
+test-results/
+*.log

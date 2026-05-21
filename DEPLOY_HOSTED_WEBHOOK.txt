@@ -1,0 +1,257 @@
+HOSTING THE OTP WEBHOOK ON RENDER OR RAILWAY
+============================================
+
+Goal:
+
+  Android SMS Forwarder sends OTP to a real public URL.
+  Your local Playwright login script reads the OTP from that hosted webhook.
+
+
+1. IMPORTANT ARCHITECTURE
+-------------------------
+
+For now, host ONLY the webhook receiver.
+
+Keep Playwright login/cron on your PC:
+
+  npm run login
+  npm run cron:once
+  npm run cron
+
+Why:
+
+  KIA DMS browser automation may behave better from your normal PC/network.
+  Hosting full Playwright cron in the cloud can introduce IP/session/browser issues.
+
+Hosted webhook architecture:
+
+  Android phone
+    -> Render/Railway public webhook URL
+    -> hosted Node webhook stores latest OTP in memory
+    -> your PC login script polls hosted /otp/latest
+    -> Playwright enters OTP
+
+
+2. CODE IS READY FOR HOSTING
+----------------------------
+
+The project now has:
+
+  npm start
+
+which runs:
+
+  node src/otp/webhook-server.js
+
+The webhook server supports hosting platforms that provide a PORT variable.
+
+It listens on:
+
+  OTP_WEBHOOK_HOST or 0.0.0.0
+  OTP_WEBHOOK_PORT or PORT or 3333
+
+Health routes:
+
+  GET /
+  GET /health
+
+SMS receiver route:
+
+  GET  /sms?token=YOUR_TOKEN&message=OTP_TEXT
+  POST /sms?token=YOUR_TOKEN
+
+OTP polling route:
+
+  GET /otp/latest
+
+
+3. ENV VARIABLES FOR RENDER OR RAILWAY
+--------------------------------------
+
+Set these environment variables on the hosting platform:
+
+  OTP_WEBHOOK_TOKEN=use-a-long-random-secret
+  OTP_WEBHOOK_HOST=0.0.0.0
+  OTP_REGEX=\d{4,6}
+
+Do NOT set OTP_WEBHOOK_PORT unless the platform tells you to.
+Render/Railway provide PORT automatically.
+
+Do NOT put KIA_PASSWORD on the hosted webhook if you are only hosting the webhook.
+
+
+4. RENDER DEPLOY STEPS
+----------------------
+
+1. Push this project to GitHub.
+2. Open Render.
+3. Create New Web Service.
+4. Connect the GitHub repo.
+5. Use:
+
+   Runtime: Node
+   Build Command: npm install
+   Start Command: npm start
+
+6. Add environment variables:
+
+   OTP_WEBHOOK_TOKEN=use-a-long-random-secret
+   OTP_WEBHOOK_HOST=0.0.0.0
+   OTP_REGEX=\d{4,6}
+
+7. Deploy.
+8. Render gives a URL like:
+
+   https://kia-dms-webhook.onrender.com
+
+9. Test in browser:
+
+   https://kia-dms-webhook.onrender.com/health
+
+Expected:
+
+  {"ok":true,"service":"kia-dms-otp-webhook"}
+
+
+5. RAILWAY DEPLOY STEPS
+-----------------------
+
+1. Push this project to GitHub.
+2. Open Railway.
+3. Create New Project from GitHub repo.
+4. Railway should detect Node.js.
+5. Set environment variables:
+
+   OTP_WEBHOOK_TOKEN=use-a-long-random-secret
+   OTP_WEBHOOK_HOST=0.0.0.0
+   OTP_REGEX=\d{4,6}
+
+6. Deploy.
+7. Generate/enable a public domain for the service.
+8. Railway gives a URL like:
+
+   https://kia-dms-webhook.up.railway.app
+
+9. Test in browser:
+
+   https://kia-dms-webhook.up.railway.app/health
+
+
+6. ANDROID SMS FORWARDER CONFIG AFTER DEPLOY
+--------------------------------------------
+
+Use the hosted URL in the Android app.
+
+Example Render URL:
+
+  https://kia-dms-webhook.onrender.com/sms?token=use-a-long-random-secret
+
+Example Railway URL:
+
+  https://kia-dms-webhook.up.railway.app/sms?token=use-a-long-random-secret
+
+Method:
+
+  POST
+
+Content-Type:
+
+  application/json
+
+Body key:
+
+  message
+
+If the app supports GET only:
+
+  https://YOUR_HOSTED_URL/sms?token=use-a-long-random-secret&message=%m
+
+
+7. LOCAL .env AFTER DEPLOY
+--------------------------
+
+On your PC, update .env:
+
+  OTP_PROVIDER=webhook
+  OTP_WEBHOOK_BASE_URL=https://YOUR_HOSTED_URL
+  OTP_WEBHOOK_TOKEN=use-a-long-random-secret
+
+Example:
+
+  OTP_PROVIDER=webhook
+  OTP_WEBHOOK_BASE_URL=https://kia-dms-webhook.onrender.com
+  OTP_WEBHOOK_TOKEN=use-a-long-random-secret
+
+Then run:
+
+  npm run login
+
+
+8. TEST HOSTED WEBHOOK MANUALLY
+-------------------------------
+
+Replace URL and token:
+
+  Invoke-RestMethod -Method Post `
+    -Uri "https://YOUR_HOSTED_URL/sms?token=use-a-long-random-secret" `
+    -ContentType "application/json" `
+    -Body '{"message":"31086 is your code. Please enter this number in portal."}'
+
+Expected response:
+
+  ok  otp   receivedAt
+  --  ---   ----------
+  True 31086 ...
+
+Then test latest OTP:
+
+  Invoke-RestMethod `
+    -Uri "https://YOUR_HOSTED_URL/otp/latest" `
+    -Headers @{ Authorization = "Bearer use-a-long-random-secret" }
+
+Expected:
+
+  otp = 31086
+
+
+9. IMPORTANT LIMITATION
+-----------------------
+
+The hosted webhook currently stores the latest OTP in memory.
+
+That is fine for first production testing if:
+
+  one service instance is running
+  the service does not restart between OTP received and login polling
+
+For a more robust production setup, use Redis/Postgres:
+
+  Android -> hosted webhook -> Redis/Postgres
+  login script -> reads OTP from Redis/Postgres
+
+We can add Redis later if needed.
+
+
+10. RENDER VS RAILWAY NOTE
+--------------------------
+
+Render and Railway both expect web services to bind to the provided PORT variable.
+This project now supports that.
+
+Render docs mention that web services should bind their public HTTP server to PORT.
+Railway docs also specify listening on 0.0.0.0:$PORT for public networking.
+
+
+11. RECOMMENDED CHOICE
+----------------------
+
+For your current goal, Railway is often smoother for always-on small services.
+
+Render is also fine, but check whether your selected Render plan sleeps when idle.
+If it sleeps, the first OTP request may wake the service slowly.
+
+Whichever you choose:
+
+  Use HTTPS hosted URL in Android app.
+  Use same hosted base URL in local .env.
+  Keep the token secret.

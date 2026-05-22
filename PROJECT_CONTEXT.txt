@@ -644,11 +644,13 @@ Scheduler sequence test:
 
 Local PM2 status:
 - PM2 process name: kia-cron-job
+- OTP webhook PM2 process name: kia-otp-webhook
 - PM2 config file: ecosystem.config.cjs
 - Local PM2 setup was started and saved with pm2 save.
 - PM2 runs src/cron/scheduler.js from C:\Users\HP\Downloads\Kia_Cron_Job.
 - Scheduler entrypoint detection uses resolved filesystem paths so it works under PM2 on Windows and under Node directly.
 - PM2 passes --scheduler explicitly so the scheduler lane registration is not dependent on PM2 argv path behavior.
+- PM2 also runs src/otp/webhook-server.js so npm run otp:webhook does not need to stay open in a terminal.
 
 Wi-Fi / network recovery:
 - src/utils/network.js checks connectivity using NETWORK_CHECK_URL.

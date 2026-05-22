@@ -138,6 +138,6 @@ app.get('/otp/latest', authorize, (_req, res) => {
 app.listen(config.otpWebhookPort, config.otpWebhookHost, () => {
   logger.info(`OTP webhook server listening on http://${config.otpWebhookHost}:${config.otpWebhookPort}`);
   logger.info('Android SMS forwarder POST route', {
-    path: `/sms?token=${config.otpWebhookToken}`
+    path: '/sms?token=<redacted>'
   });
 });

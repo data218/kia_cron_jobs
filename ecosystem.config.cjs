@@ -16,6 +16,22 @@ module.exports = {
       env: {
         NODE_ENV: 'production'
       }
+    },
+    {
+      name: 'kia-otp-webhook',
+      script: './src/otp/webhook-server.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '256M',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-otp-out.log',
+      error_file: './logs/pm2-otp-error.log',
+      env: {
+        NODE_ENV: 'production'
+      }
     }
   ]
 };

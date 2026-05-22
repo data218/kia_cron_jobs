@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 function normalizeHeader(value, index) {
   const header = String(value ?? '').trim();
@@ -52,6 +52,67 @@ function fillMergedCells(matrix, merges = []) {
   }
 
   return filled;
+}
+
+function columnNameToNumber(name) {
+  return String(name).toUpperCase().split('').reduce((total, char) =>
+    total * 26 + char.charCodeAt(0) - 64, 0
+  );
+}
+
+function parseCellRef(ref) {
+  const match = String(ref).match(/^([A-Z]+)(\d+)$/i);
+  if (!match) {
+    throw new Error(`Invalid Excel cell reference: ${ref}`);
+  }
+
+  return {
+    r: Number.parseInt(match[2], 10) - 1,
+    c: columnNameToNumber(match[1]) - 1
+  };
+}
+
+function parseMergeRange(range) {
+  const [start, end = start] = String(range).split(':');
+  return {
+    s: parseCellRef(start),
+    e: parseCellRef(end)
+  };
+}
+
+function cellValueToText(value) {
+  if (value == null) return '';
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value.richText)) {
+    return value.richText.map(part => part.text ?? '').join('');
+  }
+  if ('result' in value) {
+    return cellValueToText(value.result);
+  }
+  if ('text' in value) {
+    return value.text;
+  }
+  if ('hyperlink' in value && 'text' in value) {
+    return value.text;
+  }
+  return String(value);
+}
+
+function worksheetToMatrix(worksheet) {
+  const matrix = [];
+  const columnCount = worksheet.columnCount;
+
+  for (let rowNumber = 1; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber);
+    const values = [];
+    for (let columnNumber = 1; columnNumber <= columnCount; columnNumber += 1) {
+      values.push(cellValueToText(row.getCell(columnNumber).value));
+    }
+    matrix.push(values);
+  }
+
+  return matrix;
 }
 
 function hasDuplicateHeaderGroups(row) {
@@ -114,52 +175,56 @@ function uniqueHeaders(headers) {
   });
 }
 
+function repeatedChildCounts(headerRows) {
+  const counts = new Map();
+  const childRow = headerRows[1] ?? [];
+
+  for (const value of childRow) {
+    const child = normalizeHeaderPart(value);
+    if (!child) continue;
+    counts.set(child, (counts.get(child) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
 function buildHeaders(headerRows) {
   const width = Math.max(...headerRows.map(row => row.length));
   const rawHeaders = [];
-  const seen = new Set();
+  const childCounts = repeatedChildCounts(headerRows);
 
   for (let index = 0; index < width; index += 1) {
     const parent = normalizeHeaderPart(headerRows[0]?.[index]);
     const child = normalizeHeaderPart(headerRows[1]?.[index]);
     let header = child || parent || `Column ${index + 1}`;
 
-    if (child && parent && child !== parent && seen.has(child)) {
+    if (child && parent && child !== parent && (childCounts.get(child) ?? 0) > 1) {
       header = `${parent} ${child}`;
     }
 
     rawHeaders.push(header);
-    seen.add(header);
   }
 
   return uniqueHeaders(rawHeaders);
 }
 
-export function parseExcelBuffer(buffer) {
+export async function parseExcelBuffer(buffer) {
   if (!buffer.length) {
     throw new Error('Excel file is empty');
   }
 
-  const workbook = XLSX.read(buffer, {
-    type: 'buffer',
-    cellDates: true,
-    raw: false
-  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
 
-  const firstSheetName = workbook.SheetNames[0];
-  if (!firstSheetName) {
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) {
     throw new Error('Excel workbook has no sheets');
   }
 
-  const worksheet = workbook.Sheets[firstSheetName];
-  const rawMatrix = XLSX.utils.sheet_to_json(worksheet, {
-    header: 1,
-    defval: '',
-    raw: false,
-    blankrows: false
-  });
-
-  const mergedMatrix = fillMergedCells(rawMatrix, worksheet['!merges']);
+  const firstSheetName = worksheet.name;
+  const rawMatrix = worksheetToMatrix(worksheet);
+  const merges = (worksheet.model?.merges ?? []).map(parseMergeRange);
+  const mergedMatrix = fillMergedCells(rawMatrix, merges);
 
   const nonEmptyRows = mergedMatrix.filter(row =>
     Array.isArray(row) && row.some(cell => String(cell ?? '').trim() !== '')

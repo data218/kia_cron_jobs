@@ -1,5 +1,5 @@
 KIA DMS AUTOMATION PROJECT CONTEXT
-Last updated: 2026-05-21
+Last updated: 2026-05-22
 
 Purpose
 This file is the living context file for the KIA DMS automation project.
@@ -14,11 +14,15 @@ CURRENT ARCHITECTURE
 Stack:
 - Node.js
 - Playwright
+- PM2 for production process management
 - Express webhook server for Android SMS Forwarder OTP
 - dotenv
 - node-cron
 - Supabase JS SDK
-- xlsx parser
+- Direct PostgreSQL client for large JSONB append updates
+- ExcelJS parser
+- Pino structured logger
+- Nodemailer failure alerts
 
 Main runtime flow:
 1. Login to KIA DMS using Playwright.
@@ -44,6 +48,9 @@ Supabase storage model:
 - Only rows that are not already present are appended.
 - Duplicate incoming rows are skipped.
 - Headers are preserved and extended with any new incoming columns.
+- Existing sheet updates append only new rows server-side through PostgreSQL when a row already exists.
+- This avoids resending very large historical JSONB arrays through the Supabase REST API.
+- DATABASE_URL is required for existing-sheet append updates.
 
 
 IMPORTANT CONFIG
@@ -64,9 +71,27 @@ Important report selection setting:
 - REPORTS_TO_RUN
 
 Current development/testing mode:
-- REPORTS_TO_RUN defaults to rsa-report.
-- This means only the new RSA Report runs during testing.
-- Sequential all-report execution is temporarily disabled for faster development.
+- REPORTS_TO_RUN defaults to all in production.
+- Regular hourly scheduler mode excludes open-ro-yearly even when REPORTS_TO_RUN=all.
+- Open RO Yearly has its own schedule lane.
+- Production mode should use REPORTS_TO_RUN=all and TEST_SINGLE_REPORT=false.
+- Temporary single-report mode is also supported with:
+  TEST_SINGLE_REPORT=true
+  TEST_REPORT_NAME=<report-id>
+- Dry-run sequencing test is supported with:
+  DRY_RUN_REPORTS=true
+  DRY_RUN_REPORT_DELAY_MS=500
+- Use npm run test:sequence to verify sequential order and lock behavior without browser login, downloads, or Supabase writes.
+
+Cron schedules:
+- Regular reports:
+  REGULAR_REPORTS_CRON_SCHEDULE=0 10-18 * * *
+  Runs hourly from 10:00 AM through 6:00 PM.
+- Open RO Yearly:
+  OPEN_RO_YEARLY_CRON_SCHEDULE=0 10,18 * * *
+  Runs only at 10:00 AM and 6:00 PM.
+- Scheduler uses one global in-process lock.
+- If any lane is still running when another tick fires, the new tick is skipped.
 
 To restore all reports later:
 - Set REPORTS_TO_RUN=all
@@ -74,7 +99,7 @@ To restore all reports later:
 To run selected reports only:
 - Use comma-separated report ids.
 - Example:
-  REPORTS_TO_RUN=ro-billing,kia-call-center-complaints,open-ro-yearly,psf-yearly,ew-report,mcp-report,rsa-report
+  REPORTS_TO_RUN=ro-billing,kia-call-center-complaints,open-ro-yearly,psf-yearly,ew-report,mcp-report,adv-wise-lubricants-vas,rsa-report
 
 
 PAGINATION / LOCAL EXPORT POLICY
@@ -89,6 +114,7 @@ Behavior:
 2. Export page 1.
 3. If more pages exist, move through each page and export every page separately.
 4. Save page exports temporarily under downloads/report-chunks/.
+5. Merge and parse with ExcelJS.
 5. Parse and merge all exported Excel files.
 6. Normalize headers by preserving first-seen header order.
 7. Upsert the merged dataset into Supabase.
@@ -370,12 +396,63 @@ Storage:
 - Upload merged dataset to Supabase sheet_name = MCP Report.
 - Existing sheet data is preserved; only new non-duplicate rows are appended.
 - Delete local export files after successful Supabase upload.
+- Large existing report rows use server-side JSONB append to avoid Supabase REST 520/timeouts.
+
+Status:
+- Implemented and live export/upload tested on 2026-05-22.
+- Latest upload appended 137 new rows to existing Adv. wise lubricants & VAS data and deleted the local temp export folder.
+
+
+7. Adv. wise lubricants & VAS
+
+Report id:
+- adv-wise-lubricants-vas
+
+Sheet name:
+- Adv. wise lubricants & VAS
+
+Navigation:
+- Use the Service MIS sidebar, not duplicate MIS sections.
+- Sidebar selector:
+  li.nav_ser_mis
+- Open Work Profit.
+- Select Operation Wise Analysis Report.
+- Menu selectors:
+  li.nav_ser_mis a.menuItem[data-viewid="VIEW-D-00617"]
+  li.nav_ser_mis a.menuItem[data-url="/mis/misc/selectOperationWiseAnalysisReportMain.dms"]
+  li.nav_ser_mis a.menuItem[data-title="Operation Wise Analysis Report"]
+
+Filters:
+- Date Type input/dropdown:
+  #dateType
+- Ensure/select Billing Date even if the default looks correct.
+- Start date:
+  #startDate
+- End date:
+  #endDate
+
+Date logic:
+- Start date = first day of current month.
+- End date = current execution date.
+- Example for 2026-05-22:
+  2026-05-01 to 2026-05-22
+
+Pagination:
+- Uses shared Kendo paged export flow.
+- Selects records count = 300.
+- Exports every visible Kendo grid page separately.
+
+Storage:
+- Merge exported page files.
+- Upload merged dataset to Supabase sheet_name = Adv. wise lubricants & VAS.
+- Existing sheet data is preserved; only new non-duplicate rows are appended.
+- Delete local export files after successful Supabase upload.
 
 Status:
 - Implemented. Needs live portal test.
 
 
-7. RSA Report
+8. RSA Report
 
 Report id:
 - rsa-report
@@ -485,6 +562,7 @@ Report modules:
 - src/reports/psf-yearly.js
 - src/reports/ew-report.js
 - src/reports/mcp-report.js
+- src/reports/adv-wise-lubricants-vas.js
 - src/reports/rsa-report.js
 
 Common report helpers:
@@ -498,10 +576,21 @@ Excel parser:
 - Handles normal one-row headers and grouped two-row Excel headers.
 - For grouped headers, merged cells are filled first, then child/subheaders are used as final column names.
 - Example: PSF grouped headers become RO No, RO Dealer, RO Date, VIN, Name, Mobile, etc. instead of Column 3/Column 4.
+- Repeated grouped metric headers are prefixed with their parent group from the first occurrence.
+- Example: Operation Wise Analysis Report headers become [SP2IB] Seltos (1.5 Petrol) Count, [SP2IB] Seltos (1.5 Petrol) Tax, etc. instead of plain Count/Tax for the first group.
 
 Supabase:
 - src/supabase/client.js
 - src/supabase/report-store.js
+- src/supabase/postgres.js
+
+Production operations:
+- ecosystem.config.cjs
+- PRODUCTION_DEPLOYMENT.md
+- logs/app.log
+- logs/health.json
+- logs/screenshots/
+- temp/
 
 OTP webhook:
 - src/otp/webhook-server.js
@@ -530,11 +619,44 @@ Current testing preference:
 - While remaining report crons are being built, run only the report currently under development.
 - Avoid forcing all completed reports to run sequentially during development.
 - Restore sequential all-report behavior after all remaining crons are built and tested.
+- Use TEST_SINGLE_REPORT=true and TEST_REPORT_NAME=<report-id> for this; do not change production cron lanes.
 
 Delay policy:
 - Intentional per-step sleeps/waits should be 5000ms or less.
 - The config helper caps report post-search/page-load/chunk delays at 5000ms even if a higher value is placed in .env.
 - Long selector/network/login/captcha timeouts may remain higher because they are failure guards or manual-solve windows, not intentional pacing delays.
+
+Production retry/alert policy:
+- Each report is executed through src/utils/execute-with-retry.js.
+- Default retries: 3.
+- Default retry delay: random 30-60 seconds.
+- A screenshot is captured to logs/screenshots/ on each failed attempt when a Playwright page is available.
+- Failure email is sent only after all retry attempts fail.
+- A failed report is logged and the master scheduler continues with remaining reports.
+- Health status is written to logs/health.json.
+
+Scheduler sequence test:
+- src/cron/sequential-test.js
+- npm run test:sequence
+- Runs regular lane in dry-run mode.
+- Runs Open RO Yearly lane after regular lane completes.
+- Starts an overlapping Open RO request while regular lane is running and expects it to be skipped by the global lock.
+
+Local PM2 status:
+- PM2 process name: kia-cron-job
+- PM2 config file: ecosystem.config.cjs
+- Local PM2 setup was started and saved with pm2 save.
+- PM2 runs src/cron/scheduler.js from C:\Users\HP\Downloads\Kia_Cron_Job.
+- Scheduler entrypoint detection uses resolved filesystem paths so it works under PM2 on Windows and under Node directly.
+- PM2 passes --scheduler explicitly so the scheduler lane registration is not dependent on PM2 argv path behavior.
+
+Wi-Fi / network recovery:
+- src/utils/network.js checks connectivity using NETWORK_CHECK_URL.
+- Scheduler waits for connectivity before starting a lane.
+- Each report waits for connectivity before attempting work.
+- Each retry attempt waits for connectivity before running.
+- Playwright browser contexts set default action and navigation timeouts from PLAYWRIGHT_ACTION_TIMEOUT_MS and PLAYWRIGHT_NAVIGATION_TIMEOUT_MS.
+- This prevents a dropped Wi-Fi connection from leaving the automation stuck forever on a loading page; it should fail, wait for network recovery, and retry.
 
 
 VALIDATION COMMANDS
@@ -547,3 +669,5 @@ Run selected report flow once:
 
 Start OTP webhook server:
 - npm run otp:webhook
+
+

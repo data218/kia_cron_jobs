@@ -5,10 +5,14 @@ import { downloadPsfYearlyReport } from './psf-yearly.js';
 import { downloadEwReport } from './ew-report.js';
 import { downloadMcpReport } from './mcp-report.js';
 import { downloadRsaReport } from './rsa-report.js';
+import { downloadAdvWiseLubricantsVasReport } from './adv-wise-lubricants-vas.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { executeWithRetry } from '../utils/execute-with-retry.js';
+import { sleep } from '../utils/sleep.js';
+import { waitForConnectivity } from '../utils/network.js';
 
-const reportDefinitions = [
+export const reportDefinitions = [
   {
     id: 'ro-billing',
     name: 'RO Billing Report',
@@ -46,6 +50,12 @@ const reportDefinitions = [
     run: downloadMcpReport
   },
   {
+    id: 'adv-wise-lubricants-vas',
+    name: 'Adv. wise lubricants & VAS',
+    requiresKiaDms: true,
+    run: downloadAdvWiseLubricantsVasReport
+  },
+  {
     id: 'rsa-report',
     name: 'RSA Report',
     requiresKiaDms: false,
@@ -53,14 +63,37 @@ const reportDefinitions = [
   }
 ];
 
-export function getSelectedReports() {
+const regularReportDefinitions = reportDefinitions.filter(report => report.id !== 'open-ro-yearly');
+
+export function getSelectedReports({ mode = 'configured' } = {}) {
+  if (config.testSingleReport) {
+    const testReportName = config.testReportName.trim().toLowerCase();
+    if (!testReportName) {
+      throw new Error('TEST_SINGLE_REPORT=true requires TEST_REPORT_NAME to be set');
+    }
+
+    const selected = reportDefinitions.filter(report =>
+      report.id === testReportName || report.name.toLowerCase() === testReportName
+    );
+
+    if (!selected.length) {
+      throw new Error(`Unknown TEST_REPORT_NAME value: ${config.testReportName}`);
+    }
+
+    return selected;
+  }
+
+  if (mode === 'open-ro-yearly') {
+    return reportDefinitions.filter(report => report.id === 'open-ro-yearly');
+  }
+
   const requested = config.reportsToRun
     .split(',')
     .map(value => value.trim().toLowerCase())
     .filter(Boolean);
 
   if (!requested.length || requested.includes('all')) {
-    return reportDefinitions;
+    return mode === 'regular' ? regularReportDefinitions : reportDefinitions;
   }
 
   const selected = reportDefinitions.filter(report => requested.includes(report.id));
@@ -78,26 +111,91 @@ export function selectedReportsRequireKiaDms() {
   return getSelectedReports().some(report => report.requiresKiaDms);
 }
 
-export async function runConfiguredReports(page) {
+export function selectedReportsRequireKiaDmsForMode(mode) {
+  if (config.dryRunReports) {
+    return false;
+  }
+
+  return getSelectedReports({ mode }).some(report => report.requiresKiaDms);
+}
+
+async function runDryReport(report, mode) {
+  logger.info('Dry-run report started', {
+    report: report.name,
+    reportId: report.id,
+    mode,
+    delayMs: config.dryRunReportDelayMs
+  });
+  await sleep(config.dryRunReportDelayMs);
+  logger.info('Dry-run report completed', {
+    report: report.name,
+    reportId: report.id,
+    mode
+  });
+
+  return {
+    name: report.name,
+    sheetName: report.name,
+    dryRun: true,
+    dbResult: {
+      action: 'dry-run',
+      rowCount: 0,
+      headerCount: 0
+    }
+  };
+}
+
+export async function runConfiguredReports(page, { mode = 'configured' } = {}) {
   const results = [];
-  const selectedReports = getSelectedReports();
+  const selectedReports = getSelectedReports({ mode });
 
   logger.info('Configured reports selected', {
     reportsToRun: config.reportsToRun,
+    mode,
     count: selectedReports.length,
     reports: selectedReports.map(report => report.id)
   });
 
   for (const report of selectedReports) {
     logger.info('Starting report', { report: report.name });
-    const result = await report.run(page);
-    results.push(result);
-    logger.info('Completed report', {
-      report: report.name,
-      sheetName: result.sheetName,
-      dbAction: result.dbResult?.action,
-      rowCount: result.dbResult?.rowCount
-    });
+    const startedAt = Date.now();
+    try {
+      await waitForConnectivity({ label: `${report.name} preflight` });
+      const result = await executeWithRetry({
+        name: report.name,
+        page,
+        fn: () => config.dryRunReports
+          ? runDryReport(report, mode)
+          : report.run(page)
+      });
+      results.push(result);
+      logger.info('Completed report', {
+        report: report.name,
+        sheetName: result.sheetName,
+        dbAction: result.dbResult?.action,
+        rowCount: result.dbResult?.rowCount,
+        durationMs: Date.now() - startedAt
+      });
+    } catch (error) {
+      logger.error('Report failed after all retries; continuing with remaining reports', {
+        report: report.name,
+        durationMs: Date.now() - startedAt,
+        err: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        }
+      });
+      results.push({
+        name: report.name,
+        sheetName: null,
+        failed: true,
+        error: {
+          name: error.name,
+          message: error.message
+        }
+      });
+    }
   }
 
   return results;

@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { createSupabaseClient } from './client.js';
+import { appendReportRowsWithPostgres } from './postgres.js';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -41,11 +42,36 @@ function rowSignature(row) {
   return JSON.stringify(entries);
 }
 
+function formatSupabaseError(error) {
+  if (!error) return 'Unknown Supabase error';
+  if (typeof error === 'string') return error;
+
+  const fields = [
+    error.message,
+    error.details,
+    error.hint,
+    error.code,
+    error.status,
+    error.statusText
+  ].filter(Boolean);
+
+  if (fields.length) {
+    return fields.join(' | ');
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 function mergeRows(existingRows, incomingRows) {
   const mergedRows = [...asArray(existingRows)];
   const signatures = new Set(mergedRows.map(rowSignature));
   let addedRowCount = 0;
   let duplicateRowCount = 0;
+  const rowsToAppend = [];
 
   for (const row of incomingRows) {
     const signature = rowSignature(row);
@@ -56,11 +82,13 @@ function mergeRows(existingRows, incomingRows) {
 
     signatures.add(signature);
     mergedRows.push(row);
+    rowsToAppend.push(row);
     addedRowCount += 1;
   }
 
   return {
     rows: mergedRows,
+    rowsToAppend,
     addedRowCount,
     duplicateRowCount
   };
@@ -93,31 +121,19 @@ export async function saveReportSheetToSupabase({
     .limit(1);
 
   if (selectError) {
-    throw new Error(`Supabase select failed: ${selectError.message}`);
+    throw new Error(`Supabase select failed: ${formatSupabaseError(selectError)}`);
   }
 
   const existing = existingRows?.[0];
   if (existing?.id) {
     const mergedHeaders = mergeHeaders(existing.headers, headers);
     const merged = mergeRows(existing.rows, rows);
-    const payload = {
-      brand,
-      sheet_name: sheetName,
+    const data = await appendReportRowsWithPostgres({
+      id: existing.id,
       headers: mergedHeaders,
-      rows: merged.rows,
-      uploaded_at: uploadedAt
-    };
-
-    const { data, error } = await supabase
-      .from(table)
-      .update(payload)
-      .eq('id', existing.id)
-      .select('id, uploaded_at')
-      .single();
-
-    if (error) {
-      throw new Error(`Supabase update failed: ${error.message}`);
-    }
+      rowsToAppend: merged.rowsToAppend,
+      uploadedAt
+    });
 
     logger.info('Supabase report row merged', {
       table,
@@ -129,7 +145,7 @@ export async function saveReportSheetToSupabase({
       incomingRowCount: rows.length,
       addedRowCount: merged.addedRowCount,
       duplicateRowCount: merged.duplicateRowCount,
-      rowCount: merged.rows.length
+      rowCount: Number(data.row_count ?? merged.rows.length)
     });
 
     return {
@@ -137,7 +153,7 @@ export async function saveReportSheetToSupabase({
       id: data.id,
       uploadedAt: data.uploaded_at,
       headerCount: mergedHeaders.length,
-      rowCount: merged.rows.length,
+      rowCount: Number(data.row_count ?? merged.rows.length),
       addedRowCount: merged.addedRowCount,
       duplicateRowCount: merged.duplicateRowCount
     };
@@ -158,7 +174,7 @@ export async function saveReportSheetToSupabase({
     .single();
 
   if (error) {
-    throw new Error(`Supabase insert failed: ${error.message}`);
+    throw new Error(`Supabase insert failed: ${formatSupabaseError(error)}`);
   }
 
   logger.info('Supabase report row inserted', {

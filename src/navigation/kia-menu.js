@@ -210,3 +210,37 @@ export async function openMcpReport(page) {
   await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
   logger.info('My Convenience List menu item clicked');
 }
+
+export async function openAdvWiseLubricantsVasReport(page) {
+  logger.info('Navigating to Service MIS > Work Profit > Operation Wise Analysis Report');
+
+  const serviceMisMenu = page.locator('li.nav_ser_mis').first();
+  await serviceMisMenu.waitFor({ state: 'visible', timeout: 15000 });
+
+  const workProfitLink = page
+    .locator('li.nav_ser_mis a')
+    .filter({ hasText: /^Work Profit$/ })
+    .first();
+
+  const reportLink = page.locator([
+    'li.nav_ser_mis a.menuItem[data-viewid="VIEW-D-00617"]',
+    'li.nav_ser_mis a.menuItem[data-url="/mis/misc/selectOperationWiseAnalysisReportMain.dms"]',
+    'li.nav_ser_mis a.menuItem[data-title="Operation Wise Analysis Report"]',
+    'li.nav_ser_mis a.menuItem:has-text("Operation Wise Analysis Report")'
+  ].join(',')).first();
+
+  if (!await workProfitLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+    const serviceMisMenuButton = page.locator('li.nav_ser_mis > a').first();
+    await clickLocator(serviceMisMenuButton, 'Service MIS sidebar menu');
+  }
+
+  await workProfitLink.waitFor({ state: 'visible', timeout: 30000 });
+
+  if (!await reportLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await clickLocator(workProfitLink, 'Work Profit menu');
+  }
+
+  await clickLocator(reportLink, 'Operation Wise Analysis Report page', 30000);
+  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+  logger.info('Operation Wise Analysis Report menu item clicked');
+}

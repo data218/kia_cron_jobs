@@ -9,6 +9,11 @@ async function ensureDir(fileOrDirPath) {
   await fs.mkdir(dir, { recursive: true });
 }
 
+function configureContextTimeouts(context) {
+  context.setDefaultTimeout(config.playwrightActionTimeoutMs);
+  context.setDefaultNavigationTimeout(config.playwrightNavigationTimeoutMs);
+}
+
 export async function sessionStateExists() {
   return fs.access(config.sessionStatePath).then(() => true).catch(() => false);
 }
@@ -34,6 +39,7 @@ export async function createBrowserSession() {
     acceptDownloads: true,
     storageState: hasStorageState ? config.sessionStatePath : undefined
   });
+  configureContextTimeouts(context);
   const page = await context.newPage();
 
   if (hasStorageState) {
@@ -64,6 +70,7 @@ export async function createBrowserSessionWithState(statePath = config.sessionSt
     acceptDownloads: true,
     storageState: hasStorageState ? statePath : undefined
   });
+  configureContextTimeouts(context);
   const page = await context.newPage();
 
   if (hasStorageState) {
@@ -89,6 +96,7 @@ export async function createPersistentBrowserSession(userDataDir = config.rsaUse
     acceptDownloads: true,
     downloadsPath: config.downloadDir
   });
+  configureContextTimeouts(context);
   const page = context.pages().find(candidate =>
     candidate.url().includes('kia.awpassistance.in')
   ) ?? context.pages()[0] ?? await context.newPage();
@@ -111,6 +119,7 @@ export async function createCdpBrowserSession(endpoint) {
   const context = browser.contexts()[0] ?? await browser.newContext({
     acceptDownloads: true
   });
+  configureContextTimeouts(context);
   const page = context.pages().find(candidate =>
     candidate.url().includes('kia.awpassistance.in')
   ) ?? context.pages()[0] ?? await context.newPage();

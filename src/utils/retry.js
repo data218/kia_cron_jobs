@@ -1,11 +1,13 @@
 import { sleep } from './sleep.js';
 import { logger } from './logger.js';
+import { waitForConnectivity } from './network.js';
 
 export async function retry(operation, { attempts, delayMs, label }) {
   let lastError;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
+      await waitForConnectivity({ label: `${label} attempt ${attempt}` });
       if (attempt > 1) {
         logger.info(`${label} retry attempt ${attempt}/${attempts}`);
       }

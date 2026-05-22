@@ -480,7 +480,7 @@ Reports are stored in Supabase:
 RO Billing currently updates this report row:
 
   brand = kia
-  sheet_name = RO Billing Report March 25
+  sheet_name = RO Billing Report
 
 Kia Call Center Complaints currently updates this report row:
 

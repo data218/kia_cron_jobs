@@ -160,7 +160,14 @@ function detectHeaderRowCount(originalRows, mergedRows) {
   const firstOriginalNonEmpty = firstOriginalRow.filter(value => normalizeHeaderPart(value)).length;
   const hasMergedGroups = hasDuplicateHeaderGroups(firstMergedRow);
   const hasSparseGroupRow = firstOriginalNonEmpty > 0 && firstOriginalBlanks >= firstOriginalNonEmpty;
+  const firstRowLooksLikeCompleteHeaders = !hasMergedGroups &&
+    firstOriginalNonEmpty >= 8 &&
+    headerLikeRatio(firstMergedRow) >= 0.8;
   const secondRowLooksLikeHeaders = headerLikeRatio(secondMergedRow) >= 0.6;
+
+  if (firstRowLooksLikeCompleteHeaders) {
+    return 1;
+  }
 
   return (hasMergedGroups || hasSparseGroupRow) && secondRowLooksLikeHeaders ? 2 : 1;
 }

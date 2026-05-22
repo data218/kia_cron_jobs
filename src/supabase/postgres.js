@@ -12,16 +12,9 @@ function quoteIdentifier(value) {
   return `"${text}"`;
 }
 
-function reportsTableSql() {
-  return `public.${quoteIdentifier(config.supabaseReportsTable)}`;
-}
+export { quoteIdentifier };
 
-export async function appendReportRowsWithPostgres({
-  id,
-  headers,
-  rowsToAppend,
-  uploadedAt
-}) {
+export async function withPostgresClient(fn) {
   requireSecret('DATABASE_URL', config.databaseUrl);
 
   const client = new Client({
@@ -33,6 +26,23 @@ export async function appendReportRowsWithPostgres({
 
   await client.connect();
   try {
+    return await fn(client);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+function reportsTableSql() {
+  return `public.${quoteIdentifier(config.supabaseReportsTable)}`;
+}
+
+export async function appendReportRowsWithPostgres({
+  id,
+  headers,
+  rowsToAppend,
+  uploadedAt
+}) {
+  return withPostgresClient(async client => {
     const result = await client.query(
       `
         update ${reportsTableSql()}
@@ -52,7 +62,5 @@ export async function appendReportRowsWithPostgres({
     );
 
     return result.rows[0];
-  } finally {
-    await client.end().catch(() => {});
-  }
+  });
 }

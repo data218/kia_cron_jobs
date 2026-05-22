@@ -16,11 +16,40 @@ export async function fillDate(page, selector, value) {
     await input.evaluate((element, nextValue) => {
       element.removeAttribute('readonly');
       element.value = nextValue;
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true }));
     }, value);
   }
+
+  await input.evaluate((element, nextValue) => {
+    element.removeAttribute('readonly');
+    element.value = nextValue;
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    element.dispatchEvent(new Event('blur', { bubbles: true }));
+
+    const win = element.ownerDocument?.defaultView;
+    const kendo = win?.kendo;
+    const jquery = win?.jQuery ?? win?.$;
+    if (kendo && jquery) {
+      const widget = jquery(element).data('kendoDatePicker') ??
+        jquery(element).data('kendoMaskedTextBox') ??
+        jquery(element).data('kendoExtMaskedDatePicker') ??
+        jquery(element).data('extmaskeddatepicker');
+      if (widget?.value) {
+        widget.value(nextValue);
+      }
+      if (widget?.trigger) {
+        widget.trigger('change');
+      }
+    }
+  }, value);
+
   await input.press('Tab').catch(() => {});
+}
+
+export async function getInputValue(page, selector) {
+  const input = page.locator(selector).first();
+  await input.waitFor({ state: 'visible', timeout: 30000 });
+  return input.inputValue();
 }
 
 export async function clickSearch(page) {

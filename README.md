@@ -140,7 +140,8 @@ CRM -> Complaint -> KIN Call Center Complaint List
 RO Billing behavior:
 
 - Uses `#sBillDateFromDate` and `#sBillDateToDate`
-- Date range is one month before plus one day through today
+- Temporarily runs historical backfill from `2025-03-01` through today in 30-day chunks
+- Set `RO_BILLING_BACKFILL_ENABLED=false` after backfill to restore current-month-to-date logic
 - Clicks `#btnSearch`
 - Waits for the Kendo grid to finish loading
 - Selects Kendo pager size `300`
@@ -149,7 +150,7 @@ RO Billing behavior:
 - Parses the downloaded workbook in memory
 - Updates or inserts one row in Supabase table `business_excellence_am_kia_new`
 - Stores `headers` and `rows` as JSONB
-- Uses `sheet_name = RO Billing Report March 25`
+- Uses `sheet_name = RO Billing Report`
 
 Kia Call Center Complaints behavior:
 
@@ -171,7 +172,10 @@ Supabase config:
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_REPORTS_TABLE=business_excellence_am_kia_new
-RO_BILLING_SHEET_NAME=RO Billing Report March 25
+RO_BILLING_SHEET_NAME=RO Billing Report
+RO_BILLING_BACKFILL_ENABLED=true
+RO_BILLING_BACKFILL_START_DATE=2025-03-01
+RO_BILLING_BETWEEN_CHUNKS_DELAY_MS=4000
 KIA_CALL_CENTER_COMPLAINTS_SHEET_NAME=Kia call center complaints
 ```
 

@@ -36,6 +36,37 @@ Main runtime flow:
    public.business_excellence_am_kia_new
 
 Supabase storage model:
+- Current production direction is relational analytics tables plus JSON backup.
+- The old JSON table remains available as raw backup/debug storage:
+  public.business_excellence_am_kia_new
+- New report uploads still update the JSON backup, then also write the new rows into a report-specific SQL table.
+- Dedicated relational tables are created automatically from report sheet names.
+- Current relational tables:
+  ro_billing_report
+  open_ro_yearly
+  ew_report
+  mcp_report
+  rsa_report
+  psf_yearly
+  adv_wise_lubricants_vas
+  kia_call_center_complaints
+- Relational table names and columns are normalized to lowercase snake_case.
+- Each relational table includes:
+  id bigserial primary key
+  row_hash text unique
+  uploaded_at timestamptz default now()
+- Date-looking columns are stored as DATE.
+- Amount/tax/count/rate/quantity/mileage style columns are stored as NUMERIC.
+- Everything else is stored as TEXT.
+- Inserts are batched and deduped with row_hash.
+- Existing row_hash conflicts update the existing relational row instead of creating duplicates.
+- Indexes are created automatically for row_hash, uploaded_at, date columns, bill_date, ro_date, service_advisor, service_type, and work_type when present.
+- Migration command:
+  npm run migrate:relational
+- Migration can target one sheet:
+  npm run migrate:relational -- "Kia call center complaints"
+
+Legacy JSON backup model:
 - One row per report/sheet.
 - brand = kia
 - sheet_name identifies the report dataset.
@@ -144,7 +175,7 @@ Report id:
 - ro-billing
 
 Sheet name:
-- RO Billing Report March 25
+- RO Billing Report
 
 Navigation:
 - Service MIS sidebar
@@ -159,14 +190,25 @@ Key selectors:
 
 Date logic:
 - End date = current execution date.
-- Start date = one month before + one day.
+- Historical backfill is currently disabled again with:
+  RO_BILLING_BACKFILL_ENABLED=false
+- Normal rolling logic is current month start date to current execution date.
+- Historical backfill can be enabled with:
+  RO_BILLING_BACKFILL_ENABLED=true
+  RO_BILLING_BACKFILL_START_DATE=2025-03-01
+- In backfill mode, the report runs from 01 March 2025 to the current execution date in 30-day chunks.
+- Historical backfill test completed successfully on 2026-05-22 and appended 129 new rows to sheet_name = RO Billing Report.
+- Re-test fix: RO Billing now fills end date first, then start date, and verifies both input values before Search so Kendo does not clear the start date when moving between chunks.
+- Re-test completed successfully on 2026-05-22. It parsed 4059 incoming rows, appended 3888 new non-duplicate rows, skipped 171 duplicates, and brought the RO Billing Report sheet to 5510 rows.
 
 Storage:
-- Uses shared paged export flow.
+- Exports every chunk/page locally under downloads/report-chunks/ro-billing/.
+- Merges all chunk/page Excel files into one dataset.
+- Saves to sheet_name = RO Billing Report through the shared Supabase storage flow.
 - Temporary page exports are deleted after successful Supabase upload.
 
 Status:
-- Working.
+- Working; restored to normal rolling current-month-to-date logic after successful historical backfill re-test.
 
 
 2. Kia Call Center Complaints
@@ -583,6 +625,23 @@ Supabase:
 - src/supabase/client.js
 - src/supabase/report-store.js
 - src/supabase/postgres.js
+- src/supabase/relational-store.js
+- src/supabase/migrate-json-to-relational.js
+
+Relational migration status:
+- JSON-to-relational migration was run on 2026-05-22.
+- Current relational row counts:
+  adv_wise_lubricants_vas = 29672
+  ew_report = 20
+  kia_call_center_complaints = 22
+  mcp_report = 10
+  open_ro_yearly = 14
+  psf_yearly = 1159
+  ro_billing_report = 5714
+  rsa_report = 126
+- Kia call center complaints had legacy mixed headers in the JSON backup from an earlier parse.
+- The JSON sheet was normalized back to its 37 real headers before rebuilding the relational table.
+- The relational migration skipped one duplicate complaint row by row_hash.
 
 Production operations:
 - ecosystem.config.cjs

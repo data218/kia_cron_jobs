@@ -382,7 +382,7 @@ Supabase table:
 RO Billing target row:
 
   brand = kia
-  sheet_name = RO Billing Report March 25
+  sheet_name = RO Billing Report
 
 Run cron once:
 

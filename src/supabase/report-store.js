@@ -2,6 +2,7 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { createSupabaseClient } from './client.js';
 import { appendReportRowsWithPostgres } from './postgres.js';
+import { saveReportSheetToRelationalTable } from './relational-store.js';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -94,6 +95,29 @@ function mergeRows(existingRows, incomingRows) {
   };
 }
 
+async function saveRelationalBackup({ sheetName, headers, rows }) {
+  try {
+    return await saveReportSheetToRelationalTable({
+      sheetName,
+      headers,
+      rows
+    });
+  } catch (error) {
+    logger.error('Relational report save failed; JSON backup save remains intact', {
+      sheetName,
+      err: {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      }
+    });
+    return {
+      failed: true,
+      error: error.message
+    };
+  }
+}
+
 export async function saveReportSheetToSupabase({
   brand = 'kia',
   sheetName,
@@ -135,6 +159,12 @@ export async function saveReportSheetToSupabase({
       uploadedAt
     });
 
+    const relationalResult = await saveRelationalBackup({
+      sheetName,
+      headers: mergedHeaders,
+      rows: merged.rowsToAppend
+    });
+
     logger.info('Supabase report row merged', {
       table,
       id: data.id,
@@ -145,7 +175,11 @@ export async function saveReportSheetToSupabase({
       incomingRowCount: rows.length,
       addedRowCount: merged.addedRowCount,
       duplicateRowCount: merged.duplicateRowCount,
-      rowCount: Number(data.row_count ?? merged.rows.length)
+      rowCount: Number(data.row_count ?? merged.rows.length),
+      relationalTable: relationalResult.tableName,
+      relationalInsertedRowCount: relationalResult.insertedRowCount,
+      relationalDuplicateRowCount: relationalResult.duplicateRowCount,
+      relationalFailed: relationalResult.failed
     });
 
     return {
@@ -155,7 +189,8 @@ export async function saveReportSheetToSupabase({
       headerCount: mergedHeaders.length,
       rowCount: Number(data.row_count ?? merged.rows.length),
       addedRowCount: merged.addedRowCount,
-      duplicateRowCount: merged.duplicateRowCount
+      duplicateRowCount: merged.duplicateRowCount,
+      relationalResult
     };
   }
 
@@ -177,14 +212,24 @@ export async function saveReportSheetToSupabase({
     throw new Error(`Supabase insert failed: ${formatSupabaseError(error)}`);
   }
 
+  const relationalResult = await saveRelationalBackup({
+    sheetName,
+    headers,
+    rows
+  });
+
   logger.info('Supabase report row inserted', {
     table,
     id: data.id,
     brand,
     sheetName,
     headerCount: headers.length,
-    rowCount: rows.length
+    rowCount: rows.length,
+    relationalTable: relationalResult.tableName,
+    relationalInsertedRowCount: relationalResult.insertedRowCount,
+    relationalDuplicateRowCount: relationalResult.duplicateRowCount,
+    relationalFailed: relationalResult.failed
   });
 
-  return { action: 'inserted', id: data.id, uploadedAt: data.uploaded_at };
+  return { action: 'inserted', id: data.id, uploadedAt: data.uploaded_at, relationalResult };
 }

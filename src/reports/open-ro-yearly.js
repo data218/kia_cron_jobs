@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { config } from '../config.js';
 import { openOpenRoYearlyReport } from '../navigation/kia-menu.js';
 import { findContextWithVisibleSelector } from '../playwright/frame-resolver.js';
@@ -22,6 +23,21 @@ function chunkFileName(chunk) {
   const start = chunk.startIso.replaceAll('-', '_');
   const end = chunk.endIso.replaceAll('-', '_');
   return `open_ro_${start}_to_${end}`;
+}
+
+async function findExistingChunkExports(chunkDir, filenameBase) {
+  const files = await fs.readdir(chunkDir).catch(error => {
+    if (error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  });
+
+  return files
+    .filter(file => file === `${filenameBase}.xlsx` || file.startsWith(`${filenameBase}_page_`))
+    .filter(file => file.toLowerCase().endsWith('.xlsx'))
+    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
+    .map(file => path.join(chunkDir, file));
 }
 
 async function resolveOpenRoContext(page) {
@@ -76,6 +92,18 @@ export async function downloadOpenRoYearlyReport(page) {
       endDate: chunk.endPortal
     });
 
+    const filenameBase = chunkFileName(chunk);
+    const existingChunkFiles = await findExistingChunkExports(chunkDir, filenameBase);
+    if (existingChunkFiles.length) {
+      logger.info('Reusing existing Open RO chunk exports', {
+        chunk: `${index + 1}/${chunks.length}`,
+        filenameBase,
+        fileCount: existingChunkFiles.length
+      });
+      exportFiles.push(...existingChunkFiles);
+      continue;
+    }
+
     await fillOpenRoDateRange(reportContext, chunk);
 
     await clickSearch(reportContext);
@@ -91,7 +119,7 @@ export async function downloadOpenRoYearlyReport(page) {
 
     const chunkPageFiles = await exportAllGridPagesToFiles(reportContext, {
       outputDir: chunkDir,
-      filenameBase: chunkFileName(chunk),
+      filenameBase,
       pageSize: config.openRoYearlyPageSize
     });
     exportFiles.push(...chunkPageFiles);

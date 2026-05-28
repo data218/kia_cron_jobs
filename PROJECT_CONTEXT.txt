@@ -8,6 +8,11 @@ Update this file whenever a new cron/report feature is added, report navigation 
 Do not store secrets in this file.
 Do not paste passwords, bot tokens, Supabase keys, OTPs, or private URLs here.
 
+KT / handover document:
+- KT_HANDOVER.md
+- This file is the structured knowledge-transfer analysis for a future maintainer.
+- Keep KT_HANDOVER.md updated when architecture, schedules, storage behavior, or operational processes change.
+
 
 CURRENT ARCHITECTURE
 
@@ -37,9 +42,10 @@ Main runtime flow:
 
 Supabase storage model:
 - Current production direction is relational analytics tables plus JSON backup.
-- The old JSON table remains available as raw backup/debug storage:
+- The old JSON table remains optional raw backup/debug storage:
   public.business_excellence_am_kia_new
-- New report uploads still update the JSON backup, then also write the new rows into a report-specific SQL table.
+- New report uploads write the report-specific SQL table first.
+- If the old JSON backup table is missing or unavailable, the report logs a warning and still succeeds after the relational save.
 - Dedicated relational tables are created automatically from report sheet names.
 - Current relational tables:
   ro_billing_report
@@ -49,6 +55,7 @@ Supabase storage model:
   rsa_report
   psf_yearly
   adv_wise_lubricants_vas
+  operation_wise_analysis_report
   kia_call_center_complaints
 - Relational table names and columns are normalized to lowercase snake_case.
 - Each relational table includes:
@@ -60,6 +67,8 @@ Supabase storage model:
 - Everything else is stored as TEXT.
 - Inserts are batched and deduped with row_hash.
 - Existing row_hash conflicts update the existing relational row instead of creating duplicates.
+- Duplicate detection is based on the full normalized row values that are saved into SQL, excluding only system columns such as id, row_hash, and uploaded_at.
+- Do not narrow row_hash to one or two business key columns; reports can have changed values under the same bill/RO/invoice/complaint number and those must be treated as distinct full-row records.
 - Indexes are created automatically for row_hash, uploaded_at, date columns, bill_date, ro_date, service_advisor, service_type, and work_type when present.
 - Migration command:
   npm run migrate:relational
@@ -119,8 +128,11 @@ Cron schedules:
   REGULAR_REPORTS_CRON_SCHEDULE=0 10-18 * * *
   Runs hourly from 10:00 AM through 6:00 PM.
 - Open RO Yearly:
-  OPEN_RO_YEARLY_CRON_SCHEDULE=0 10,18 * * *
-  Runs only at 10:00 AM and 6:00 PM.
+  OPEN_RO_YEARLY_CRON_SCHEDULE=0 18 * * *
+  Runs only once per day at 6:00 PM.
+- Kia Call Center Complaints:
+  KIA_CALL_CENTER_COMPLAINTS_CRON_SCHEDULE=0 18 * * *
+  Runs only once per day at 6:00 PM.
 - Scheduler uses one global in-process lock.
 - If any lane is still running when another tick fires, the new tick is skipped.
 
@@ -233,10 +245,18 @@ Filters:
 - Business Type = Service
 - Start date: #sCompStartDate
 - End date: #sCompEndDate
+- Temporary testing mode flag:
+  KIA_CALL_CENTER_COMPLAINTS_NO_SEARCH_BACKFILL=true
 
 Date logic:
-- End date = current execution date.
-- Start date = exactly three months before current execution date.
+- Normal production logic:
+  end date = current execution date.
+  start date = exactly three months before current execution date.
+- Temporary no-search backfill test logic:
+  start date = 1 January of previous year.
+  end date is left unchanged in the portal.
+  Search button is skipped.
+  The bot selects 300 rows directly, exports, parses, and saves.
 
 Storage:
 - Uses shared paged export flow.
@@ -244,6 +264,31 @@ Storage:
 
 Status:
 - Implemented.
+- Normal production automation restored:
+  REPORTS_TO_RUN=all
+  TEST_SINGLE_REPORT=false
+  TEST_REPORT_NAME=
+  KIA_CALL_CENTER_COMPLAINTS_NO_SEARCH_BACKFILL=false
+  OTP_PROVIDER=webhook
+  KIA_FORCE_LOGIN=false
+- Schedule changed on 2026-05-26:
+  Kia Call Center Complaints is excluded from the regular hourly lane and runs only once daily at 6:00 PM.
+- 2026-05-26 temporary no-search backfill issue/fix:
+  the DMS export omitted headers, so the first data row was initially parsed as headers and created bad columns.
+  The complaints cron now uses forced real export headers for all complaint exports because the DMS export can omit headers in both normal and no-search modes.
+  Shared relational row_hash now uses stable business keys such as complaint_no when available and ignores display serial columns.
+  Malformed rows were deleted from kia_call_center_complaints.
+  Bad columns created from row values were dropped.
+  Table verification after cleanup: kia_call_center_complaints = 42 rows.
+- 2026-05-28 full manual all-report run exposed the same missing-header issue in normal complaints mode.
+  The parser was changed to always apply COMPLAINT_EXPORT_HEADERS.
+  The 12 malformed rows from that run were deleted, accidental columns were dropped, and the complaints report was rerun once.
+  Post-fix verification: kia_call_center_complaints = 44 rows, missing complaint_no = 0, distinct row_hash = 44, lingering bad columns = 0.
+- 2026-05-28 duplicate logic update:
+  relational row_hash now uses all normalized saved row values, not shortcut keys such as complaint_no, bill_no, invoice_no, or ro_no.
+  Existing relational row_hash values were rebuilt to the full-row logic.
+  True full-row duplicates removed during rebuild: PSF Yearly 9, MCP Report 1, RSA Report 12.
+  MCP was rerun after rebuild so uploaded_at reflects 2026-05-28.
 
 
 3. Open RO Yearly
@@ -296,12 +341,31 @@ Post-processing:
 - Parse every exported chunk/page file.
 - Merge rows into a single dataset.
 - Normalize headers by preserving first-seen header order.
-- Upload merged dataset to Supabase sheet_name = Open RO Yearly.
+- Upload merged dataset to the open_ro_yearly relational table through sheet_name = Open RO Yearly.
 - After Supabase upload succeeds, delete the local chunk folder.
 - If Supabase upload fails, keep local chunk files for debugging.
+- On retry, existing chunk Excel files are reused before touching date fields, so a DB-save failure after a full export does not force the bot to re-enter March 2025 and re-download everything.
 
 Status:
 - Working after date-entry fix.
+- Schedule changed on 2026-05-26 to run once daily at 6:00 PM.
+- 2026-05-26 failure root cause:
+  the full export reached chunk 16/16, but DB save failed because the legacy JSON table business_excellence_am_kia_new was missing from Supabase schema cache.
+  saveReportSheetToSupabase now treats JSON backup as optional after relational save.
+- The preserved 2026-05-26 chunk exports were merged and saved manually without re-opening DMS:
+  16 export files, 48 headers, 26 rows.
+  Inserted 26 rows into open_ro_yearly.
+  Local folder downloads/report-chunks/open-ro-yearly/2026-05-26 was deleted after save.
+- Current open_ro_yearly verification after save:
+  row_count = 40
+  min_ro_date = 2026-04-09
+  max_ro_date = 2026-05-25
+- Manual OTP testing has been restored back to normal automation:
+  OTP_PROVIDER=webhook
+  KIA_FORCE_LOGIN=false
+  TEST_SINGLE_REPORT=false
+  TEST_REPORT_NAME=
+  REPORTS_TO_RUN=all
 
 
 4. PSF Yearly
@@ -494,7 +558,83 @@ Status:
 - Implemented. Needs live portal test.
 
 
-8. RSA Report
+8. Operation Wise Analysis Report
+
+Report id:
+- operation-wise-analysis-report
+
+Sheet/table name:
+- Operation Wise Analysis Report
+- Relational table: operation_wise_analysis_report
+
+Navigation:
+- Use the same Service MIS sidebar / wrench icon as other Service MIS reports.
+- Sidebar selector:
+  li.nav_ser_mis
+- Open Work Profit.
+- Select Operation Wise Analysis Report.
+
+Filters:
+- Report Type:
+  #reportType
+- Date Type:
+  #dateType
+- Start date:
+  #startDate
+- End date:
+  #endDate
+
+Report type flow:
+- Run Operation first.
+- Then select Part and repeat the same full date loop.
+- Both report types are saved into one relational table.
+- Every saved row includes report_type = Operation or report_type = Part.
+- Every saved row also includes real DATE columns:
+  report_month
+  report_period_start
+  report_period_end
+- These fields identify the selected DMS date range/month for dashboard filtering and should be used instead of uploaded_at for report-period analytics.
+
+Date logic:
+- Normal production logic is active.
+- Start date = first day of current month.
+- End date = current execution date.
+- Date ranges are split into 30-day inclusive chunks because DMS rejects larger ranges.
+- Historical backfill from 2025-03-01 to current date was tested successfully and is now disabled.
+
+Pagination/export:
+- For each report type and date chunk:
+  search
+  wait for grid
+  select 300 rows
+  export every page
+  parse exported Excel
+  save parsed rows to operation_wise_analysis_report
+- The module saves chunk-by-chunk/page-merge-by-page-merge instead of holding the full historical dataset in memory.
+
+Storage:
+- This module writes directly to the relational table through src/supabase/relational-store.js.
+- It does not use the old JSON sheet table as the primary store.
+- The relational table is auto-created if missing.
+- Deduplication is handled by row_hash unique index.
+- row_hash includes report_type and row values, preventing duplicate inserts across reruns, retries, pagination exports, and overlapping historical chunks.
+
+OTP mode:
+- Normal SMS Forwarder/webhook OTP automation is restored.
+- Current .env should use:
+  OTP_PROVIDER=webhook
+  KIA_FORCE_LOGIN=false
+  TEST_SINGLE_REPORT=false
+  REPORTS_TO_RUN=all
+
+Status:
+- Historical backfill test completed successfully.
+- Final historical rebuild completed with report period date columns.
+- Duplicate check passed: operation_wise_analysis_report had 6597 rows and 0 duplicate row_hash values after rebuild.
+- Restored to normal current-month-to-date hourly cron behavior.
+
+
+9. RSA Report
 
 Report id:
 - rsa-report
@@ -605,6 +745,7 @@ Report modules:
 - src/reports/ew-report.js
 - src/reports/mcp-report.js
 - src/reports/adv-wise-lubricants-vas.js
+- src/reports/operation-wise-analysis-report.js
 - src/reports/rsa-report.js
 
 Common report helpers:
@@ -635,7 +776,7 @@ Relational migration status:
   ew_report = 20
   kia_call_center_complaints = 22
   mcp_report = 10
-  open_ro_yearly = 14
+  open_ro_yearly = 40
   psf_yearly = 1159
   ro_billing_report = 5714
   rsa_report = 126
@@ -679,6 +820,13 @@ Current testing preference:
 - Avoid forcing all completed reports to run sequentially during development.
 - Restore sequential all-report behavior after all remaining crons are built and tested.
 - Use TEST_SINGLE_REPORT=true and TEST_REPORT_NAME=<report-id> for this; do not change production cron lanes.
+- Operation Wise Analysis Report is now part of REPORTS_TO_RUN=all and runs in the regular hourly lane.
+- Open RO Yearly manual OTP testing is complete and normal automation is restored:
+  OTP_PROVIDER=webhook
+  KIA_FORCE_LOGIN=false
+  TEST_SINGLE_REPORT=false
+  TEST_REPORT_NAME=
+  REPORTS_TO_RUN=all
 
 Delay policy:
 - Intentional per-step sleeps/waits should be 5000ms or less.
@@ -694,6 +842,17 @@ Production retry/alert policy:
 - A failed report is logged and the master scheduler continues with remaining reports.
 - Health status is written to logs/health.json.
 
+Dashboard materialized view refresh:
+- After a report lane finishes with zero failed imports, src/cron/scheduler.js refreshes dashboard materialized views before marking the job complete.
+- Refresh helper: src/supabase/materialized-views.js.
+- Views refreshed, in order:
+  - workshop_performance_jc_summary_v1
+  - workshop_operation_addon_summary_v1
+- Refresh SQL uses REFRESH MATERIALIZED VIEW CONCURRENTLY and runs through a standalone Postgres client without an explicit transaction.
+- If any import report fails, the view refresh is skipped and the scheduler logs the skipped reason.
+- If a refresh fails, the helper logs the failed view and rethrows so the scheduler/PM2 logs the job failure.
+- Dry-run report lanes skip view refresh because no source-table imports were committed.
+
 Scheduler sequence test:
 - src/cron/sequential-test.js
 - npm run test:sequence
@@ -704,12 +863,15 @@ Scheduler sequence test:
 Local PM2 status:
 - PM2 process name: kia-cron-job
 - OTP webhook PM2 process name: kia-otp-webhook
+- Ngrok tunnel PM2 process name: kia-ngrok
 - PM2 config file: ecosystem.config.cjs
 - Local PM2 setup was started and saved with pm2 save.
 - PM2 runs src/cron/scheduler.js from C:\Users\HP\Downloads\Kia_Cron_Job.
 - Scheduler entrypoint detection uses resolved filesystem paths so it works under PM2 on Windows and under Node directly.
 - PM2 passes --scheduler explicitly so the scheduler lane registration is not dependent on PM2 argv path behavior.
 - PM2 also runs src/otp/webhook-server.js so npm run otp:webhook does not need to stay open in a terminal.
+- PM2 also runs src/otp/ngrok-tunnel.js so the public ngrok tunnel does not need to stay open in a separate terminal.
+- If kia-ngrok fails with ERR_NGROK_334, another ngrok process already owns the reserved URL. Stop the stray ngrok process and restart kia-ngrok with PM2.
 
 Wi-Fi / network recovery:
 - src/utils/network.js checks connectivity using NETWORK_CHECK_URL.
@@ -718,6 +880,18 @@ Wi-Fi / network recovery:
 - Each retry attempt waits for connectivity before running.
 - Playwright browser contexts set default action and navigation timeouts from PLAYWRIGHT_ACTION_TIMEOUT_MS and PLAYWRIGHT_NAVIGATION_TIMEOUT_MS.
 - This prevents a dropped Wi-Fi connection from leaving the automation stuck forever on a loading page; it should fail, wait for network recovery, and retry.
+
+OTP webhook public tunnel:
+- The cron reads OTP locally from:
+  OTP_WEBHOOK_BASE_URL=http://127.0.0.1:3333
+- SMS Forwarder should send OTP SMS to the public ngrok tunnel:
+  OTP_PUBLIC_WEBHOOK_URL=https://endocentric-luna-plectognathic.ngrok-free.dev
+- SMS Forwarder full URL format:
+  https://endocentric-luna-plectognathic.ngrok-free.dev/sms?token=<OTP_WEBHOOK_TOKEN>
+- Do not replace OTP_WEBHOOK_BASE_URL with the ngrok URL; it is intentionally local for the cron process.
+- Health checks verified on 2026-05-27:
+  - http://127.0.0.1:3333/
+  - https://endocentric-luna-plectognathic.ngrok-free.dev/
 
 
 VALIDATION COMMANDS

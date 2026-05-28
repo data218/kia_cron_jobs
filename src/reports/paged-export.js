@@ -179,13 +179,13 @@ export async function exportAllGridPagesToFiles(page, {
   return pageFiles;
 }
 
-export async function mergeExcelFiles(filePaths) {
+export async function mergeExcelFiles(filePaths, parseOptions = {}) {
   const headers = [];
   const seenHeaders = new Set();
   const parsedFiles = [];
 
   for (const filePath of filePaths) {
-    const parsed = await parseExcelFile(filePath);
+    const parsed = await parseExcelFile(filePath, parseOptions);
     parsed.headers.forEach(header => addHeader(headers, seenHeaders, header));
     parsedFiles.push({ filePath, parsed });
 
@@ -220,6 +220,7 @@ export async function exportPagedGridToSupabase(page, {
   sheetName,
   filenameBase,
   pageSize,
+  forcedHeaders,
   outputDir = buildRunDir(reportId)
 }) {
   const pageFiles = await exportAllGridPagesToFiles(page, {
@@ -228,7 +229,7 @@ export async function exportPagedGridToSupabase(page, {
     pageSize
   });
 
-  const merged = await mergeExcelFiles(pageFiles);
+  const merged = await mergeExcelFiles(pageFiles, { forcedHeaders });
   const dbResult = await saveReportSheetToSupabase({
     brand: 'kia',
     sheetName,

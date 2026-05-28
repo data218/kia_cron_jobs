@@ -8,10 +8,16 @@ const IMPORTANT_INDEX_COLUMNS = new Set([
   'advisor',
   'service_advisor',
   'service_type',
+  'report_type',
   'work_type',
   'uploaded_at'
 ]);
 const RESERVED_COLUMNS = new Set(['id', 'row_hash', 'uploaded_at']);
+const NON_BUSINESS_HASH_COLUMNS = new Set([
+  'id',
+  'row_hash',
+  'uploaded_at'
+]);
 
 function normalizeSqlName(value, fallback = 'column') {
   const normalized = String(value ?? '')
@@ -50,6 +56,11 @@ function headerLooksDate(header) {
   const normalized = normalizeSqlName(header);
   return /(^|_)date($|_)/.test(normalized) ||
     normalized.endsWith('_dt') ||
+    normalized === 'report_month' ||
+    normalized === 'report_period_start' ||
+    normalized === 'report_period_end' ||
+    normalized.endsWith('_period_start') ||
+    normalized.endsWith('_period_end') ||
     normalized.includes('closing_date') ||
     normalized.includes('uploaded_at');
 }
@@ -182,26 +193,43 @@ function columnSqlType(type) {
   return 'TEXT';
 }
 
-function rowSignature(row) {
-  const normalized = Object.entries(row ?? {})
+function normalizedRowEntries(row) {
+  return Object.entries(row ?? {})
     .map(([key, value]) => [normalizeSqlName(key), String(value ?? '').trim()])
-    .filter(([key, value]) => key && value !== '')
+    .filter(([key, value]) => key && value !== '' && !NON_BUSINESS_HASH_COLUMNS.has(key))
     .sort(([left], [right]) => left.localeCompare(right));
+}
 
+function hashEntries(entries) {
   return crypto
     .createHash('sha256')
-    .update(JSON.stringify(normalized))
+    .update(JSON.stringify(entries))
     .digest('hex');
 }
 
-function normalizeValue(value, column, stats) {
+export function rowSignature(row) {
+  return hashEntries(normalizedRowEntries(row));
+}
+
+function rowSignatureFromNormalizedValues(columns, normalizedValues) {
+  const entries = columns
+    .map((column, index) => [column.name, normalizedValues[index]])
+    .filter(([key]) => key && !NON_BUSINESS_HASH_COLUMNS.has(key))
+    .sort(([left], [right]) => left.localeCompare(right));
+
+  return hashEntries(entries);
+}
+
+function normalizeValue(value, column, stats = null) {
   if (isEmpty(value)) return null;
 
   if (column.type === 'date') {
     const parsed = parseDateValue(value, column.slashDateFormat);
     if (!parsed) {
-      stats.invalidDates += 1;
-      stats.invalidDateColumns[column.name] = (stats.invalidDateColumns[column.name] ?? 0) + 1;
+      if (stats) {
+        stats.invalidDates += 1;
+        stats.invalidDateColumns[column.name] = (stats.invalidDateColumns[column.name] ?? 0) + 1;
+      }
       return null;
     }
     return parsed;
@@ -210,8 +238,10 @@ function normalizeValue(value, column, stats) {
   if (column.type === 'numeric') {
     const parsed = parseNumericValue(value);
     if (parsed == null) {
-      stats.invalidNumerics += 1;
-      stats.invalidNumericColumns[column.name] = (stats.invalidNumericColumns[column.name] ?? 0) + 1;
+      if (stats) {
+        stats.invalidNumerics += 1;
+        stats.invalidNumericColumns[column.name] = (stats.invalidNumericColumns[column.name] ?? 0) + 1;
+      }
       return null;
     }
     return parsed;
@@ -291,9 +321,10 @@ async function insertBatch(client, tableName, columns, batch, uploadedAt, stats)
   const placeholders = [];
 
   batch.forEach((row, rowIndex) => {
+    const normalizedValues = columns.map(column => normalizeValue(row[column.header], column, stats));
     const rowValues = [
-      rowSignature(row),
-      ...columns.map(column => normalizeValue(row[column.header], column, stats)),
+      rowSignatureFromNormalizedValues(columns, normalizedValues),
+      ...normalizedValues,
       uploadedAt
     ];
     const rowPlaceholders = rowValues.map((value, columnIndex) => {
@@ -340,7 +371,8 @@ export async function saveReportSheetToRelationalTable({
   const seenIncomingRows = new Set();
   const uniqueRows = [];
   for (const row of rows) {
-    const signature = rowSignature(row);
+    const normalizedValues = columns.map(column => normalizeValue(row[column.header], column));
+    const signature = rowSignatureFromNormalizedValues(columns, normalizedValues);
     if (seenIncomingRows.has(signature)) {
       continue;
     }

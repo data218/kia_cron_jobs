@@ -32,6 +32,22 @@ module.exports = {
       env: {
         NODE_ENV: 'production'
       }
+    },
+    {
+      name: 'kia-ngrok',
+      script: './src/otp/ngrok-tunnel.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '256M',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-ngrok-out.log',
+      error_file: './logs/pm2-ngrok-error.log',
+      env: {
+        NODE_ENV: 'production'
+      }
     }
   ]
 };

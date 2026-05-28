@@ -49,11 +49,13 @@ export async function loginToKiaDms() {
   try {
     let loginPageAlreadyLoaded = false;
 
-    if (hasStorageState) {
+    if (hasStorageState && !config.kiaForceLogin) {
       if (await hasExistingSession(page)) {
         return { browser, context, page, reusedSession: true };
       }
       loginPageAlreadyLoaded = true;
+    } else if (hasStorageState && config.kiaForceLogin) {
+      logger.info('KIA_FORCE_LOGIN enabled; saved session check skipped for manual OTP testing');
     }
 
     if (!loginPageAlreadyLoaded) {

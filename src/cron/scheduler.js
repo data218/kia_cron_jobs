@@ -14,6 +14,7 @@ import { logger } from '../utils/logger.js';
 import { ensureRuntimeDirs } from '../utils/runtime-dirs.js';
 import { writeHealthStatus } from '../utils/health.js';
 import { waitForConnectivity } from '../utils/network.js';
+import { refreshDashboardMaterializedViews } from '../supabase/materialized-views.js';
 
 let running = false;
 
@@ -76,6 +77,19 @@ export async function runKiaDmsJob(mode = 'configured') {
     });
 
     const failedReports = reports.filter(report => report.failed);
+    if (!failedReports.length && !config.dryRunReports) {
+      logger.info('All imports completed successfully; refreshing dashboard materialized views');
+      await refreshDashboardMaterializedViews();
+      logger.info('Dashboard materialized views refreshed after successful imports');
+    } else if (failedReports.length) {
+      logger.warn('Skipping dashboard materialized view refresh because one or more imports failed', {
+        failedReportCount: failedReports.length,
+        failedReports: failedReports.map(report => report.name)
+      });
+    } else {
+      logger.warn('Skipping dashboard materialized view refresh because DRY_RUN_REPORTS is enabled');
+    }
+
     logger.info('Report automation job finished', {
       failedReportCount: failedReports.length
     });
@@ -140,4 +154,10 @@ if (shouldRunFromCli && process.argv.includes('--once')) {
     mode: 'open-ro-yearly'
   });
   cron.schedule(config.openRoYearlyCronSchedule, () => runKiaDmsJob('open-ro-yearly'));
+
+  logger.info('Scheduling Kia Call Center Complaints automation job', {
+    cron: config.kiaCallCenterComplaintsCronSchedule,
+    mode: 'kia-call-center-complaints'
+  });
+  cron.schedule(config.kiaCallCenterComplaintsCronSchedule, () => runKiaDmsJob('kia-call-center-complaints'));
 }

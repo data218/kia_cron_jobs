@@ -95,7 +95,7 @@ function mergeRows(existingRows, incomingRows) {
   };
 }
 
-async function saveRelationalBackup({ sheetName, headers, rows }) {
+async function saveRelationalReport({ sheetName, headers, rows }) {
   try {
     return await saveReportSheetToRelationalTable({
       sheetName,
@@ -103,7 +103,7 @@ async function saveRelationalBackup({ sheetName, headers, rows }) {
       rows
     });
   } catch (error) {
-    logger.error('Relational report save failed; JSON backup save remains intact', {
+    logger.error('Relational report save failed', {
       sheetName,
       err: {
         name: error.name,
@@ -111,11 +111,15 @@ async function saveRelationalBackup({ sheetName, headers, rows }) {
         stack: error.stack
       }
     });
-    return {
-      failed: true,
-      error: error.message
-    };
+    throw error;
   }
+}
+
+function jsonBackupUnavailable(error) {
+  const message = String(error?.message ?? '');
+  return message.includes('PGRST205') ||
+    message.includes('Could not find the table') ||
+    message.includes('schema cache');
 }
 
 export async function saveReportSheetToSupabase({
@@ -136,6 +140,12 @@ export async function saveReportSheetToSupabase({
   const table = config.supabaseReportsTable;
   const uploadedAt = new Date().toISOString();
 
+  const relationalResult = await saveRelationalReport({
+    sheetName,
+    headers,
+    rows
+  });
+
   const { data: existingRows, error: selectError } = await supabase
     .from(table)
     .select('id, headers, rows')
@@ -145,6 +155,29 @@ export async function saveReportSheetToSupabase({
     .limit(1);
 
   if (selectError) {
+    if (jsonBackupUnavailable(selectError)) {
+      logger.warn('Supabase JSON backup table unavailable; relational save completed', {
+        table,
+        brand,
+        sheetName,
+        relationalTable: relationalResult.tableName,
+        relationalInsertedRowCount: relationalResult.insertedRowCount,
+        relationalDuplicateRowCount: relationalResult.duplicateRowCount,
+        error: formatSupabaseError(selectError)
+      });
+
+      return {
+        action: 'relational_saved_json_backup_unavailable',
+        uploadedAt,
+        headerCount: headers.length,
+        rowCount: rows.length,
+        addedRowCount: relationalResult.insertedRowCount,
+        duplicateRowCount: relationalResult.duplicateRowCount,
+        relationalResult,
+        jsonBackupSkipped: true
+      };
+    }
+
     throw new Error(`Supabase select failed: ${formatSupabaseError(selectError)}`);
   }
 
@@ -157,12 +190,6 @@ export async function saveReportSheetToSupabase({
       headers: mergedHeaders,
       rowsToAppend: merged.rowsToAppend,
       uploadedAt
-    });
-
-    const relationalResult = await saveRelationalBackup({
-      sheetName,
-      headers: mergedHeaders,
-      rows: merged.rowsToAppend
     });
 
     logger.info('Supabase report row merged', {
@@ -209,14 +236,31 @@ export async function saveReportSheetToSupabase({
     .single();
 
   if (error) {
+    if (jsonBackupUnavailable(error)) {
+      logger.warn('Supabase JSON backup insert skipped; relational save completed', {
+        table,
+        brand,
+        sheetName,
+        relationalTable: relationalResult.tableName,
+        relationalInsertedRowCount: relationalResult.insertedRowCount,
+        relationalDuplicateRowCount: relationalResult.duplicateRowCount,
+        error: formatSupabaseError(error)
+      });
+
+      return {
+        action: 'relational_saved_json_backup_unavailable',
+        uploadedAt,
+        headerCount: headers.length,
+        rowCount: rows.length,
+        addedRowCount: relationalResult.insertedRowCount,
+        duplicateRowCount: relationalResult.duplicateRowCount,
+        relationalResult,
+        jsonBackupSkipped: true
+      };
+    }
+
     throw new Error(`Supabase insert failed: ${formatSupabaseError(error)}`);
   }
-
-  const relationalResult = await saveRelationalBackup({
-    sheetName,
-    headers,
-    rows
-  });
 
   logger.info('Supabase report row inserted', {
     table,

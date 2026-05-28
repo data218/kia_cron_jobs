@@ -6,6 +6,7 @@ import { downloadEwReport } from './ew-report.js';
 import { downloadMcpReport } from './mcp-report.js';
 import { downloadRsaReport } from './rsa-report.js';
 import { downloadAdvWiseLubricantsVasReport } from './adv-wise-lubricants-vas.js';
+import { downloadOperationWiseAnalysisReport } from './operation-wise-analysis-report.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { executeWithRetry } from '../utils/execute-with-retry.js';
@@ -56,6 +57,12 @@ export const reportDefinitions = [
     run: downloadAdvWiseLubricantsVasReport
   },
   {
+    id: 'operation-wise-analysis-report',
+    name: 'Operation Wise Analysis Report',
+    requiresKiaDms: true,
+    run: downloadOperationWiseAnalysisReport
+  },
+  {
     id: 'rsa-report',
     name: 'RSA Report',
     requiresKiaDms: false,
@@ -63,7 +70,10 @@ export const reportDefinitions = [
   }
 ];
 
-const regularReportDefinitions = reportDefinitions.filter(report => report.id !== 'open-ro-yearly');
+const defaultReportDefinitions = reportDefinitions.filter(report => report.includeInAll !== false);
+const regularReportDefinitions = defaultReportDefinitions.filter(report =>
+  !['open-ro-yearly', 'kia-call-center-complaints'].includes(report.id)
+);
 
 export function getSelectedReports({ mode = 'configured' } = {}) {
   if (config.testSingleReport) {
@@ -87,13 +97,17 @@ export function getSelectedReports({ mode = 'configured' } = {}) {
     return reportDefinitions.filter(report => report.id === 'open-ro-yearly');
   }
 
+  if (mode === 'kia-call-center-complaints') {
+    return reportDefinitions.filter(report => report.id === 'kia-call-center-complaints');
+  }
+
   const requested = config.reportsToRun
     .split(',')
     .map(value => value.trim().toLowerCase())
     .filter(Boolean);
 
   if (!requested.length || requested.includes('all')) {
-    return mode === 'regular' ? regularReportDefinitions : reportDefinitions;
+    return mode === 'regular' ? regularReportDefinitions : defaultReportDefinitions;
   }
 
   const selected = reportDefinitions.filter(report => requested.includes(report.id));

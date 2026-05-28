@@ -215,7 +215,26 @@ function buildHeaders(headerRows) {
   return uniqueHeaders(rawHeaders);
 }
 
-export async function parseExcelBuffer(buffer) {
+function rowsFromForcedHeaders(nonEmptyRows, forcedHeaders) {
+  const headers = uniqueHeaders(forcedHeaders);
+  const firstRow = nonEmptyRows[0] ?? [];
+  const firstRowLooksLikeHeader = headers.some((header, index) =>
+    normalizeHeaderPart(header).toLowerCase() === normalizeHeaderPart(firstRow[index]).toLowerCase()
+  );
+  const dataRows = firstRowLooksLikeHeader ? nonEmptyRows.slice(1) : nonEmptyRows;
+
+  const rows = dataRows.map(row => {
+    const record = {};
+    headers.forEach((header, index) => {
+      record[header] = normalizeCellValue(row[index]);
+    });
+    return record;
+  });
+
+  return { headers, rows };
+}
+
+export async function parseExcelBuffer(buffer, options = {}) {
   if (!buffer.length) {
     throw new Error('Excel file is empty');
   }
@@ -242,6 +261,15 @@ export async function parseExcelBuffer(buffer) {
 
   if (!nonEmptyRows.length) {
     throw new Error(`Excel sheet "${firstSheetName}" is empty`);
+  }
+
+  if (Array.isArray(options.forcedHeaders) && options.forcedHeaders.length) {
+    const { headers, rows } = rowsFromForcedHeaders(nonEmptyRows, options.forcedHeaders);
+    return {
+      workbookSheetName: firstSheetName,
+      headers,
+      rows
+    };
   }
 
   const headerRowCount = detectHeaderRowCount(originalNonEmptyRows, nonEmptyRows);
@@ -275,7 +303,7 @@ export async function parseExcelDownload(download) {
   return parseExcelBuffer(buffer);
 }
 
-export async function parseExcelFile(filePath) {
+export async function parseExcelFile(filePath, options = {}) {
   const buffer = await fs.readFile(filePath);
-  return parseExcelBuffer(buffer);
+  return parseExcelBuffer(buffer, options);
 }

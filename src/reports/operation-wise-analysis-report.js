@@ -8,6 +8,7 @@ import {
   addDays,
   formatDateForPortal,
   getCurrentMonthToDateRange,
+  getReportDateOverrideRange,
   parseIsoLocalDate,
   toIsoDate
 } from '../utils/date-range.js';
@@ -25,7 +26,19 @@ import {
   selectKendoDropdownByInputId
 } from './report-actions.js';
 
-const REPORT_TYPES = ['Operation', 'Part'];
+const DEFAULT_REPORT_TYPES = ['Operation', 'Part'];
+
+function getReportTypesToRun() {
+  const allowed = new Set(DEFAULT_REPORT_TYPES.map(value => value.toLowerCase()));
+  const configuredTypes = Array.isArray(config.operationWiseAnalysisReportTypes)
+    ? config.operationWiseAnalysisReportTypes
+    : DEFAULT_REPORT_TYPES;
+  const reportTypes = configuredTypes
+    .map(value => DEFAULT_REPORT_TYPES.find(type => type.toLowerCase() === String(value).trim().toLowerCase()))
+    .filter(type => type && allowed.has(type.toLowerCase()));
+
+  return reportTypes.length ? [...new Set(reportTypes)] : DEFAULT_REPORT_TYPES;
+}
 
 function sanitizeName(value) {
   return String(value)
@@ -147,9 +160,7 @@ async function fillOperationWiseAnalysisDateRange(page, range, reportType) {
   });
 
   await fillDate(page, '#endDate', range.endPortal);
-  await sleep(500);
   await fillDate(page, '#startDate', range.startPortal);
-  await sleep(500);
 }
 
 function addReportMetadataToDataset(reportType, range, merged) {
@@ -190,13 +201,15 @@ async function exportChunkToRelationalTable(page, {
   await clickSearch(page);
   await waitForKendoGridIdle(page, { timeout: 120000 });
 
-  logger.info('[Operation Wise Analysis Report] Waiting after search before page-size selection', {
-    reportType,
-    startDate: range.startIso,
-    endDate: range.endIso,
-    delayMs: config.operationWiseAnalysisPostSearchDelayMs
-  });
-  await sleep(config.operationWiseAnalysisPostSearchDelayMs);
+  if (config.operationWiseAnalysisPostSearchDelayMs > 0) {
+    logger.info('[Operation Wise Analysis Report] Waiting after search before page-size selection', {
+      reportType,
+      startDate: range.startIso,
+      endDate: range.endIso,
+      delayMs: config.operationWiseAnalysisPostSearchDelayMs
+    });
+    await sleep(config.operationWiseAnalysisPostSearchDelayMs);
+  }
 
   await selectKendoPagerSize(page, config.operationWiseAnalysisPageSize);
   await waitForKendoGridIdle(page, { timeout: 120000 });
@@ -284,11 +297,110 @@ async function runReportType(page, {
     results.push(result);
 
     if (index < chunks.length - 1) {
-      await sleep(config.operationWiseAnalysisBetweenChunksDelayMs);
+      if (config.operationWiseAnalysisBetweenChunksDelayMs > 0) {
+        await sleep(config.operationWiseAnalysisBetweenChunksDelayMs);
+      }
     }
   }
 
   return results;
+}
+
+export async function downloadOperationWiseAnalysisReportOptimized(page, { dealerCode, account, startIso, endIso }) {
+  logger.info('Operation Wise Analysis Report optimized backfill started', {
+    dealerCode,
+    startIso,
+    endIso,
+    mode: 'full-range-no-search'
+  });
+  await openAdvWiseLubricantsVasReport(page);
+  const reportContext = await resolveOperationWiseAnalysisContext(page);
+
+  await ensureBillingDateType(reportContext);
+  await ensureReportType(reportContext, 'Operation');
+
+  const startDate = parseIsoLocalDate(startIso);
+  const endDate = parseIsoLocalDate(endIso);
+  const range = buildChunk(startDate, endDate);
+
+  logger.info('Operation Wise Analysis Report applying full date range (optimized)', {
+    startDate: range.startPortal,
+    endDate: range.endPortal,
+    mode: 'skip-search-direct-page-size'
+  });
+
+  await fillOperationWiseAnalysisDateRange(reportContext, range, 'Operation');
+
+  // OPTIMIZATION: Skip search button click - just select page size
+  // This causes grid to auto-load all data for the entire date range
+  logger.info('Operation Wise Analysis Report selecting page size without search click', {
+    pageSize: '1000',
+    mode: 'full-range-auto-load'
+  });
+  
+  await selectKendoPagerSize(reportContext, '1000');
+  await waitForKendoGridIdle(reportContext, { timeout: 300000 }); // Wait up to 5 min for 200k+ rows
+
+  const exportDir = path.join(config.reportChunksDir, 'am-platinum', 'operation-wise-analysis-report', dealerCode, `${startIso}_to_${endIso}`);
+  
+  logger.info('Operation Wise Analysis Report exporting all pages', {
+    expectedRowCount: '200000+',
+    pageSize: 1000
+  });
+  
+  const pageFiles = await exportAllGridPagesToFiles(reportContext, {
+    outputDir: exportDir,
+    filenameBase: `operation_wise_analysis_report_${dealerCode}_${startIso}_to_${endIso}`,
+    pageSize: 1000,
+    downloadTimeoutMs: 60000
+  });
+
+  logger.info('Operation Wise Analysis Report merging exported pages', {
+    pageCount: pageFiles.length
+  });
+  
+  const merged = pageFiles.length
+    ? await mergeExcelFiles(pageFiles)
+    : { headers: [], rows: [] };
+  
+  const withMetadata = addReportMetadataToDataset('Operation', range, merged);
+  const withDealer = withMetadata.rows.length
+    ? { ...withMetadata, rows: withMetadata.rows.map(row => ({ ...row, source_dealer_code: dealerCode })) }
+    : withMetadata;
+
+  if (!withDealer.rows.length) {
+    logger.info('Operation Wise Analysis Report had no rows; skipping Supabase save', {
+      dealerCode
+    });
+    await cleanupReportExportDir(exportDir);
+    return {
+      sheetName: 'AM Platinum Operation Wise Analysis Report',
+      dbResult: { action: 'no_rows', rowCount: 0 },
+      pageCount: pageFiles.length
+    };
+  }
+
+  const dbResult = await saveReportSheetToRelationalTable({
+    sheetName: 'AM Platinum Operation Wise Analysis Report',
+    brand: 'am_platinum',
+    headers: withDealer.headers,
+    rows: withDealer.rows
+  });
+
+  await cleanupReportExportDir(exportDir);
+
+  logger.info('Operation Wise Analysis Report optimized backfill finished', {
+    dealerCode,
+    dbAction: dbResult.action,
+    rowCount: withDealer.rows.length,
+    pageCount: pageFiles.length
+  });
+
+  return {
+    sheetName: 'AM Platinum Operation Wise Analysis Report',
+    dbResult: { ...dbResult, rowCount: withDealer.rows.length },
+    pageCount: pageFiles.length
+  };
 }
 
 export async function downloadOperationWiseAnalysisReport(page) {
@@ -297,25 +409,29 @@ export async function downloadOperationWiseAnalysisReport(page) {
   const reportContext = await resolveOperationWiseAnalysisContext(page);
 
   const monthRange = getCurrentMonthToDateRange();
-  const startDate = config.operationWiseAnalysisBackfillEnabled
-    ? parseIsoLocalDate(config.operationWiseAnalysisBackfillStartDate)
-    : monthRange.startDate;
-  const { endDate } = monthRange;
+  const overrideRange = getReportDateOverrideRange();
+  const startDate = overrideRange?.startDate ?? (config.historicalBackfillEnabled
+    ? parseIsoLocalDate(config.historicalBackfillStartDate)
+    : config.operationWiseAnalysisBackfillEnabled
+      ? parseIsoLocalDate(config.operationWiseAnalysisBackfillStartDate)
+      : monthRange.startDate);
+  const endDate = overrideRange?.endDate ?? monthRange.endDate;
   const chunks = getMonthlyThirtyDayChunks(startDate, endDate);
+  const reportTypes = getReportTypesToRun();
   const outputDir = buildRunDir();
   await fs.mkdir(outputDir, { recursive: true });
 
   logger.info('Operation Wise Analysis Report date chunks prepared', {
-    mode: config.operationWiseAnalysisBackfillEnabled ? 'historical-backfill' : 'current-month',
+    mode: overrideRange ? 'date-override' : (config.historicalBackfillEnabled || config.operationWiseAnalysisBackfillEnabled) ? 'historical-backfill' : 'current-month',
     startDate: toIsoDate(startDate),
     endDate: toIsoDate(endDate),
     chunkCount: chunks.length,
-    reportTypes: REPORT_TYPES
+    reportTypes
   });
 
   const allResults = [];
   try {
-    for (const reportType of REPORT_TYPES) {
+    for (const reportType of reportTypes) {
       const reportTypeResults = await runReportType(reportContext, {
         reportType,
         chunks,
@@ -338,7 +454,7 @@ export async function downloadOperationWiseAnalysisReport(page) {
 
   logger.info('Operation Wise Analysis Report finished', {
     sheetName: config.operationWiseAnalysisSheetName,
-    tableName: 'operation_wise_analysis_report',
+tableName: 'am_platinum_operation_wise_analysis_report',
     chunkResultCount: allResults.length,
     rowCount,
     pageCount,
@@ -355,7 +471,7 @@ export async function downloadOperationWiseAnalysisReport(page) {
     },
     dbResult: {
       action: 'relational-batched-backfill',
-      tableName: 'operation_wise_analysis_report',
+tableName: 'am_platinum_operation_wise_analysis_report',
       rowCount,
       pageCount,
       insertedRowCount,

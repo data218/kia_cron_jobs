@@ -4,7 +4,7 @@ import { config } from '../config.js';
 import { openOpenRoYearlyReport } from '../navigation/kia-menu.js';
 import { findContextWithVisibleSelector } from '../playwright/frame-resolver.js';
 import { saveReportSheetToSupabase } from '../supabase/report-store.js';
-import { getThirtyDayChunks, parseIsoLocalDate, toIsoDate } from '../utils/date-range.js';
+import { getReportDateOverrideRange, getThirtyDayChunks, parseIsoLocalDate, toIsoDate } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
 import { selectKendoPagerSize, waitForKendoGridIdle } from './grid.js';
@@ -60,7 +60,6 @@ async function fillOpenRoDateRange(page, chunk) {
 
   // Fill end date first so the portal never sees a temporary start > end range.
   await fillDate(page, '#sRoDateToDate', chunk.endPortal);
-  await sleep(500);
   await fillDate(page, '#sRoDateFromDate', chunk.startPortal);
 }
 
@@ -71,15 +70,20 @@ export async function downloadOpenRoYearlyReport(page) {
 
   await selectKendoDropdownByInputId(reportContext, 'sROStatus', 'Open');
 
-  const startDate = parseIsoLocalDate(config.openRoYearlyStartDate);
-  const endDate = new Date();
+  const overrideRange = getReportDateOverrideRange();
+  const startDate = overrideRange?.startDate ?? parseIsoLocalDate(
+    config.historicalBackfillEnabled
+      ? config.historicalBackfillStartDate
+      : config.openRoYearlyStartDate
+  );
+  const endDate = overrideRange?.endDate ?? new Date();
   const chunks = getThirtyDayChunks(startDate, endDate);
   const runDate = toIsoDate(endDate);
   const chunkDir = path.join(config.reportChunksDir, 'open-ro-yearly', runDate);
   const exportFiles = [];
 
   logger.info('Open RO Yearly date chunks prepared', {
-    startDate: config.openRoYearlyStartDate,
+    startDate: toIsoDate(startDate),
     endDate: runDate,
     chunkCount: chunks.length,
     chunkDir
@@ -109,10 +113,12 @@ export async function downloadOpenRoYearlyReport(page) {
     await clickSearch(reportContext);
     await waitForKendoGridIdle(reportContext, { timeout: 120000 });
 
-    logger.info('Waiting briefly after Open RO search before changing page size', {
-      delayMs: config.openRoYearlyPostSearchDelayMs
-    });
-    await sleep(config.openRoYearlyPostSearchDelayMs);
+    if (config.openRoYearlyPostSearchDelayMs > 0) {
+      logger.info('Waiting briefly after Open RO search before changing page size', {
+        delayMs: config.openRoYearlyPostSearchDelayMs
+      });
+      await sleep(config.openRoYearlyPostSearchDelayMs);
+    }
 
     await selectKendoPagerSize(reportContext, config.openRoYearlyPageSize);
     await waitForKendoGridIdle(reportContext, { timeout: 120000 });
@@ -125,10 +131,12 @@ export async function downloadOpenRoYearlyReport(page) {
     exportFiles.push(...chunkPageFiles);
 
     if (index < chunks.length - 1) {
-      logger.info('Waiting after Open RO export before entering next date range', {
-        delayMs: config.openRoYearlyBetweenChunksDelayMs
-      });
-      await sleep(config.openRoYearlyBetweenChunksDelayMs);
+      if (config.openRoYearlyBetweenChunksDelayMs > 0) {
+        logger.info('Waiting after Open RO export before entering next date range', {
+          delayMs: config.openRoYearlyBetweenChunksDelayMs
+        });
+        await sleep(config.openRoYearlyBetweenChunksDelayMs);
+      }
     }
   }
 

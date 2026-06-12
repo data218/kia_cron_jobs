@@ -4,7 +4,7 @@ import { getOtpFromFile } from './file.js';
 import { getOtpFromWebhook } from './webhook-client.js';
 import { getOtpFromTelegram } from '../telegram/otp-provider.js';
 
-export async function getOtp({ notBefore } = {}) {
+export async function getOtp({ notBefore, purpose } = {}) {
   switch (config.otpProvider) {
     case 'telegram':
       return getOtpFromTelegram({ notBefore, timeoutMs: config.otpTimeoutMs });
@@ -21,7 +21,8 @@ export async function getOtp({ notBefore } = {}) {
         baseUrl: config.otpWebhookBaseUrl,
         token: config.otpWebhookToken,
         timeoutMs: config.otpTimeoutMs,
-        notBefore
+        notBefore,
+        purpose
       });
     default:
       throw new Error(`Unknown OTP_PROVIDER: ${config.otpProvider}`);

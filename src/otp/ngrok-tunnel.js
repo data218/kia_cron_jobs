@@ -14,26 +14,39 @@ if (ngrokPath !== 'ngrok' && !fs.existsSync(ngrokPath)) {
   throw new Error(`NGROK_EXE_PATH does not exist: ${ngrokPath}`);
 }
 
-const args = [
-  'http',
-  port,
-  '--url',
-  publicUrl,
-  '--log',
-  'stdout',
-  '--log-format',
-  'logfmt'
-];
-
-const child = spawn(ngrokPath, args, {
-  stdio: 'inherit',
-  windowsHide: true
-});
-
-child.on('exit', (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
+function startTunnel(useReservedUrl = true) {
+  const args = ['http', port, '--log', 'stdout', '--log-format', 'logfmt'];
+  if (useReservedUrl && publicUrl) {
+    args.push('--url', publicUrl);
   }
-  process.exit(code ?? 0);
-});
+
+  const child = spawn(ngrokPath, args, {
+    stdio: ['inherit', 'pipe', 'pipe'],
+    windowsHide: true
+  });
+
+  let stderr = '';
+  child.stderr.on('data', chunk => {
+    const text = chunk.toString();
+    stderr += text;
+    process.stderr.write(text);
+  });
+  child.stdout.on('data', chunk => process.stdout.write(chunk));
+
+  child.on('exit', (code, signal) => {
+    if (code !== 0 && useReservedUrl && /ERR_NGROK_334|already online/i.test(stderr)) {
+      console.warn('Reserved ngrok URL is already in use elsewhere; starting dynamic tunnel instead.');
+      startTunnel(false);
+      return;
+    }
+
+    if (signal) {
+      process.kill(process.pid, signal);
+      return;
+    }
+    process.exit(code ?? 0);
+  });
+}
+
+startTunnel(true);
+

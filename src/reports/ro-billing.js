@@ -5,6 +5,7 @@ import { findContextWithVisibleSelector } from '../playwright/frame-resolver.js'
 import { saveReportSheetToSupabase } from '../supabase/report-store.js';
 import {
   getCurrentMonthToDateRange,
+  getReportDateOverrideRange,
   getThirtyDayChunks,
   parseIsoLocalDate,
   toIsoDate
@@ -38,13 +39,27 @@ async function resolveRoBillingContext(page) {
 
 function getRoBillingChunks() {
   const endDate = new Date();
+  const overrideRange = getReportDateOverrideRange();
 
-  if (config.roBillingBackfillEnabled) {
+  if (overrideRange) {
+    return {
+      mode: 'date-override',
+      startDate: overrideRange.startDate,
+      endDate: overrideRange.endDate,
+      chunks: getThirtyDayChunks(overrideRange.startDate, overrideRange.endDate)
+    };
+  }
+
+  if (config.historicalBackfillEnabled || config.roBillingBackfillEnabled) {
+    const startDate = config.historicalBackfillEnabled
+      ? config.historicalBackfillStartDate
+      : config.roBillingBackfillStartDate;
+
     return {
       mode: 'historical-backfill',
-      startDate: parseIsoLocalDate(config.roBillingBackfillStartDate),
+      startDate: parseIsoLocalDate(startDate),
       endDate,
-      chunks: getThirtyDayChunks(parseIsoLocalDate(config.roBillingBackfillStartDate), endDate)
+      chunks: getThirtyDayChunks(parseIsoLocalDate(startDate), endDate)
     };
   }
 
@@ -65,9 +80,7 @@ async function applyRoBillingChunk(reportContext, chunk) {
 
   // Fill end date first so DMS never briefly sees start > end while moving to the next chunk.
   await fillDate(reportContext, '#sBillDateToDate', chunk.endPortal);
-  await sleep(500);
   await fillDate(reportContext, '#sBillDateFromDate', chunk.startPortal);
-  await sleep(500);
 
   const actualStart = await getInputValue(reportContext, '#sBillDateFromDate');
   const actualEnd = await getInputValue(reportContext, '#sBillDateToDate');
@@ -88,10 +101,12 @@ async function applyRoBillingChunk(reportContext, chunk) {
   logger.info('Searching RO Billing report');
   await clickSearch(reportContext);
   await waitForKendoGridIdle(reportContext, { timeout: 120000 });
-  logger.info('Waiting briefly after initial search before changing page size', {
-    delayMs: config.roBillingPostSearchDelayMs
-  });
-  await sleep(config.roBillingPostSearchDelayMs);
+  if (config.roBillingPostSearchDelayMs > 0) {
+    logger.info('Waiting briefly after initial search before changing page size', {
+      delayMs: config.roBillingPostSearchDelayMs
+    });
+    await sleep(config.roBillingPostSearchDelayMs);
+  }
 
   await selectKendoPagerSize(reportContext, config.roBillingPageSize);
   await waitForKendoGridIdle(reportContext, { timeout: 120000 });
@@ -132,10 +147,12 @@ export async function downloadRoBillingReport(page) {
     exportFiles.push(...chunkPageFiles);
 
     if (index < chunkPlan.chunks.length - 1) {
-      logger.info('Waiting after RO Billing export before entering next date range', {
-        delayMs: config.roBillingBetweenChunksDelayMs
-      });
-      await sleep(config.roBillingBetweenChunksDelayMs);
+      if (config.roBillingBetweenChunksDelayMs > 0) {
+        logger.info('Waiting after RO Billing export before entering next date range', {
+          delayMs: config.roBillingBetweenChunksDelayMs
+        });
+        await sleep(config.roBillingBetweenChunksDelayMs);
+      }
     }
   }
 

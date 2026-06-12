@@ -8,16 +8,221 @@ const IMPORTANT_INDEX_COLUMNS = new Set([
   'advisor',
   'service_advisor',
   'service_type',
+  'dealer_code',
+  'source_dealer_code',
+  'trust_package_section',
   'report_type',
   'work_type',
+  'appointment_date',
+  'appointement_date',
+  'booking_date',
   'uploaded_at'
 ]);
 const RESERVED_COLUMNS = new Set(['id', 'row_hash', 'uploaded_at']);
 const NON_BUSINESS_HASH_COLUMNS = new Set([
   'id',
   'row_hash',
-  'uploaded_at'
+  'uploaded_at',
+  's_no',
+  'sno',
+  'sr_no',
+  'serial_no',
+  'sl_no',
+  'no'
 ]);
+const TABLE_IDENTITY_COLUMNS = {
+  ro_billing_report: [
+    ['dealer_code', 'bill_no'],
+    ['bill_no'],
+    ['dealer_code', 'ro_no', 'bill_date'],
+    ['ro_no', 'bill_date', 'vin']
+  ],
+  kia_call_center_complaints: [
+    ['complaint_no', 'sr_no'],
+    ['complaint_no']
+  ],
+  open_ro_yearly: [
+    ['dealer_code', 'r_o_no'],
+    ['r_o_no'],
+    ['vin', 'ro_date', 'work_type']
+  ],
+  hyundai_repair_order_list: [
+    ['dealer_code', 'r_o_no'],
+    ['r_o_no'],
+    ['vin', 'ro_date', 'work_type']
+  ],
+  hyundai_ro_billing_report: [
+    ['source_dealer_code', 'bill_no'],
+    ['dealer_code', 'bill_no'],
+    ['bill_no'],
+    ['source_dealer_code', 'ro_no', 'bill_date'],
+    ['dealer_code', 'ro_no', 'bill_date'],
+    ['ro_no', 'bill_date', 'vin']
+  ],
+  hyundai_call_center_complaints: [
+    ['source_dealer_code', 'complaint_no', 'sr_no'],
+    ['complaint_no', 'sr_no'],
+    ['complaint_no']
+  ],
+  hyundai_customer_complaint_list: [
+    ['source_dealer_code', 'complaint_no', 'sr_no'],
+    ['source_dealer_code', 'complaint_no'],
+    ['complaint_no', 'sr_no'],
+    ['complaint_no']
+  ],
+  hyundai_open_ro_yearly: [
+    ['source_dealer_code', 'r_o_no'],
+    ['dealer_code', 'r_o_no'],
+    ['r_o_no'],
+    ['vin', 'ro_date', 'work_type']
+  ],
+  hyundai_demo_job_cards: [
+    ['source_dealer_code', 'r_o_no'],
+    ['dealer_code', 'r_o_no'],
+    ['r_o_no'],
+    ['vin', 'ro_date', 'work_type']
+  ],
+  hyundai_demo_car_list: [
+    ['source_dealer_code', 'vin'],
+    ['vin'],
+    ['vin_no'],
+    ['chassis_no'],
+    ['vin_chassis_no'],
+    ['vin_chasis_no'],
+    ['invoice_no', 'vin'],
+    ['invoice_no', 'chassis_no'],
+    ['purchase_invoice_no']
+  ],
+  hyundai_service_appointment: [
+    ['source_dealer_code', 'a_t_no'],
+    ['source_dealer_code', 'appointment_no'],
+    ['source_dealer_code', 'booking_no'],
+    ['dealer_code', 'a_t_no'],
+    ['dealer_code', 'appointment_no'],
+    ['dealer_code', 'booking_no'],
+    ['appointment_no'],
+    ['booking_no'],
+    ['source_dealer_code', 'vin', 'appointment_date', 'appointment_time'],
+    ['source_dealer_code', 'vin_no', 'appointment_date', 'appointment_time'],
+    ['source_dealer_code', 'vehicle_reg_no', 'appointment_date', 'appointment_time'],
+    ['source_dealer_code', 'reg_no', 'appointment_date', 'appointment_time'],
+    ['vin', 'appointment_date', 'appointment_time'],
+    ['vin_no', 'appointment_date', 'appointment_time'],
+    ['vehicle_reg_no', 'appointment_date', 'appointment_time'],
+    ['reg_no', 'appointment_date', 'appointment_time']
+  ],
+  hyundai_psf_yearly: [
+    ['source_dealer_code', 'ro_no'],
+    ['ro_no'],
+    ['vin', 'ro_date', 'visit_type']
+  ],
+  hyundai_ew_report: [
+    ['source_dealer_code', 'certi_no'],
+    ['certi_no'],
+    ['vin', 'reg_date', 'scheme_desc']
+  ],
+  hyundai_mcp_report: [
+    ['source_dealer_code', 'cert_no'],
+    ['source_dealer_code', 'vin', 'package_purchase_date', 'package_name'],
+    ['dealer_code', 'cert_no'],
+    ['dealer_code', 'vin', 'package_purchase_date', 'package_name'],
+    ['cert_no'],
+    ['vin', 'package_purchase_date', 'package_name']
+  ],
+  hyundai_adv_wise_lubricants_vas: [
+    ['source_dealer_code', 'gst_invoice_no', 'op_part_code', 'vin_no'],
+    ['source_dealer_code', 'invoice_no', 'op_part_code', 'vin_no'],
+    ['source_dealer_code', 'ro_no', 'op_part_code', 'vin_no'],
+    ['gst_invoice_no', 'op_part_code', 'vin_no'],
+    ['invoice_no', 'op_part_code', 'vin_no'],
+    ['ro_no', 'op_part_code', 'vin_no']
+  ],
+  hyundai_operation_wise_analysis_report: [
+    ['report_type', 'source_dealer_code', 'op_part_code'],
+    ['report_type', 'source_dealer_code', 'report_period_start', 'report_period_end', 'op_part_code'],
+    ['report_type', 'source_dealer_code', 'report_month', 'op_part_code']
+  ],
+  trust_package: [
+    ['trust_package_section', 'source_dealer_code', 'cert_no'],
+    ['trust_package_section', 'source_dealer_code', 'certi_no'],
+    ['trust_package_section', 'source_dealer_code', 'certificate_no'],
+    ['trust_package_section', 'source_dealer_code', 'scheme_no', 'vin'],
+    ['trust_package_section', 'source_dealer_code', 'vin', 'reg_date'],
+    ['trust_package_section', 'cert_no'],
+    ['trust_package_section', 'certi_no'],
+    ['trust_package_section', 'certificate_no'],
+    ['trust_package_section', 'vin', 'reg_date']
+  ],
+  demo_job_cards: [
+    ['dealer_code', 'r_o_no'],
+    ['r_o_no'],
+    ['vin', 'ro_date', 'work_type']
+  ],
+  demo_car_list: [
+    ['vin'],
+    ['vin_no'],
+    ['chassis_no'],
+    ['vin_chassis_no'],
+    ['vin_chasis_no'],
+    ['invoice_no', 'vin'],
+    ['invoice_no', 'chassis_no'],
+    ['purchase_invoice_no']
+  ],
+  service_appointment: [
+    ['dealer_code', 'a_t_no'],
+    ['dealer_code', 'a_t_date_time', 'vin'],
+    ['dealer_code', 'a_t_date_time', 'reg_no'],
+    ['dealer_code', 'appointment_no'],
+    ['dealer_code', 'booking_no'],
+    ['appointment_no'],
+    ['booking_no'],
+    ['dealer_code', 'vin', 'appointment_date', 'appointment_time'],
+    ['dealer_code', 'vin_no', 'appointment_date', 'appointment_time'],
+    ['dealer_code', 'vehicle_reg_no', 'appointment_date', 'appointment_time'],
+    ['dealer_code', 'reg_no', 'appointment_date', 'appointment_time'],
+    ['vin', 'appointment_date', 'appointment_time'],
+    ['vin_no', 'appointment_date', 'appointment_time'],
+    ['vehicle_reg_no', 'appointment_date', 'appointment_time'],
+    ['reg_no', 'appointment_date', 'appointment_time'],
+    ['mobile_no', 'appointment_date', 'customer_name'],
+    ['mobile_no', 'appointement_date', 'customer_name'],
+    ['dealer_code', 'customer_name', 'booking_date']
+  ],
+  psf_yearly: [
+    ['ro_no'],
+    ['vin', 'ro_date', 'visit_type']
+  ],
+  ew_report: [
+    ['certi_no'],
+    ['vin', 'reg_date', 'scheme_desc']
+  ],
+  mcp_report: [
+    ['dealer_code', 'cert_no'],
+    ['dealer_code', 'vin', 'package_purchase_date', 'package_name'],
+    ['cert_no'],
+    ['vin', 'package_purchase_date', 'package_name']
+  ],
+  rsa_report: [
+    ['invoice_no', 'vin_chasis_no'],
+    ['invoice_no'],
+    ['vin_chasis_no', 'invoice_date', 'policy_name']
+  ],
+  adv_wise_lubricants_vas: [
+    ['gst_invoice_no', 'op_part_code', 'vin_no'],
+    ['invoice_no', 'op_part_code', 'vin_no'],
+    ['ro_no', 'op_part_code', 'vin_no'],
+    ['gst_invoice_no', 'labour_code', 'vin_no'],
+    ['gst_invoice_no', 'part_no', 'vin_no']
+  ],
+  operation_wise_analysis_report: [
+    ['report_type', 'report_period_start', 'report_period_end', 'dealer_code', 'op_part_code'],
+    ['report_type', 'report_month', 'dealer_code', 'op_part_code']
+  ],
+  operation_wise_analysis_advisor_report: [
+    ['report_type', 'date_type', 'service_advisor', 'report_period_start', 'report_period_end', 'dealer_code', 'op_part_code'],
+    ['report_type', 'service_advisor', 'report_month', 'dealer_code', 'op_part_code']
+  ]
+};
 
 function normalizeSqlName(value, fallback = 'column') {
   const normalized = String(value ?? '')
@@ -54,6 +259,7 @@ function isEmpty(value) {
 
 function headerLooksDate(header) {
   const normalized = normalizeSqlName(header);
+  if (normalized.endsWith('_type')) return false;
   return /(^|_)date($|_)/.test(normalized) ||
     normalized.endsWith('_dt') ||
     normalized === 'report_month' ||
@@ -207,11 +413,51 @@ function hashEntries(entries) {
     .digest('hex');
 }
 
+function identityHashEntries(tableName, columns, normalizedValues) {
+  const identityGroups = identityGroupsForTable(tableName);
+  for (const group of identityGroups) {
+    const entries = group
+      .map(columnName => {
+        const index = columns.findIndex(column => column.name === columnName);
+        return index >= 0 ? [columnName, normalizedValues[index]] : null;
+      })
+      .filter(entry => entry && !isEmpty(entry[1]));
+
+    if (entries.length === group.length) {
+      return [['__table', tableName], ...entries];
+    }
+  }
+
+  return null;
+}
+
+function identityGroupsForTable(tableName) {
+  if (TABLE_IDENTITY_COLUMNS[tableName]) {
+    return TABLE_IDENTITY_COLUMNS[tableName];
+  }
+
+  if (tableName.startsWith('am_platinum_')) {
+    const suffix = tableName.slice('am_platinum_'.length);
+    return TABLE_IDENTITY_COLUMNS[`hyundai_${suffix}`] ??
+      TABLE_IDENTITY_COLUMNS[suffix] ??
+      [];
+  }
+
+  return [];
+}
+
 export function rowSignature(row) {
   return hashEntries(normalizedRowEntries(row));
 }
 
-function rowSignatureFromNormalizedValues(columns, normalizedValues) {
+function rowSignatureFromNormalizedValues(columns, normalizedValues, tableName = null) {
+  if (tableName) {
+    const identityEntries = identityHashEntries(tableName, columns, normalizedValues);
+    if (identityEntries) {
+      return hashEntries(identityEntries);
+    }
+  }
+
   const entries = columns
     .map((column, index) => [column.name, normalizedValues[index]])
     .filter(([key]) => key && !NON_BUSINESS_HASH_COLUMNS.has(key))
@@ -323,7 +569,7 @@ async function insertBatch(client, tableName, columns, batch, uploadedAt, stats)
   batch.forEach((row, rowIndex) => {
     const normalizedValues = columns.map(column => normalizeValue(row[column.header], column, stats));
     const rowValues = [
-      rowSignatureFromNormalizedValues(columns, normalizedValues),
+      rowSignatureFromNormalizedValues(columns, normalizedValues, tableName),
       ...normalizedValues,
       uploadedAt
     ];
@@ -372,7 +618,7 @@ export async function saveReportSheetToRelationalTable({
   const uniqueRows = [];
   for (const row of rows) {
     const normalizedValues = columns.map(column => normalizeValue(row[column.header], column));
-    const signature = rowSignatureFromNormalizedValues(columns, normalizedValues);
+    const signature = rowSignatureFromNormalizedValues(columns, normalizedValues, tableName);
     if (seenIncomingRows.has(signature)) {
       continue;
     }
@@ -387,6 +633,7 @@ export async function saveReportSheetToRelationalTable({
   };
 
   return withPostgresClient(async client => {
+    await client.query('SET statement_timeout = 0');
     await ensureReportTable(client, tableName, columns);
     logger.info('Relational report table ready', {
       sheetName,

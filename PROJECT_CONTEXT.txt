@@ -1,5 +1,5 @@
 KIA DMS AUTOMATION PROJECT CONTEXT
-Last updated: 2026-05-22
+Last updated: 2026-06-08
 
 Purpose
 This file is the living context file for the KIA DMS automation project.
@@ -56,6 +56,7 @@ Supabase storage model:
   psf_yearly
   adv_wise_lubricants_vas
   operation_wise_analysis_report
+  operation_wise_analysis_advisor_report
   kia_call_center_complaints
 - Relational table names and columns are normalized to lowercase snake_case.
 - Each relational table includes:
@@ -67,7 +68,7 @@ Supabase storage model:
 - Everything else is stored as TEXT.
 - Inserts are batched and deduped with row_hash.
 - Existing row_hash conflicts update the existing relational row instead of creating duplicates.
-- Duplicate detection is based on the full normalized row values that are saved into SQL, excluding only system columns such as id, row_hash, and uploaded_at.
+- Duplicate detection is based on the full normalized row values that are saved into SQL, excluding system/export-only columns such as id, row_hash, uploaded_at, s_no, sno, sr_no, serial_no, sl_no, and no.
 - Do not narrow row_hash to one or two business key columns; reports can have changed values under the same bill/RO/invoice/complaint number and those must be treated as distinct full-row records.
 - Indexes are created automatically for row_hash, uploaded_at, date columns, bill_date, ro_date, service_advisor, service_type, and work_type when present.
 - Migration command:
@@ -125,8 +126,11 @@ Current development/testing mode:
 
 Cron schedules:
 - Regular reports:
-  REGULAR_REPORTS_CRON_SCHEDULE=0 10-18 * * *
-  Runs hourly from 10:00 AM through 6:00 PM.
+  REGULAR_REPORTS_CRON_SCHEDULE=0 9-18 * * *
+  Runs hourly from 9:00 AM through the 6 PM hour.
+- RSA Report:
+  RSA_REPORT_CRON_SCHEDULE=0 10 * * *
+  Runs once per day at 10:00 AM and is excluded from the regular hourly lane.
 - Open RO Yearly:
   OPEN_RO_YEARLY_CRON_SCHEDULE=0 18 * * *
   Runs only once per day at 6:00 PM.
@@ -289,6 +293,22 @@ Status:
   Existing relational row_hash values were rebuilt to the full-row logic.
   True full-row duplicates removed during rebuild: PSF Yearly 9, MCP Report 1, RSA Report 12.
   MCP was rerun after rebuild so uploaded_at reflects 2026-05-28.
+- 2026-05-28 follow-up duplicate cleanup:
+  added npm script dedupe:relational backed by src/supabase/dedupe-relational-tables.js.
+  The script scans all relational report tables, computes row_hash from the current full SQL row data excluding id, row_hash, uploaded_at, and unstable export serial columns, deletes exact duplicate rows while keeping the latest uploaded/id row, and rewrites row_hash values so future upserts conflict correctly.
+  Cleanup deleted exact duplicate rows:
+    adv_wise_lubricants_vas = 156
+    operation_wise_analysis_report = 487
+    rsa_report = 14
+  Verification after cleanup: all report tables had 0 exact duplicate groups and 0 duplicate row_hash groups.
+  Dashboard materialized views were refreshed after cleanup.
+- 2026-06-01 duplicate cleanup:
+  RO Billing duplicates exposed that DMS export serial fields such as s_no can change between exports even when the business row is identical.
+  relational-store.js and dedupe-relational-tables.js now ignore unstable serial columns s_no, sno, sr_no, serial_no, sl_no, and no when generating row_hash, while still saving those columns in the report tables.
+  dedupe:relational now includes all active cron relational tables: ro_billing_report, kia_call_center_complaints, open_ro_yearly, demo_job_cards, psf_yearly, ew_report, mcp_report, adv_wise_lubricants_vas, operation_wise_analysis_report, operation_wise_analysis_advisor_report, and rsa_report.
+  Cleanup deleted duplicate rows: ro_billing_report 6670, open_ro_yearly 23, psf_yearly 2806, ew_report 51, mcp_report 1, adv_wise_lubricants_vas 138. No duplicate rows were found in kia_call_center_complaints, demo_job_cards, operation_wise_analysis_report, operation_wise_analysis_advisor_report, or rsa_report under the updated hash logic.
+  Post-cleanup verification: every active cron relational table had row_count equal to distinct row_hash count, and the sample RO Billing bill_no Y202502502 / ro_no R202502523 / VIN MZBEP812LSN731577 had one retained row.
+  Dashboard materialized views workshop_performance_jc_summary_v1 and workshop_operation_addon_summary_v1 were refreshed after cleanup.
 
 
 3. Open RO Yearly
@@ -501,6 +521,7 @@ Storage:
 - Merge exported page files.
 - Upload merged dataset to Supabase sheet_name = MCP Report.
 - Existing sheet data is preserved; only new non-duplicate rows are appended.
+- MCP exports do not contain dealer code, so src/reports/mcp-report.js injects a dealer_code column before Supabase save using the scheduler dealerCode value.
 - Delete local export files after successful Supabase upload.
 - Large existing report rows use server-side JSONB append to avoid Supabase REST 520/timeouts.
 
@@ -634,7 +655,74 @@ Status:
 - Restored to normal current-month-to-date hourly cron behavior.
 
 
-9. RSA Report
+9. Operation Wise Analysis Advisor Report
+
+Report id:
+- operation-wise-analysis-advisor-report
+
+Sheet/table name:
+- Operation Wise Analysis Advisor Report
+- Relational table: operation_wise_analysis_advisor_report
+
+Navigation:
+- Use the same Service MIS sidebar / wrench icon as other Service MIS reports.
+- Sidebar selector:
+  li.nav_ser_mis
+- Open Work Profit.
+- Select Operation Wise Analysis Report.
+
+Filters:
+- Report Type:
+  #reportType
+- Date Type:
+  #dateType
+- Service Advisor:
+  #advEmpNo
+- Start date:
+  #startDate
+- End date:
+  #endDate
+
+Report flow:
+- Select Report Type = Operation.
+- Ensure Date Type = Billing Date.
+- Read all non-empty Service Advisor options from the Service Adv. Kendo dropdown.
+- Run the same search/export flow once per Service Advisor.
+- For every advisor:
+  search
+  wait for grid
+  select 300 rows
+  export every page
+  merge page exports
+  save to the relational table
+
+Date logic:
+- Start date = first day of current month.
+- End date = current execution date.
+
+Storage:
+- This module writes directly to the relational table through src/supabase/relational-store.js.
+- The table is auto-created if missing.
+- Every saved row includes:
+  report_type = Operation
+  date_type = Billing Date
+  service_advisor
+  report_month
+  report_period_start
+  report_period_end
+- row_hash is generated from the full normalized saved row values, so reruns and overlapping exports do not create duplicate full-row records.
+- Temporary advisor/page export folders are deleted after each advisor save succeeds.
+
+Status:
+- Implemented on 2026-05-29 and registered in the regular report lane.
+- Syntax check passed.
+- Historical advisor backfill was run on 2026-05-29 with manual OTP and resume controls after a Windows sleep interruption.
+- The successful resumed run inserted 288 rows, deleted local exports, and refreshed both dashboard materialized views.
+- Normal production mode is restored afterward: webhook OTP, no force login, current-month date range, and no resume filters.
+- Windows sleep/display timeout was set to never for the active power plan during the backfill, and npm script reports:awake was added to wrap long manual runs with a keep-awake PowerShell helper.
+
+
+10. RSA Report
 
 Report id:
 - rsa-report
@@ -872,6 +960,17 @@ Local PM2 status:
 - PM2 also runs src/otp/webhook-server.js so npm run otp:webhook does not need to stay open in a terminal.
 - PM2 also runs src/otp/ngrok-tunnel.js so the public ngrok tunnel does not need to stay open in a separate terminal.
 - If kia-ngrok fails with ERR_NGROK_334, another ngrok process already owns the reserved URL. Stop the stray ngrok process and restart kia-ngrok with PM2.
+- 2026-05-30 PM2 stale test-mode fix:
+  - Symptom: production regular lane was only running MCP Report even though .env had TEST_SINGLE_REPORT=false and REPORTS_TO_RUN=all.
+  - Cause: PM2 still had old live env values TEST_SINGLE_REPORT=true and TEST_REPORT_NAME=mcp-report from a previous test run.
+  - Fix used:
+    - pm2 delete kia-cron-job
+    - pm2 start ecosystem.config.cjs --only kia-cron-job
+    - pm2 save
+  - Verification:
+    - pm2 env <kia-cron-job-id> should show only NODE_ENV=production for these keys; TEST_SINGLE_REPORT, TEST_REPORT_NAME, and REPORTS_TO_RUN should not appear in PM2 env.
+    - The scheduler then reads TEST_SINGLE_REPORT=false, TEST_REPORT_NAME=, and REPORTS_TO_RUN=all from .env.
+    - npm run test:sequence confirmed regular mode selects 8 regular reports and keeps Open RO Yearly in its separate lane.
 
 Wi-Fi / network recovery:
 - src/utils/network.js checks connectivity using NETWORK_CHECK_URL.
@@ -893,6 +992,599 @@ OTP webhook public tunnel:
   - http://127.0.0.1:3333/
   - https://endocentric-luna-plectognathic.ngrok-free.dev/
 
+2026-05-30 all-report historical backfill:
+- Added global historical backfill controls in src/config.js:
+  - HISTORICAL_BACKFILL_ENABLED=false by default.
+  - HISTORICAL_BACKFILL_START_DATE=2025-01-01 by default.
+- When HISTORICAL_BACKFILL_ENABLED=true, supported report modules run historical chunks from the configured start date through the current execution date.
+- The one-off all-report run used process-local env only; the normal PM2 scheduler was restored afterward with historicalBackfillEnabled=false.
+- Reports completed for Jan 2025 through 2026-05-30:
+  - RO Billing Report
+  - Kia Call Center Complaints
+  - Open RO Yearly
+  - PSF Yearly
+  - EW Report
+  - MCP Report
+  - Adv. wise lubricants & VAS
+  - Operation Wise Analysis Report
+  - Operation Wise Analysis Advisor Report
+  - RSA Report
+- RSA historical backfill fix:
+  - Empty RSA chunks can show "No Records found !!!" and do not produce a download.
+  - src/reports/rsa-report.js now detects that state and skips export for the empty chunk instead of waiting for a download timeout.
+- 2026-06-01 RSA current-month no-records fix:
+  - When all RSA chunks have no records, the report now returns a successful no-records result instead of calling Supabase save with empty headers.
+  - This prevents the retry wrapper from repeatedly reopening https://kia.awpassistance.in after the portal correctly shows no data for the selected date range.
+- Successful RSA-only rerun after the fix:
+  - rowCount=270
+  - insertedRowCount=59
+  - duplicateRowCount=211
+  - pageCount=19
+- The dashboard materialized views refreshed successfully after the fixed RSA run.
+- Expected warning still seen:
+  - business_excellence_am_kia_new may be unavailable in the schema cache.
+  - This affects only the legacy JSON backup path; relational table saves completed successfully.
+- PM2 was restored and saved:
+  - kia-cron-job online
+  - kia-otp-webhook online
+  - kia-ngrok online
+- Validation:
+  - npm run check passed after the RSA empty-chunk fix.
+
+2026-06-01 Cron speed tuning:
+- Reduced artificial waits so reports move as soon as the page/grid/download is ready.
+- .env and src/config.js defaults were tuned:
+  - PAGE_READY_DELAY_MS: 500ms
+  - Report post-search waits: 500ms
+  - Chunk/advisor transition waits: 200ms
+  - RSA page/post-search waits: 500ms
+  - RSA human pause range: 50-150ms
+  - RSA typing delay: 5ms
+  - Report retry delays: 3-5s
+  - Network retry interval: 3s
+- Kendo grid idle wait no longer burns long swallowed timeout windows:
+  - networkidle cap is 3s
+  - loading/grid/polling checks cap at 5s each
+- Date-entry safety pauses were reduced from 500ms to 200ms.
+- OTP webhook/file polling was reduced from 2s to 500ms.
+- 2026-06-04 KIA login selector speedup:
+  - KIA login now tries exact selectors first (#userId, #password/#pwd, #btnGenerateOtp, #otpEnter, #btnLoginClickGdmsNew).
+  - KIA login field waits were shortened for credential/send/login controls so broad fallback selectors no longer add long idle-looking pauses before OTP.
+- Reliability guardrails remain:
+  - reports still wait for grid idle, downloads, and Supabase writes before continuing
+  - retries still happen on actual failures
+  - PM2 still manages process recovery
+
+2026-06-01 one-off date override:
+- Added process-env override keys for missed-day recovery runs:
+  - REPORT_DATE_OVERRIDE_START_DATE
+  - REPORT_DATE_OVERRIDE_END_DATE
+- When either key is present, supported report modules use that exact date range instead of their normal current-month / rolling / historical range.
+- This is intended for one-off command-line runs only; do not keep these keys in .env for normal PM2 scheduling.
+- Example missed-day run:
+  REPORT_DATE_OVERRIDE_START_DATE=2026-05-31
+  REPORT_DATE_OVERRIDE_END_DATE=2026-05-31
+  REPORTS_TO_RUN=all
+  npm run reports
+
+2026-06-01 Kia call center complaint update-key fix:
+- Complaint records are mutable in DMS. A complaint can move from Open/Dissatisfied to Close under the same complaint_no and sr_no.
+- The relational row_hash logic now uses complaint_no + sr_no as the stable identity for kia_call_center_complaints.
+- Re-importing the same complaint now updates the existing row instead of creating a new row when status/details change.
+- Existing kia_call_center_complaints rows were deduped with the new identity key:
+  - scannedRowCount: 58
+  - duplicateGroups: 13
+  - deletedDuplicateRowCount: 13
+  - retainedRowCount: 45
+- The complaints cron was rerun for 2026-05-27 through 2026-06-01.
+- Verified sample complaint N202600160 / SR 02935419 now has only one row and current status Close.
+
+2026-06-01 relational duplicate prevention hardening:
+- The complaint fix was expanded into table-specific business identity keys for all cron-owned relational tables.
+- Future cron imports no longer depend on full-row hashes when a stable report number exists.
+- Current identity rules:
+  - ro_billing_report: dealer_code + bill_no, fallback bill_no, fallback RO/date/VIN.
+  - kia_call_center_complaints: complaint_no + sr_no, fallback complaint_no.
+  - open_ro_yearly: dealer_code + r_o_no, fallback r_o_no, fallback VIN/date/work_type.
+  - demo_job_cards: dealer_code + r_o_no, fallback r_o_no, fallback VIN/date/work_type.
+  - psf_yearly: ro_no, fallback VIN/RO date/visit_type.
+  - ew_report: certi_no, fallback VIN/reg_date/scheme_desc.
+  - mcp_report: cert_no, fallback VIN/package_purchase_date/package_name.
+  - rsa_report: invoice_no + vin_chasis_no, fallback invoice_no, fallback VIN/invoice_date/policy_name.
+  - adv_wise_lubricants_vas: invoice/RO + OP/part code + VIN where available.
+  - operation_wise_analysis_report: report_type + period + dealer_code + op_part_code.
+  - operation_wise_analysis_advisor_report: report_type + date_type/service_advisor + period + dealer_code + op_part_code.
+- Existing relational tables were deduped with the new identity rules.
+- Dedupe results:
+  - ro_billing_report: deleted 75 duplicate rows.
+  - kia_call_center_complaints: deleted 0 duplicate rows after prior complaint cleanup.
+  - open_ro_yearly: deleted 18 duplicate rows.
+  - demo_job_cards: deleted 0 duplicate rows.
+  - psf_yearly: deleted 210 duplicate rows.
+  - ew_report: deleted 0 duplicate rows.
+  - mcp_report: deleted 2 duplicate rows.
+  - adv_wise_lubricants_vas: deleted 1 duplicate row.
+  - operation_wise_analysis_report: deleted 71 duplicate rows.
+  - operation_wise_analysis_advisor_report: deleted 18 duplicate rows.
+  - rsa_report: deleted 59 duplicate rows.
+- Dashboard materialized views were refreshed after cleanup:
+  - workshop_performance_jc_summary_v1
+  - workshop_operation_addon_summary_v1
+
+2026-06-02 Demo Car List cron:
+- Added a dedicated Demo Car List report lane.
+- Report module: src/reports/demo-car-list.js.
+- Scheduler mode: demo-car-list.
+- Default schedule: DEMO_CAR_LIST_CRON_SCHEDULE=30 15 * * 1.
+  - This means weekly on Monday at 3:30 PM local machine time.
+- Navigation:
+  - Sales MIS sidebar section: li.nav_sal_mis
+  - Monthly Reports
+  - Purchase Report
+  - DMS URL selector target: /mis/misa/selectPurchaseReportMain.dms
+- Date fields:
+  - Start date: #sQueryFromDate
+  - End date: #sQueryToDate
+- Export flow:
+  - Date range is chunked into max 30-day windows.
+  - For each chunk: fill dates, Search, wait for grid, select 300, export all pages.
+  - Exports are merged and saved through the existing Supabase relational flow.
+  - Local export files are deleted after successful upload.
+- Storage:
+  - Sheet/table name: demo_car_list.
+  - Relational table was created automatically from report headers.
+  - Duplicate prevention prefers VIN-style keys:
+    - vin
+    - vin_no
+    - chassis_no
+    - vin_chassis_no
+    - vin_chasis_no
+    - invoice/purchase fallback keys where available.
+- One-time historical backfill run:
+  - Process-only DEMO_CAR_LIST_BACKFILL_ENABLED=true.
+  - Backfill start: 2025-01-01.
+  - Backfill end: 2026-06-02.
+  - 18 chunks exported.
+  - 836 rows inserted into public.demo_car_list.
+  - duplicateRowCount=0.
+  - Verified duplicate VIN group count=0.
+  - Dashboard materialized views refreshed afterward.
+- Normal PM2 config remains:
+  - DEMO_CAR_LIST_BACKFILL_ENABLED=false in .env.
+  - Weekly 3:30 PM schedule active through PM2.
+
+2026-05-31 Demo Job Cards cron:
+- Added a dedicated Demo Job Cards report lane.
+- Report module: src/reports/demo-job-cards.js.
+- Scheduler mode: demo-job-cards.
+- Default schedule: DEMO_JOB_CARDS_CRON_SCHEDULE=0 10,18 * * *.
+- Navigation reuses the Repair Order List flow:
+  - Service/MIS repair order section
+  - Repair Order
+  - Repair Order List
+- Required filter:
+  - Work Type = Test Drive/CC Maintenance
+  - Config key: DEMO_JOB_CARDS_WORK_TYPE
+- Normal production date logic:
+  - Current month start date through current execution date.
+  - Chunked into max 30-day ranges for portal safety.
+- One-time current-year backfill logic:
+  - Enable only with DEMO_JOB_CARDS_BACKFILL_ENABLED=true.
+  - Default backfill start date: Jan 1 of the current year.
+  - Override with DEMO_JOB_CARDS_BACKFILL_START_DATE if needed.
+- Export handling:
+  - Selects 300 records.
+  - Exports every grid page.
+  - Merges all chunk/page exports.
+  - Saves through the existing relational Supabase flow using sheet name Demo Job Cards.
+  - Relational table name is generated from sheet name, expected as demo_job_cards.
+  - Local export files are deleted after successful Supabase upload.
+- OTP remains automatic; no manual OTP override is required for Demo Job Cards testing or production.
+- One-time current-year backfill was run on 2026-05-31 with DEMO_JOB_CARDS_BACKFILL_ENABLED=true and OTP_PROVIDER=webhook only for that process.
+- Backfill range exported:
+  - 2026-01-01 through 2026-05-31.
+  - 6 chunks exported and merged.
+  - 115 rows inserted into relational table demo_job_cards.
+  - duplicateRowCount=0 on first load.
+  - Local files under downloads/report-chunks/demo-job-cards/2026-05-31 were deleted after successful Supabase save.
+  - Dashboard materialized views refreshed successfully afterward.
+- Normal PM2 scheduler should run Demo Job Cards only via the demo-job-cards lane at 10 AM and 6 PM with current-month-to-date data.
+
+2026-06-02 Demo Job Cards 6 PM investigation and reliability fix:
+- Finding:
+  - public.demo_job_cards had not updated after 2026-05-31.
+  - 2026-06-02 10 AM demo-job-cards run started but failed while selecting Work Type = Test Drive/CC Maintenance.
+  - Root cause was a DMS Kendo/Common Message popup intercepting the dropdown option click.
+  - 2026-06-02 6 PM special jobs conflicted with the regular scheduler window; old scheduler lock skipped overlapping modes instead of running them later.
+- Fixes:
+  - src/cron/scheduler.js now queues overlapping scheduler modes instead of dropping them.
+  - src/reports/report-actions.js now dismisses blocking Kendo Common Message popups and uses the Kendo dropdown widget API before falling back to forced option click.
+- Validation:
+  - npm run check passed.
+  - PM2 kia-cron-job was reloaded.
+  - A one-off demo-job-cards run succeeded with OTP_PROVIDER=webhook.
+  - Current-month range exported: 2026-06-01 through 2026-06-02.
+  - 33 rows inserted into public.demo_job_cards.
+  - Latest demo_job_cards uploaded_at verified as 2026-06-02T17:16:40.680Z.
+ - Dashboard materialized views refreshed after successful import.
+
+2026-06-03 Multi-dealer cron orchestration:
+- Goal:
+  - Keep all existing report logic unchanged.
+  - Run the current scheduled report mode for the currently active dealer first.
+  - If all selected reports for the current dealer succeed, switch the active KIA DMS dealer to JK501.
+  - Run the same selected report mode again after the dealer switch.
+- Configuration:
+  - MULTI_DEALER_ENABLED=true
+  - ADDITIONAL_DEALER_CODES=JK501
+  - DEALER_CHANGE_TIMEOUT_MS=90000
+- Scheduler changes:
+  - src/cron/scheduler.js now wraps KIA-DMS-required modes in a dealer sequence when multi-dealer mode is enabled.
+  - Current dealer reports run first with dealerCode=current in logs/health output.
+  - Additional dealer reports run afterward with dealerCode=JK501 in logs/health output.
+  - If the first dealer has any failed report, dealer switching is skipped and materialized-view refresh remains skipped.
+  - If JK501 has a failed report, the additional dealer sequence stops and the run is marked completed_with_failures.
+  - Dashboard materialized views refresh only after all dealer executions/imports for the mode succeed.
+- Dealer switch navigation:
+  - src/navigation/kia-menu.js adds Master > Personal Info > Dealer Change navigation.
+  - src/navigation/dealer-change.js handles:
+    - open Dealer Change screen
+    - click Change Dealer Search
+    - search dealer code JK501 in popup or in-page search UI
+    - select the matching result
+    - click Add Selected
+    - verify #chgDlrCd is populated
+    - click #btnDlrChange
+- Historical backfill:
+  - No report-specific date logic was changed for this feature.
+  - JK501 backfill uses the same existing backfill switches already present per report/global mode.
+  - To backfill JK501, enable the relevant historical/backfill env flags and run the appropriate scheduler mode; the multi-dealer sequence will run current dealer first and JK501 after it.
+- Validation:
+  - npm run check passed after adding src/navigation/dealer-change.js to the check script.
+ - PM2 kia-cron-job was reloaded with --update-env.
+ - Config verification showed multiDealerEnabled=true and additionalDealerCodes=["JK501"].
+ - PM2 status confirmed kia-cron-job, kia-otp-webhook, and kia-ngrok are online.
+
+2026-06-03 Service Appointment cron:
+- New report mode:
+  - mode: service-appointment
+  - report id: service-appointment
+  - relational table/sheet name: service_appointment
+- Schedule:
+  - SERVICE_APPOINTMENT_CRON_SCHEDULE defaults to 0 18 * * *.
+  - The cron is separate from the regular hourly report lane and runs once daily at 6 PM.
+- Navigation:
+  - Primary path: Service sidebar > Service Appointment > Service Appointment List.
+  - Fallback path: Service MIS > Service Appointment > Service Appointment List, using the MIS Service Appointment List menu item if the Service menu path is unavailable.
+- Date logic:
+  - Normal production logic now fetches the full current calendar month, not just current-day data.
+  - Example: if execution date is 2026-06-04, the report searches 2026-06-01 through 2026-06-30.
+  - Month ranges are still split with the 30-day chunk utility, so 31-day months are safe for the DMS limit.
+  - SERVICE_APPOINTMENT_BACKFILL_ENABLED=true can still force the older initial backfill path from SERVICE_APPOINTMENT_BACKFILL_START_DATE.
+  - REPORT_DATE_OVERRIDE_START_DATE/REPORT_DATE_OVERRIDE_END_DATE can still force a specific range for one-off testing.
+- Export/save logic:
+  - Uses existing search, Kendo grid idle wait, 300 row page size, pagination export, merge, Supabase save, and local export cleanup flow.
+  - Duplicate prevention was added for public.service_appointment using likely appointment/booking identifiers and appointment date/time combinations.
+  - Service Appointment exports do not contain dealer code, so src/reports/service-appointment.js injects a dealer_code column before Supabase save using the scheduler dealerCode value.
+  - Exact Appointment Date fields are #sBkngFromDate and #sBkngToDate; these are preferred before fallback/generic date selectors.
+- Multi-dealer:
+  - The report receives dealerCode from the scheduler, so JK402 and JK501 get separate one-time backfill markers.
+  - One-off 2026-06-03 backfill inserted 254 rows for JK402 and 56 rows for JK501; that run occurred before dealer_code stamping was added, so later runs will carry dealer_code explicitly.
+- 2026-06-04 full-month run:
+  - Changed src/reports/service-appointment.js normal mode to current-month-full.
+  - One-off run executed with node src/cron/scheduler.js --once --mode=service-appointment after stopping PM2 kia-cron-job.
+  - Range used for both dealers: 2026-06-01 through 2026-06-30.
+  - JK402 exported 64 rows, inserted 48, duplicate 16.
+  - JK501 exported 13 rows, inserted 9, duplicate 4.
+  - Dashboard materialized views refreshed successfully.
+  - PM2 kia-cron-job was restarted with --update-env and saved afterward.
+
+2026-06-03 Demo Car List one-off Jan 2024 through Jan 2025:
+- Request:
+  - Run Demo Car List once for historical data from January 2024 through January 2025.
+  - After the one-off, restore normal scheduler behavior.
+  - Do not let the regular/report cron run between the JK402 and JK501 demo-car-list passes.
+- Scheduler guard:
+  - src/cron/scheduler.js now skips a scheduled regular/report run when another scheduler mode is already running.
+  - Config flag: SKIP_REGULAR_RUN_WHEN_SCHEDULER_BUSY, default true.
+  - Purpose: a long special cron should not finish and then unexpectedly run the regular report lane from a queued tick.
+- One-off runner:
+  - Added scripts/run-demo-car-list-once.js.
+  - It imports runKiaDmsJob and runs only mode demo-car-list.
+  - Added to npm run check.
+- Execution:
+  - Normal PM2 kia-cron-job was stopped before the one-off.
+  - OTP webhook and ngrok stayed online for automatic OTP.
+  - One-off PM2 process name: kia-demo-car-list-backfill.
+  - Environment override used only for the one-off:
+    - REPORT_DATE_OVERRIDE_START_DATE=2024-01-01
+    - REPORT_DATE_OVERRIDE_END_DATE=2025-01-31
+    - MULTI_DEALER_ENABLED=true
+    - ADDITIONAL_DEALER_CODES=JK501
+  - No .env backfill flags were changed.
+- Result:
+  - JK402 Demo Car List: 14 chunks, 66 exported rows, 17 inserted, 49 duplicates.
+  - JK501 Demo Car List: 14 chunks, 0 exported rows, 0 inserted.
+  - Active dealer restored to JK402.
+  - Dashboard materialized views refreshed successfully after the one-off.
+  - One-off PM2 process was deleted.
+  - Normal PM2 kia-cron-job was restarted and saved.
+
+2026-06-03 Demo Car List / Purchase Report dealer scope correction:
+- User confirmed Purchase Report contains both dealer codes in the exported data, so it should not run once per dealer.
+- Added config:
+  - PRIMARY_DEALER_ONLY_MODES=demo-car-list
+  - Default in src/config.js is also demo-car-list.
+- Scheduler behavior:
+  - For modes listed in PRIMARY_DEALER_ONLY_MODES, src/cron/scheduler.js explicitly switches to PRIMARY_DEALER_CODE, currently JK402, runs the mode once, and skips ADDITIONAL_DEALER_CODES.
+  - This preserves the existing Purchase Report export/save logic while preventing a duplicate JK501 pass for demo_car_list.
+
+2026-06-03 standalone RSA dealer-loop fix:
+- Issue:
+  - Regular mode previously included both KIA DMS reports and RSA Report.
+  - The multi-dealer scheduler was running the full selected report list once for JK402 and again for JK501, which caused RSA / https://kia.awpassistance.in/ to run twice.
+- Fix:
+  - src/reports/index.js runConfiguredReports now accepts an explicit report subset.
+  - src/cron/scheduler.js splits selected reports into:
+    - dealer-scoped reports: requiresKiaDms=true, run once per active dealer.
+    - standalone reports: requiresKiaDms=false, run exactly once outside the dealer loop.
+  - RSA Report remains requiresKiaDms=false and now runs once per scheduler cycle with dealerCode=standalone.
+- Behavior:
+  - Regular cron: KIA DMS reports run for JK402 then JK501; RSA is no longer part of this lane.
+  - RSA cron: runs only in its own rsa-report lane at 10:00 AM.
+  - RSA-only/test mode still opens the RSA browser session directly and runs once.
+
+2026-06-03 multi-dealer report-first execution:
+- User requested a smoother multi-dealer flow:
+  - run one cron/report for JK402,
+  - switch to JK501 for the same report,
+  - finish both dealers for that report,
+  - then move to the next report.
+- Added config:
+  - MULTI_DEALER_EXECUTION_STRATEGY=report-first
+  - Default in src/config.js is also report-first.
+- Scheduler behavior:
+  - report-first strategy order for regular mode:
+    - ro-billing: JK402 then JK501
+    - psf-yearly: JK402 then JK501
+    - ew-report: JK402 then JK501
+    - mcp-report: JK402 then JK501
+    - adv-wise-lubricants-vas: JK402 then JK501
+    - operation-wise-analysis-report: JK402 then JK501
+    - operation-wise-analysis-advisor-report: JK402 then JK501
+    - rsa-report: standalone once only when the dedicated rsa-report mode runs
+  - dealer-first remains available by setting MULTI_DEALER_EXECUTION_STRATEGY=dealer-first.
+- Save behavior:
+  - Each report still uses its existing Supabase upsert/save path after that dealer export completes.
+  - This avoids rewriting every report exporter while changing the visible execution order and keeping duplicate-safe database writes.
+
+2026-06-04 scheduler/dealer-switch speed cleanup:
+- Checked PM2/process state:
+  - Only one kia-cron-job PM2 scheduler process was running.
+  - The "multiple cron" feeling came from multiple node-cron schedules firing at the same minute and being queued by the global scheduler lock, not from duplicate PM2 processes.
+- Current multi-dealer strategy:
+  - MULTI_DEALER_EXECUTION_STRATEGY=report-first.
+  - Regular lane logs confirmed order like RO Billing JK402 -> RO Billing JK501 -> PSF JK402 -> PSF JK501.
+  - Single-report modes such as demo-job-cards naturally appear as JK402 -> JK501 because there is only one report in that lane.
+- Dealer switch speed changes:
+  - src/navigation/dealer-change.js no longer navigates to KIA home before every dealer switch when already on dms.kiaindia.net.
+  - It falls back to KIA home only if direct Dealer Change navigation fails.
+  - Dealer Search popup detection now checks the in-page modal quickly and only waits briefly for a separate popup window.
+  - Dealer Change submit now uses a short domcontentloaded wait instead of a long networkidle wait.
+  - src/navigation/kia-menu.js Dealer Change menu click now avoids a 30s networkidle delay.
+- Schedule collision cleanup:
+  - Regular hourly lane remains REGULAR_REPORTS_CRON_SCHEDULE=0 9-18 * * *.
+  - Special jobs are staggered instead of all firing at 18:00:00:
+    - OPEN_RO_YEARLY_CRON_SCHEDULE=10 18 * * *
+    - KIA_CALL_CENTER_COMPLAINTS_CRON_SCHEDULE=25 18 * * *
+    - DEMO_JOB_CARDS_CRON_SCHEDULE=30 10,18 * * *
+    - SERVICE_APPOINTMENT_CRON_SCHEDULE=45 18 * * *
+  - The global queue/lock remains in place, so if one job is still running, the next mode queues once and does not start in parallel.
+- Follow-up after 11:00 AM run:
+  - Last scheduled regular run on 2026-06-04 failed during the first dealer switch.
+  - Cause: Dealer Search popup shell became visible before the JK402 row was visible, and the automation proceeded too early.
+  - Fix:
+    - dealer-change.js now waits for the actual dealer row selector for JK402/JK501 before selecting.
+    - It no longer treats only the Dealer Search popup title/window as enough.
+    - kia-menu.js click helper now passes the intended timeout into locator.click so a 5s menu click cannot silently wait for the global 45s action timeout.
+  - npm run check passed after the fix.
+
+2026-06-04 Hyundai / HMIL NDMS parallel cron lane:
+- Added a separate HMIL/Hyundai scheduler so Hyundai DMS jobs do not collide with KIA DMS jobs.
+- New files:
+  - src/auth/hmil-login.js
+  - src/navigation/hmil-menu.js
+  - src/reports/hyundai-repair-order-list.js
+  - src/cron/hmil-scheduler.js
+- PM2:
+  - Added hmil-cron-job to ecosystem.config.cjs.
+  - It runs src/cron/hmil-scheduler.js with --scheduler.
+  - Logs:
+    - logs/pm2-hmil-out.log
+    - logs/pm2-hmil-error.log
+  - Health file:
+    - logs/hmil-health.json
+- Browser/session isolation:
+  - Hyundai uses storage/hmil-dms-state.json.
+  - Hyundai downloads use downloads/hmil and downloads/report-chunks/hmil.
+  - This is independent from KIA storage/kia-dms-state.json and KIA report chunk folders.
+- Credentials/config are in .env under HMIL_* keys.
+- Login:
+  - HMIL_DMS_URL points to https://ndms.hmil.net/cmm/cmmi/selectLoginAction.json.
+  - The login helper derives selectLoginMain.dms if the action URL does not render fields.
+  - OTP uses the existing OTP_PROVIDER flow, including webhook.
+  - HMIL_FORCE_LOGIN defaults true to avoid the slow saved-session home-page probe before entering credentials.
+  - If HMIL_FORCE_LOGIN is disabled later, HMIL_SESSION_CHECK_TIMEOUT_MS caps the saved-session check.
+  - Exact HMIL OTP selectors are:
+    - Send OTP: #btnGenerateOtp
+    - OTP input: #otpEnter
+    - Login/submit: #btnLoginClickGdmsNew
+- Navigation:
+  - Service MIS/wrench menu: li.nav_ser_mis.
+  - Repair Order group.
+  - Repair Order List menu item:
+    - data-viewid="VIEW-D-00608"
+    - data-url="/mis/misc/selectRepairOrderListMain.dms"
+    - data-title="Repair Order List"
+- Report:
+  - Date range currently configured as 2026-05-01 to 2026-05-31.
+  - Page size is 1000 via HMIL_REPAIR_ORDER_PAGE_SIZE.
+  - Exports all pages, merges Excel files, saves to Supabase, then deletes local chunks.
+- Database:
+  - Sheet name is Hyundai Repair Order List.
+  - Relational table normalizes to hyundai_repair_order_list.
+  - Brand saved as hyundai.
+  - Duplicate identity for hyundai_repair_order_list uses:
+    - dealer_code + r_o_no
+    - r_o_no
+    - vin + ro_date + work_type
+- Scripts:
+  - npm run hmil:cron
+  - npm run hmil:once
+  - npm run pm2:hmil:logs
+- 2026-06-04 Hyundai/GDMS OTP message parsing fix:
+  - Hyundai OTP SMS format observed:
+    "Your One Time Password for mobile number authentication in GDMS is 490434. This OTP is valid for 5 minutes only. Team Hyundai"
+  - src/utils/otp.js now prioritizes OTP / One Time Password / GDMS / Hyundai phrase patterns before falling back to OTP_REGEX.
+  - src/otp/webhook-server.js now recursively flattens nested SMS-forwarder JSON payload values so app-specific fields like messageBody/data arrays are searchable.
+  - Verified sample extraction returns the 6-digit OTP.
+  - Verified KIA 5-digit OTP formats still work, including:
+    - "KIA DMS OTP is 68430"
+    - "68430 is your KIA DMS OTP"
+- 2026-06-04 HMIL login timing/OTP acceptance fix:
+  - Added OTP_FRESHNESS_GRACE_MS, default 15000, so SMS-forwarder OTPs posted just before/around the Send OTP timestamp are not rejected incorrectly.
+  - Webhook OTP client now logs when it sees an OTP but rejects it as older than the current request window.
+  - HMIL Send OTP click no longer waits for networkidle; it clicks #btnGenerateOtp and immediately waits for #otpEnter.
+  - HMIL credential lookup now tries exact ids first (#usrId/#userId/#loginId, #usrPswdNo/#password/#pwd/#passwd, #btnGenerateOtp, #otpEnter, #btnLoginClickGdmsNew) before broad fallback selectors.
+  - HMIL fallback selectors use short per-selector waits, so a missing broad selector cannot make login sit silently for several minutes.
+- 2026-06-04 HMIL pagination parser fix:
+  - Shared Kendo pagination detection now parses pager text like "1-1000 of 1818" as well as "of 1818 items".
+  - This lets Hyundai 1000-row pages calculate total pages directly from the Kendo pager info.
+- 2026-06-04 shared KIA/HMIL webhook OTP routing fix:
+  - src/otp/webhook-server.js now classifies incoming OTP SMS payloads as purpose=hmil for Hyundai/GDMS/mobile-number-authentication messages, purpose=kia for KIA/5-digit messages, or purpose=unknown.
+  - The webhook keeps a short in-memory OTP history instead of only one global latest OTP.
+  - /otp/latest supports ?purpose=hmil and ?purpose=kia.
+  - HMIL login requests getOtp purpose=hmil, so it will not consume a KIA OTP.
+  - KIA login requests getOtp purpose=kia after the KIA process reloads; the old running process can still use the unfiltered latest endpoint until restarted.
+  - Verified locally with redacted fake OTP payloads, then restarted kia-otp-webhook to clear the fake test OTPs.
+    - "Your OTP for KIA DMS login is 82551."
+  - Restarted kia-otp-webhook with PM2 and saved the process list.
+
+
+2026-06-04 HMIL multi-dealer Kia-clone report expansion:
+- Hyundai dealer codes confirmed from Dealer Search popup:
+  - N5216
+  - N6844
+  - N6845
+  - N6846
+  - N6847
+  - N6848
+- .env now contains:
+  - HMIL_DEALER_CODES=N5216,N6844,N6845,N6846,N6847,N6848
+  - HMIL_REPORTS_TO_RUN=all
+- Config now exposes:
+  - config.hmilDealerCodes
+  - config.hmilReportsToRun
+- Dealer switching:
+  - src/navigation/dealer-change.js now exports changeActiveDealerForDms(page, dealerCode, { homeUrl, systemLabel }).
+  - KIA changeActiveDealer remains backward-compatible and still uses the KIA home URL.
+  - HMIL scheduler uses changeActiveDealerForDms with HMIL_HOME_URL so Hyundai dealer switching stays on ndms.hmil.net.
+- Scheduler behavior:
+  - src/cron/hmil-scheduler.js now runs selected HMIL reports in report-first multi-dealer order:
+    - report 1 for N5216, N6844, N6845, N6846, N6847, N6848
+    - then report 2 for all six dealers
+    - and so on.
+  - Each report/dealer pair runs through executeWithRetry and logs its own success/failure.
+  - If one Hyundai report fails, the scheduler logs the reason, records it in logs/hmil-health.json, and continues to the next dealer/report.
+  - Overall HMIL health status becomes completed_with_failures when any pair fails, but the process does not crash for per-report failures.
+- New Hyundai report registry/generic clone runner:
+  - src/reports/hmil-reports.js
+  - src/reports/hyundai-kia-clone.js
+- Included Hyundai-prefixed DMS report definitions:
+  - Hyundai Repair Order List
+  - Hyundai RO Billing Report
+  - Hyundai Call Center Complaints
+  - Hyundai Open RO Yearly
+  - Hyundai Demo Job Cards
+  - Hyundai Demo Car List
+  - Hyundai Service Appointment
+  - Hyundai PSF Yearly
+  - Hyundai EW Report
+  - Hyundai MCP Report
+  - Hyundai Adv. wise lubricants & VAS
+  - Hyundai Operation Wise Analysis Report
+- Hyundai cloned reports save with:
+  - brand=hyundai
+  - Hyundai-prefixed sheet names, so relational tables normalize with hyundai_* names.
+  - source_dealer_code added to each parsed row, so reports without dealer code remain traceable per active Hyundai dealer.
+- Duplicate prevention:
+  - src/supabase/relational-store.js now includes identity rules for the new Hyundai tables:
+    - hyundai_ro_billing_report
+    - hyundai_call_center_complaints
+    - hyundai_open_ro_yearly
+    - hyundai_demo_job_cards
+    - hyundai_demo_car_list
+    - hyundai_service_appointment
+    - hyundai_psf_yearly
+    - hyundai_ew_report
+    - hyundai_mcp_report
+    - hyundai_adv_wise_lubricants_vas
+    - hyundai_operation_wise_analysis_report
+  - source_dealer_code is indexed and used in row identity where dealer context is needed.
+- Page size behavior:
+  - Hyundai clone runner tries HMIL_REPAIR_ORDER_PAGE_SIZE, currently 1000.
+  - If a specific page does not offer 1000, it logs a warning and falls back to 300 instead of failing only due to page-size availability.
+- Important follow-up:
+  - These cloned report definitions use the same DMS menu paths and date field selectors as KIA where expected.
+  - If a Hyundai page differs, that report will fail cleanly with selector/navigation logs; capture the page DOM and patch only that report.
+- npm run check now includes:
+  - src/reports/hyundai-kia-clone.js
+  - src/reports/hmil-reports.js
+
+2026-06-04 KIA OTP/home redirect login fix:
+- Observed KIA cron failures after Send OTP:
+  - KIA OTP SMS was reaching the webhook correctly with purpose=kia.
+  - The browser screenshot showed the KIA DMS home/dashboard was already visible after Send OTP.
+  - The login code still waited for #otpEnter and failed because the OTP input was no longer on screen.
+- Fix in src/auth/login.js:
+  - After Send OTP click, wait for either:
+    - OTP input, or
+    - logged-in KIA home/sidebar (#gnb / li.nav_ser_mis / li.nav_ser).
+  - If home is already visible, save session state and treat login as successful instead of waiting for OTP.
+  - Shared KIA home verification moved into ensureKiaHome().
+- Verified:
+  - npm run check passed.
+  - kia-cron-job restarted with PM2 --update-env and PM2 state saved.
+
+2026-06-04 Hyundai/HMIL live run and navigation fixes:
+- Ran HMIL one-off using:
+  - node src/cron/hmil-scheduler.js --once
+  - Output logs: logs/hmil-manual-out.log
+  - Error logs: logs/hmil-manual-error.log
+- HMIL OTP verification:
+  - Webhook OTP flow worked for Hyundai.
+  - Old HMIL OTPs received before the current Send OTP click are ignored by notBefore freshness logic.
+  - Fresh HMIL OTP was submitted through #otpEnter and login completed successfully.
+- Dealer Change issue:
+  - HMIL Master > Personal Info sometimes clicks Request For Dealer Change instead of loading Dealer Change because the desired item is hidden.
+  - src/navigation/dealer-change.js now falls back to direct DMS host URL:
+    - /cmm/cmmh/selectDealerChangeMain.dms
+  - This fallback found #chgDlrCd, selected dealer rows from the in-page Dealer Search popup, and changed active dealer successfully.
+- Hyundai hidden sidebar issue:
+  - src/navigation/hmil-menu.js now falls back from normal visible click to element.evaluate(element => element.click()).
+  - This allows hidden but present HMIL menu items such as Repair Order and Repair Order List to open.
+  - Follow-up speed fix: hidden HMIL menu items are detected after a short visibility check and DOM-clicked immediately, avoiding repeated 30-second waits on hidden sidebar links.
+- Live HMIL validation:
+  - N5216 Hyundai Repair Order List loaded.
+  - Date range used: 01/05/2026 to 31/05/2026.
+  - Page size 1000 selected.
+  - Pagination detected 2 pages.
+  - Both exports parsed and attempted relational save into hyundai_repair_order_list.
+  - Duplicate protection prevented duplicate inserts when rows already existed.
+- Verified:
+  - npm run check passed.
+  - hmil-cron-job restarted with PM2 --update-env and PM2 state saved.
+
 
 VALIDATION COMMANDS
 
@@ -905,4 +1597,633 @@ Run selected report flow once:
 Start OTP webhook server:
 - npm run otp:webhook
 
+2026-06-04 Hyundai/HMIL requested section additions:
+- Added/updated HMIL report definitions for these sections:
+  - CRM > HMI Call Center Complaint Service List
+    - Date fields: #sCompStartDate, #sCompEndDate
+    - Saves as Hyundai Call Center Complaints / hyundai_call_center_complaints.
+    - Uses the fixed complaint export header mapping to avoid broken Column 1/Column 2 style headers.
+  - Service > Repair Order > Repair Order List
+    - Date fields updated to Hyundai DOM ids: #sRoStrtDate, #sRoFnshDate.
+    - Related dropdown ids now use Hyundai ids where needed: #sWorkType and #sRoStat.
+    - Saves as Hyundai Repair Order List / hyundai_repair_order_list.
+  - CRM > Complaint > Customer Complaint List
+    - Business Type is forced to Service through #basBizType.
+    - Complaint Source #sCompSource is exported one option at a time.
+    - Each exported source loop adds complaint_source_filter metadata to the saved rows.
+    - Saves as Hyundai Customer Complaint List / hyundai_customer_complaint_list.
+- Important HMIL export behavior:
+  - Do not open export reports by direct report URL just because fields are visible.
+  - Direct URLs can render the grid but fail to emit Playwright download events on export.
+  - Repair Order and other export reports should be opened through the DMS sidebar/tab flow.
+- Page-size behavior:
+  - HMIL requested page size remains 1000.
+  - If a page offers only 50/100/300, selectKendoPagerSize now logs a warning and falls back to 300 instead of failing.
+- Duplicate prevention:
+  - hyundai_customer_complaint_list added to relational identity/dedupe rules using complaint_no and sr_no, with source_dealer_code when available.
 
+2026-06-04 Hyundai/HMIL page-size correction:
+- User clarified Hyundai pages may offer 5000, not just 1000.
+- .env now sets HMIL_REPAIR_ORDER_PAGE_SIZE=5000.
+- src/config.js default for hmilRepairOrderPageSize is now 5000.
+- selectKendoPagerSize now treats the requested size as a maximum and selects the highest available option at or below it:
+  - 5000 when present
+  - otherwise 1000
+  - otherwise 300/100/50 depending on what the page exposes.
+- The previous reason only hyundai_repair_order_list appeared in Supabase:
+  - HMIL scheduler selected all Hyundai reports, but report-first execution starts with Hyundai Repair Order List for all dealers.
+  - That first batch was failing on unavailable 1000 page-size selection before the run reached the later Hyundai report batches.
+  - After the max-page-size fallback, the scheduler should progress to the other Hyundai reports instead of burning retries on page-size selection.
+
+2026-06-04 Hyundai/HMIL Extended Warranty fix:
+- User confirmed Hyundai EW path is:
+  - Service / wrench icon > Extended Warranty > Extended Warranty List.
+- Added HMIL-specific navigation:
+  - src/navigation/hmil-menu.js: openHmilExtendedWarrantyList()
+  - It opens Hyundai Service, expands Extended Warranty, and clicks Extended Warranty List.
+- Updated Hyundai EW report definition:
+  - src/reports/hmil-reports.js now uses openHmilExtendedWarrantyList for hyundai-ew-report.
+  - Date fields are Hyundai-specific:
+    - Start: #sFromRegDate
+    - End: #sToRegDate
+- Verified one-off active-dealer run:
+  - HMIL_REPORTS_TO_RUN=hyundai-ew-report
+  - HMIL_DEALER_CODES=active
+  - Export succeeded from Extended Warranty List.
+  - Suggested export filename: ExtendedWarrantytList.xlsx.
+  - Parsed 13 headers and 1 row.
+  - Saved into relational table hyundai_ew_report.
+  - Local export chunk was deleted after Supabase relational save.
+  - npm run check passed before the run.
+
+2026-06-04 Hyundai/HMIL Demo Car List / Purchase Report fix:
+- User confirmed Hyundai Purchase Report path:
+  - MIS sidebar item with class nav_sal_mis and title MIS > Monthly Reports > Purchase Report.
+- Added HMIL-specific navigation:
+  - src/navigation/hmil-menu.js: openHmilPurchaseReport()
+  - It opens li.nav_sal_mis, expands Monthly Reports, and clicks Purchase Report using DOM-click fallback for hidden sidebar links.
+- Updated Hyundai Demo Car List report definition:
+  - src/reports/hmil-reports.js now uses openHmilPurchaseReport for hyundai-demo-car-list.
+  - Date fields remain:
+    - Start: #sQueryFromDate
+    - End: #sQueryToDate
+- Verified one-off active-dealer run:
+  - HMIL_REPORTS_TO_RUN=hyundai-demo-car-list
+  - HMIL_DEALER_CODES=active
+  - Navigation succeeded.
+  - Date fields were found in frame URL /mis/misa/selectPurchaseReportMain.dms.
+  - Export succeeded with suggested filename VehicleDeliveryStatusReport.xlsx.
+  - Parsed 41 headers and 0 rows for 2026-06-01 to 2026-06-04.
+  - Relational table hyundai_demo_car_list was prepared with normalized columns.
+  - Since the current date range had no rows, insertedRowCount was 0, but the automation/export/save flow completed successfully.
+
+2026-06-04 Hyundai/HMIL Operation Wise Analysis Report fix:
+- User confirmed Hyundai path:
+  - MIS / wrench icon > Work Profit > Operation Wise Analysis Report.
+- Added HMIL-specific navigation:
+  - src/navigation/hmil-menu.js: openHmilOperationWiseAnalysisReport()
+  - It opens the Hyundai MIS/Service-MIS Work Profit menu and clicks Operation Wise Analysis Report with DOM-click fallback for hidden sidebar links.
+- Updated Hyundai report definitions:
+  - hyundai-operation-wise-analysis-report now uses openHmilOperationWiseAnalysisReport.
+  - hyundai-adv-wise-lubricants-vas also uses the same HMIL opener because it is the same report page.
+- Date/dropdown fields:
+  - Report Type: #reportType
+  - Date Type: #dateType
+  - Start Date: #startDate
+  - End Date: #endDate
+  - Existing config sets reportType=Operation and dateType=Billing Date for hyundai-operation-wise-analysis-report.
+- Verified one-off active-dealer run:
+  - HMIL_REPORTS_TO_RUN=hyundai-operation-wise-analysis-report
+  - HMIL_DEALER_CODES=active
+  - Navigation succeeded.
+  - Date fields were found in frame URL /mis/misc/selectOperationWiseAnalysisReportMain.dms.
+  - Export succeeded with suggested filename OperationWiseAnalysieReport.xlsx.
+  - Parsed 87 exported headers plus source_dealer_code metadata, producing 88 relational columns.
+  - The grouped model headers were handled correctly by the Excel parser:
+    - Example normalized columns: santro_count, santro_tax, santro_amt, santro_tot_amt_tax_amt, getz_count, etc.
+  - Saved 50 rows into hyundai_operation_wise_analysis_report.
+  - Local export chunk was deleted after Supabase relational save.
+
+2026-06-04 Hyundai/HMIL Adv. wise lubricants & VAS dropdown correction:
+- User clarified the "Billing Date" selection belongs to the second dropdown on Operation Wise Analysis Report:
+  - First dropdown: #reportType, keep/default Operation.
+  - Second dropdown: #dateType, select Billing Date.
+- Updated Hyundai Adv. wise lubricants & VAS definition:
+  - src/reports/hmil-reports.js no longer tries to select "Billing Report" in #reportType.
+  - It only selects #dateType = Billing Date before filling #startDate and #endDate.
+- Verified one-off active-dealer run:
+  - HMIL_REPORTS_TO_RUN=hyundai-adv-wise-lubricants-vas
+  - HMIL_DEALER_CODES=active
+  - Navigation succeeded through MIS / Work Profit / Operation Wise Analysis Report.
+  - #dateType was changed from RO Date to Billing Date.
+  - Export succeeded with suggested filename OperationWiseAnalysieReport.xlsx.
+  - Parsed 87 exported headers plus source_dealer_code metadata, producing 88 relational columns.
+  - Grouped model headers were preserved in normalized SQL columns such as santro_count, santro_tax, santro_amt, santro_tot_amt_tax_amt, etc.
+  - Inserted 50 rows into hyundai_adv_wise_lubricants_vas.
+  - Local export chunk was deleted after Supabase relational save.
+
+2026-06-04 Hyundai/HMIL Service Appointment fix:
+- User confirmed Hyundai Service Appointment path:
+  - Service > Service Booking > Service Booking List.
+- Added HMIL-specific navigation:
+  - src/navigation/hmil-menu.js: openHmilServiceBookingListReport()
+  - It opens Hyundai Service, expands Service Booking, and clicks Service Booking List.
+- Updated Hyundai Service Appointment report definition:
+  - src/reports/hmil-reports.js now uses openHmilServiceBookingListReport for hyundai-service-appointment.
+  - Date fields are Hyundai-specific Booking Date fields:
+    - Start: #sBkngFromDate
+    - End: #sBkngToDate
+  - It keeps rangeType=current-month-full so the run fetches from current month start through current month end for upcoming bookings.
+- Verified one-off active-dealer run:
+  - HMIL_REPORTS_TO_RUN=hyundai-service-appointment
+  - HMIL_DEALER_CODES=active
+  - Navigation succeeded.
+  - Date fields were found in frame URL /ser/serb/selectServiceBookingListMain.dms.
+  - Date range used for June 2026: 01/06/2026 to 30/06/2026.
+ - Export succeeded with suggested filename BookingList.xlsx.
+ - Parsed 21 exported headers plus source_dealer_code metadata, producing 22 relational columns.
+ - Inserted 7 rows into hyundai_service_appointment.
+ - Local export chunk was deleted after Supabase relational save.
+
+2026-06-04 Hyundai/HMIL zero-row/default scheduler stability fix:
+- The HMIL mirrored KIA export runner can receive valid Excel exports with headers but zero data rows for some dealers/date ranges.
+- Fixed src/reports/hyundai-kia-clone.js so zero-row exports are treated as a successful no-data result:
+  - local export files are deleted,
+  - Supabase save is skipped,
+  - execution continues to the next dealer/report.
+- Fixed src/reports/hmil-reports.js so HMIL_REPORTS_TO_RUN=all only runs verified Hyundai reports by default:
+  - hyundai-repair-order-list
+  - hyundai-ro-billing-report
+  - hyundai-call-center-complaints
+  - hyundai-demo-car-list
+  - hyundai-service-appointment
+  - hyundai-psf-yearly
+  - hyundai-ew-report
+  - hyundai-adv-wise-lubricants-vas
+  - hyundai-operation-wise-analysis-report
+- Unverified/blocked Hyundai reports can still be run explicitly by report id, but are no longer included in default all-runs:
+  - hyundai-customer-complaint-list
+  - hyundai-open-ro-yearly
+  - hyundai-demo-job-cards
+  - hyundai-mcp-report
+
+2026-06-04 Hyundai/HMIL EW Report path correction:
+- User corrected the Hyundai EW navigation path:
+  - MIS / wrench icon > Service Retention Package > Extended Warranty Report.
+- Updated existing HMIL EW opener:
+  - src/navigation/hmil-menu.js: openHmilExtendedWarrantyList()
+  - It now opens the Hyundai MIS/Service-MIS section, expands Service Retention Package, and clicks Extended Warranty Report.
+- Updated Hyundai EW report definition:
+  - src/reports/hmil-reports.js
+  - Table/report id remains hyundai-ew-report.
+  - Date fields are now:
+    - Start: #sRegDateFromDate
+    - End: #sRegDateToDate
+- Verified one-off active-dealer run:
+  - HMIL_REPORTS_TO_RUN=hyundai-ew-report
+  - HMIL_DEALER_CODES=active
+  - Navigation reached /mis/misc/selectExtendedWarrantyReportMain.dms.
+  - Date range used for June 2026: 01/06/2026 to 04/06/2026.
+ - Export succeeded with suggested filename ExtendedWarrantyReport.xlsx.
+ - Parsed 16 exported headers plus source_dealer_code metadata, producing 17 relational columns.
+ - Inserted 2 rows into hyundai_ew_report.
+ - Local export chunk was deleted after Supabase relational save.
+
+2026-06-04 Hyundai/HMIL Trust Package cron:
+- Added a new Hyundai trust package data flow saved into one relational table:
+  - Table/sheet name: trust_package
+- Data comes from three Hyundai Service TMA Management sections:
+  - Service > TMA Management > Bodyshop - Shield of Trust (Non-insurance repair program) Register List
+  - Service > TMA Management > SOT Super Register List
+  - Service > TMA Management > Hyundai Shield of Trust Package List
+- Date fields for all three sections:
+  - Start: #sFromRegDate
+  - End: #sToRegDate
+- Each section is implemented as its own HMIL report id but all save to the same table:
+  - hyundai-trust-package-bodyshop-sot
+  - hyundai-trust-package-sot-super
+  - hyundai-trust-package-package-list
+- Every exported row gets metadata columns:
+  - source_dealer_code
+  - trust_package_section
+- Duplicate prevention for trust_package uses section + dealer + certificate/VIN/date style identities where available:
+  - trust_package_section + source_dealer_code + cert_no/certi_no/certificate_no
+  - trust_package_section + source_dealer_code + scheme_no + vin
+  - trust_package_section + source_dealer_code + vin + reg_date
+- Added trust_package_section as an indexed relational column.
+- Empty exports for this report still prepare/update the trust_package table schema, instead of skipping DB work entirely.
+- Verified one-off active-dealer run:
+  - HMIL_REPORTS_TO_RUN=hyundai-trust-package-bodyshop-sot,hyundai-trust-package-sot-super,hyundai-trust-package-package-list
+  - HMIL_DEALER_CODES=active
+  - Session restored without OTP.
+  - All three pages opened successfully:
+    - /tma/tmab/bodyshop/selectBodyShopRegisterList.dms
+    - /tma/tmab/selectHyundaiPMSSchemeListMain.dms
+    - /tma/tmab/selectHyundaiKeralaRRSchemeListMain.dms
+  - All three exports succeeded:
+    - HyundaiBodyShopSchemeList.xlsx
+    - HyundaiPMSSchemeList.xlsx
+    - HyundaiKeralaRRSchemeList.xlsx
+  - June 2026 test range currently had 0 rows in all three sections, but trust_package relational table was prepared with 13 columns.
+  - The three trust package report ids are included in the default HMIL all-run set.
+- Added support for REPORT_DATE_OVERRIDE_START_DATE / REPORT_DATE_OVERRIDE_END_DATE inside the Hyundai mirrored KIA clone runner.
+  - This lets one-off Hyundai mirrored report runs fetch a fixed month/date range without changing normal scheduled behavior.
+- Verified May 2026 one-off data run across all configured Hyundai dealers:
+  - Date override: 2026-05-01 to 2026-05-31.
+  - Reports run:
+    - hyundai-trust-package-bodyshop-sot
+    - hyundai-trust-package-sot-super
+    - hyundai-trust-package-package-list
+  - Dealers run:
+    - N5216
+    - N6844
+    - N6845
+    - N6846
+    - N6847
+    - N6848
+  - Run completed successfully with failedReports=[].
+  - May row counts:
+    - Bodyshop SOT Register: N5216 = 4 rows; all other dealers = 0 rows.
+    - SOT Super Register: all dealers = 0 rows.
+    - Hyundai Shield of Trust Package List: N5216 = 2 rows; all other dealers = 0 rows.
+
+2026-06-05 Hyundai/HMIL historical backfill runner:
+- User requested Hyundai historical data for every HMIL cron from 2021-01-01 through 2026-06-05 for every configured Hyundai dealer.
+- Added dedicated script:
+  - scripts/run-hmil-historical-backfill.js
+- Added package script:
+  - npm run hmil:historical
+- Added PM2 app:
+  - hmil-historical-backfill
+- Historical backfill configuration:
+  - Date range: 2021-01-01 to 2026-06-05.
+  - Chunking: 30-day chunks, total 67 chunks.
+  - Dealers: N5216, N6844, N6845, N6846, N6847, N6848.
+  - Reports: all HMIL report definitions, including verified default reports and still-unverified mirrored reports.
+  - Normal hmil-cron-job was intentionally stopped before starting this long backfill to avoid HMIL session/browser collisions.
+- Added REPORT_DATE_OVERRIDE_START_DATE / REPORT_DATE_OVERRIDE_END_DATE support to:
+  - src/reports/hyundai-repair-order-list.js
+  - This keeps Repair Order List aligned with the historical chunk runner.
+- PM2 status at start:
+  - hmil-historical-backfill online.
+  - hmil-cron-job stopped.
+  - pm2 save completed successfully.
+- Backfill log/state files:
+  - logs/hmil-historical-backfill-state.json
+  - logs/hmil-historical-backfill-2026-06-05T04-04-51-488Z.log
+  - logs/pm2-hmil-historical-out.log
+- Observed start behavior:
+  - HMIL login succeeded with webhook OTP.
+  - First chunk started: 2021-01-01 to 2021-01-30.
+  - Dealer switching succeeded through direct row selection fallback.
+  - Early 2021 Repair Order List exports were empty for initial dealers, but table prep/upload/delete flow worked correctly.
+  - HMIL pager requested 5000 where possible and fell back to 300 when that page only exposed 50/100/300.
+- Do not restart the normal hmil-cron-job until the historical backfill finishes or is deliberately paused/stopped.
+
+2026-06-05 AM Platinum HMIL-style parallel cron stack:
+- Added a separate AM Platinum GDMS account profile that reuses the HMIL/Hyundai portal URL, login flow, sidebar navigation, report definitions, export/pagination logic, Supabase relational save flow, and OTP webhook.
+- AM Platinum is isolated from HMIL and Kia by using separate:
+  - Credentials/env keys.
+  - Playwright storage state: storage/am-platinum-dms-state.json.
+  - Downloads: downloads/am-platinum.
+  - Report chunks: downloads/report-chunks/am-platinum.
+  - Health file: logs/am-platinum-health.json.
+  - PM2 logs: logs/pm2-am-platinum-out.log and logs/pm2-am-platinum-error.log.
+- New files:
+  - src/accounts/gdms-account-profile.js
+  - src/cron/gdms-account-scheduler.js
+  - src/cron/am-platinum-scheduler.js
+  - src/utils/file-lock.js
+  - scripts/run-am-platinum-historical-backfill.js
+- Existing HMIL scheduler was reduced to a wrapper around the generic GDMS scheduler:
+  - src/cron/hmil-scheduler.js
+- New npm scripts:
+  - npm run am-platinum:cron
+  - npm run am-platinum:once
+  - npm run am-platinum:historical
+- New PM2 apps:
+  - am-platinum-cron-job
+  - am-platinum-historical-backfill
+- New .env keys:
+  - AM_PLATINUM_DMS_URL
+  - AM_PLATINUM_HOME_URL
+  - AM_PLATINUM_USER_ID
+  - AM_PLATINUM_PASSWORD
+  - AM_PLATINUM_DEALER_CODES
+  - AM_PLATINUM_REPORTS_TO_RUN
+  - AM_PLATINUM_CRON_SCHEDULE
+  - AM_PLATINUM_FORCE_LOGIN
+  - AM_PLATINUM_SESSION_STATE_PATH
+  - AM_PLATINUM_DOWNLOAD_DIR
+  - AM_PLATINUM_REPORT_CHUNKS_DIR
+  - AM_PLATINUM_REPAIR_ORDER_* settings
+- AM Platinum saves with brand=am_platinum and prefixed sheet names, producing separate relational tables:
+  - AM Platinum Repair Order List -> am_platinum_repair_order_list
+  - AM Platinum Service Appointment -> am_platinum_service_appointment
+  - AM Platinum Trust Package -> am_platinum_trust_package
+  - Other HMIL-style reports follow the same AM Platinum prefix pattern.
+- Duplicate prevention:
+  - relational-store now maps am_platinum_* tables to the matching Hyundai identity-key rules where possible.
+  - This keeps AM Platinum reruns idempotent without writing into hyundai_* tables.
+- OTP/login safety:
+  - Added a cross-process directory lock at temp/gdms-otp-login.lock.
+  - HMIL and AM Platinum serialize only the GDMS OTP login phase, then their report runs continue independently in separate PM2/browser processes.
+- Validation completed:
+  - npm run check passed.
+  - Runtime mapping check confirmed AM Platinum report sheet names normalize to am_platinum_* table names.
+- Before starting AM Platinum in PM2, populate:
+  - AM_PLATINUM_USER_ID
+  - AM_PLATINUM_PASSWORD
+  - AM_PLATINUM_DEALER_CODES
+
+2026-06-05 AM Platinum dealer list:
+- Dealer Search popup shows three AM Platinum dealers:
+  - N5211: PLATINUM AUTOMOBILES PVT LTD (main dealer).
+  - N6824: AM HYUNDAI.
+  - N6828: AM HYUNDAI.
+- .env now uses AM_PLATINUM_DEALER_CODES=N5211,N6824,N6828 so the AM Platinum GDMS runner can process all three dealers through the shared dealer-change flow.
+
+2026-06-05 AM Platinum historical backfill configuration:
+- PM2 app am-platinum-historical-backfill is configured for dealer-first historical fetching from 2021-01-01 through 2026-06-05.
+- Dealer order: N5211, N6824, N6828.
+- Historical report scope is restricted to the normal scheduled AM Platinum report set, not every helper/extra HMIL definition.
+- The historical runner uses monthly-safe date windows and writes progress to logs/am-platinum-historical-backfill-state.json plus normal AM Platinum health output in logs/am-platinum-health.json.
+- Normal scheduled am-platinum-cron-job should remain stopped while the historical backfill runs to avoid same-account session collisions.
+
+2026-06-05 GDMS historical runner optimization:
+- Future HMIL and AM Platinum historical backfills now use scripts/gdms-historical-runner.js instead of spawning a fresh scheduler process for every dealer/date range.
+- New flow:
+  - Open one Playwright session per dealer.
+  - Login once.
+  - Change dealer once.
+  - Loop all monthly-safe ranges and selected reports inside the same browser session.
+  - Close the browser only after that dealer is complete.
+- scripts/run-hmil-historical-backfill.js and scripts/run-am-platinum-historical-backfill.js are now thin wrappers around the shared runner.
+- Hyundai clone reports and Hyundai Repair Order List now accept a direct historical range argument, so historical runs do not need REPORT_DATE_OVERRIDE_START_DATE/END_DATE child-process env spawning.
+- State files keep the existing resume fields and now also track live currentDealerCode, currentRangeIndex, currentReportId, lastCompletedRangeIndex, nextDealerIndex, nextRangeIndex, and latestResult.
+- If the browser closes during a dealer run, the shared runner relogs once for the same dealer and continues with the next report/range.
+- The active am-platinum-historical-backfill process that was already running was not stopped or restarted; this optimization applies to future historical launches.
+- Validation: npm run check passed after the change.
+
+2026-06-06 HMIL report-first historical backfill:
+- HMIL historical no longer uses the Platinum-style dealer -> range -> reports historical order.
+- scripts/run-hmil-historical-backfill.js now runs scripts/hmil-report-first-historical-runner.js.
+- New HMIL historical order:
+  - Login once per dealer.
+  - Change dealer once.
+  - For that dealer, run one report across all monthly-safe ranges from 2021-01-01 to the current run date.
+  - Then run the next report across all ranges.
+  - Move to the next dealer only after all scheduled HMIL reports are complete for the current dealer.
+- Dealer order remains N5216, N6844, N6845, N6846, N6847, N6848.
+- Report scope is the scheduled HMIL report set only, not helper definitions.
+- HMIL historical browser is visible via HMIL_HISTORICAL_HEADLESS=false; normal scheduled browser visibility still follows HEADLESS.
+- HMIL .env credentials were updated to the sahiltech account provided by the user.
+- PM2 hmil-historical-backfill keeps the same app name and log files, but its env now omits a hard-coded end date so future runs default to the current date.
+- Resume fields for HMIL report-first historical are:
+  - HMIL_HISTORICAL_START_DEALER_INDEX
+  - HMIL_HISTORICAL_START_REPORT_INDEX
+  - HMIL_HISTORICAL_START_RANGE_INDEX
+- Validation: npm run check passed after the change.
+
+2026-06-06 HMIL historical dealer-list correction:
+- The sahiltech HMIL account does not expose the older dealer list N5216,N6844,N6845,N6846,N6847,N6848 in Dealer Search.
+- The visible Dealer Search popup for this account shows:
+  - N5203
+  - N5701
+  - N5804
+  - N5806
+  - N5D00
+  - N6815
+  - N6819
+  - N6826
+- HMIL_DEALER_CODES and HMIL_HISTORICAL_DEALERS were updated in .env to this actual dealer list.
+- ecosystem.config.cjs hmil-historical-backfill HMIL_HISTORICAL_DEALERS was updated to the same list.
+- The stuck hmil-historical-backfill PM2 process was stopped after it failed waiting for dealer row N5216, which was not present in the popup.
+
+2026-06-06 AM Finance spreadsheet import:
+- Source workbook: C:\Users\HP\Downloads\AM FINANCE SHEET.xlsx.
+- The workbook did not contain a literal tab named "Finance sheet"; the imported finance tab was "FINANCE DATA".
+- Created/updated relational table public.finance_sheet using sheet name "Finance Sheet".
+- Imported 34 columns and 1,686 rows.
+- One AMOUNT_RECEIVED value was not numeric and was stored as NULL by the existing relational importer.
+- Verification query confirmed public.finance_sheet row count = 1,686.
+
+2026-06-06 AM Platinum remaining-dealer historical backfill:
+- AM Platinum historical now uses the same report-first historical runner shape as HMIL.
+- Flow:
+  - Select one dealer.
+  - Run one report from 2021-01-01 through 2026-06-06 using monthly-safe ranges.
+  - Complete all ranges for that report before moving to the next report.
+  - Move to the next dealer only after all configured reports finish for the current dealer.
+- scripts/run-am-platinum-historical-backfill.js now calls the generic report-first runner exported by scripts/hmil-report-first-historical-runner.js.
+- PM2 am-platinum-historical-backfill is scoped to remaining dealers N6824,N6828.
+- AM_PLATINUM_HISTORICAL_HEADLESS=true keeps this long historical job hidden.
+- Validation: npm run check passed.
+- Runtime check after launch confirmed:
+  - am-platinum-historical-backfill online.
+  - state strategy = dealer-report-range-monthly-safe-single-session.
+  - current dealer started as N6824.
+  - first report is Hyundai Repair Order List.
+  - first range 2021-01-01 to 2021-01-30 completed successfully and duplicate rows were skipped.
+
+2026-06-06 historical backfill resume/recovery hardening:
+- scripts/hmil-report-first-historical-runner.js now auto-resumes from the historical state file unless explicit START_* env indexes are supplied.
+- Resume state is used only when the state file matches the current start date, end date, dealer list, and report list.
+- Resume fields used:
+  - nextDealerIndex
+  - nextReportIndex
+  - nextRangeIndex
+- Before every historical report/date-range execution, the state file points at that exact in-progress dealer/report/range.
+- If a range fails after retries, the state file remains pointed at the same failed dealer/report/range instead of advancing.
+- HMIL_HISTORICAL_STOP_ON_FAILURE and AM_PLATINUM_HISTORICAL_STOP_ON_FAILURE are now true, so failed ranges are not skipped.
+- PM2 historical apps now restart on non-zero failure with a 30-second delay and do not restart after clean success:
+  - autorestart=true
+  - stop_exit_codes=[0]
+  - restart_delay=30000
+- Active HMIL and AM Platinum historical processes were restarted with --update-env and confirmed resumedFromState=true:
+  - AM Platinum resumed at N6824 / Hyundai Repair Order List / range index 78.
+  - HMIL resumed at N5203 / Hyundai Adv. wise lubricants & VAS / range index 41.
+- pm2 save completed after the recovery config update.
+
+2026-06-06 Kia scheduler queue/health fix:
+- Root cause for Kia appearing to run again and again at 6 PM was overlapping schedules:
+  - regular hourly run
+  - service-appointment
+  - open-ro-yearly
+  - kia-call-center-complaints
+  - demo-job-cards
+- When the active run failed at OTP/login, older scheduler behavior still drained queued modes, causing repeated login/OTP attempts for each queued Kia mode.
+- src/cron/scheduler.js now clears queued scheduler modes when the current active run fails, preventing an OTP failure from cascading into repeated queued Kia runs.
+- The scheduler also writes logs/health.json with status "idle" on PM2 startup so a killed/stopped run does not leave stale health showing a report as still running.
+- Kia PM2 was restarted and saved after the fix.
+
+2026-06-08 GDMS login URL correction and historical resume:
+- HMIL_DMS_URL and AM_PLATINUM_DMS_URL in .env were changed from:
+  - https://ndms.hmil.net/cmm/cmmi/selectLoginAction.json
+  to:
+  - https://ndms.hmil.net/cmm/cmmi/selectLoginMain.dms
+- src/config.js defaults for HMIL and AM Platinum login URLs were updated to the same selectLoginMain.dms page so future missing-env runs do not fall back to the JSON action URL.
+- node --check src/config.js passed.
+- HMIL and AM Platinum historical PM2 processes were stopped briefly, state files were restored to the latest useful checkpoints, and both were restarted with --update-env.
+- HMIL historical resume checkpoint:
+  - dealer N5804
+  - report hyundai-ro-billing-report
+  - range index 70
+  - range 2024-09-01 to 2024-09-30
+- AM Platinum historical resume checkpoint:
+  - dealer N6828
+  - report hyundai-operation-wise-analysis-report
+  - range index 40
+  - range 2023-02-01 to 2023-02-28
+- Both hmil-historical-backfill and am-platinum-historical-backfill were confirmed online after restart.
+- Normal scheduled hmil-cron-job and am-platinum-cron-job remained stopped during historical, while kia-cron-job, kia-otp-webhook, and kia-ngrok remained online.
+
+2026-06-08 GDMS base URL correction:
+- User confirmed HMIL and AM Platinum should use only the base GDMS URL:
+  - https://ndms.hmil.net
+- Updated live .env values:
+  - HMIL_DMS_URL=https://ndms.hmil.net
+  - HMIL_HOME_URL=https://ndms.hmil.net
+  - AM_PLATINUM_DMS_URL=https://ndms.hmil.net
+  - AM_PLATINUM_HOME_URL=https://ndms.hmil.net
+- Updated src/config.js defaults for HMIL/AM Platinum login and home URLs to the same base URL.
+- node --check src/config.js passed.
+- Restarted hmil-historical-backfill and am-platinum-historical-backfill with --update-env.
+- Cleared a stale temp/gdms-otp-login.lock created by old AM Platinum PID 15724 after restart; live Platinum PID was 22244.
+- Verification logs after restart:
+  - HMIL checked saved session at https://ndms.hmil.net and then opened https://ndms.hmil.net for login.
+  - AM Platinum checked saved session at https://ndms.hmil.net.
+
+2026-06-08 Kia OTP fallback and scheduler lock fix:
+- Kia normal scheduler fired at 10:00 IST but login was blocked because fresh SMS-forwarder OTPs were being stored by the webhook as purpose "unknown" instead of "kia".
+- src/otp/webhook-client.js now accepts a fresh purpose "unknown" OTP as a fallback only while an active Kia OTP request is waiting for purpose "kia".
+- Older unknown/kia OTPs are still rejected using notBefore plus OTP_FRESHNESS_GRACE_MS, so stale OTPs should not be reused.
+- Added a cross-process Kia scheduler filesystem lock in src/cron/scheduler.js at temp/kia-scheduler.lock so manual one-off runs and PM2 scheduled runs do not overlap.
+- Found and fixed a lock deletion issue: src/utils/runtime-dirs.js no longer deletes the whole temp directory during startup, because that removed active lock directories.
+- A manual hidden one-off regular Kia run was started on 2026-06-08 with log files:
+  - logs/kia-manual-once-20260608-101453-out.log
+  - logs/kia-manual-once-20260608-101453-error.log
+- The manual run logged in successfully after the OTP fallback fix and began processing normal regular reports for JK402 and JK501.
+- kia-cron-job PM2 was restarted with --update-env after the code fix and confirmed online; kia-otp-webhook and kia-ngrok remained online.
+
+2026-06-08 HMIL/AM Platinum staggered historical restart and resume fallback:
+- HMIL and AM Platinum historical jobs were found running at the same time; both were stopped, then HMIL was started first and AM Platinum was started two minutes later to avoid simultaneous GDMS login/OTP requests.
+- AM Platinum resumed correctly from state and continued at dealer N6828 / hyundai-operation-wise-analysis-report.
+- HMIL initially fell back to the beginning because the resume state had only startDealerIndex/startReportIndex/startRangeIndex, not nextDealerIndex/nextReportIndex/nextRangeIndex.
+- scripts/hmil-report-first-historical-runner.js now treats saved start indexes as a valid fallback checkpoint when next indexes are absent.
+- HMIL state was restored from logs to:
+  - dealer N5804
+  - report hyundai-ro-billing-report
+  - range index 70
+  - range 2024-09-01 to 2024-09-30
+- HMIL was restarted after AM Platinum had already been running for more than two minutes, and logs confirmed it resumed at N5804 / hyundai-ro-billing-report / range index 70.
+
+2026-06-08 HMIL full-month historical range change:
+- User requested HMIL historical fetching to stop splitting 31-day months as 01-30 plus 31-31.
+- hmil-historical-backfill was stopped and PM2 was saved with HMIL historical stopped.
+- scripts/hmil-report-first-historical-runner.js now builds one calendar-month range per month:
+  - 2026-05-01 to 2026-05-31
+  - February uses its real last day.
+  - The final partial month still ends at the configured historical end date.
+- HMIL state was remapped from the old split range indexes to the new full-month indexes:
+  - totalRanges changed from 104 to 66 for 2021-01-01 through 2026-06-05.
+  - last completed full-month range: N5804 / hyundai-ro-billing-report / 2026-04-01 to 2026-04-30.
+  - next resume point: N5804 / hyundai-ro-billing-report / range index 64 / 2026-05-01 to 2026-05-31.
+- State backup before remap:
+  - logs/hmil-historical-backfill-state.before-full-month-ranges-20260608-104433.json
+
+2026-06-08 AM Platinum normal schedule offset:
+- AM Platinum historical was confirmed complete with status "success" and failedWorkItemCount=0, then am-platinum-historical-backfill was stopped.
+- am-platinum-cron-job was restarted and saved in PM2 so Platinum returned to the normal scheduled runner.
+- User requested Platinum normal crons run one minute after Kia crons.
+- .env now sets AM_PLATINUM_CRON_SCHEDULE=1 9-18 * * *.
+- Kia regular reports still use REGULAR_REPORTS_CRON_SCHEDULE=0 9-18 * * *, so Platinum starts one minute after the normal Kia hourly trigger.
+
+2026-06-08 cron speed/no artificial pause policy:
+- User explicitly requested HMIL/Kia/Platinum cron flows to run as fast as possible with no artificial sleeps between steps.
+- All live .env report delay overrides were set to zero:
+  - PAGE_READY_DELAY_MS, RETRY_DELAY_MS, report retry delay min/max, post-search delays, between-chunk delays, RSA human/page-load/typing delays, and dry-run delay.
+- NETWORK_RETRY_INTERVAL_MS was reduced to 500ms; this only applies while network connectivity is unavailable.
+- src/navigation/kia-menu.js no longer waits for networkidle after Kia menu clicks and no longer uses a fixed 500ms wait after opening the Service menu.
+- src/playwright/browser.js clickAndWait now performs only the click; report-specific grid/download waits handle readiness.
+- src/reports/rsa-report.js no longer waits for generic networkidle in waitForRsaDataIdle; RSA captcha/manual solving behavior remains unchanged.
+- OTP polling was reduced from 500ms to 100ms in webhook/file providers.
+- Filesystem lock polling was reduced from 500ms to 100ms.
+- Remaining waits should be readiness waits only: selector visibility, grid loader hidden, export download received, OTP arrival, captcha/manual input, lock/network recovery, or short 50ms polling loops.
+
+2026-06-08 HMIL speed/data-integrity follow-up, superseded:
+- An aggressive speed pass was tested to reduce hidden menu-click waits and stacked grid waits.
+- That speed pass was rolled back the same day because HMIL historical began returning 0-row ranges for months where data was expected.
+- Keep this as context only; the active behavior is documented in the rollback entry below.
+
+2026-06-08 speed rollback and HMIL report-page reuse:
+- The aggressive "no artificial pause" timing changes were rolled back because HMIL historical began saving 0-row ranges for months where the user expected data.
+- .env and config defaults were restored to the previous safer waits:
+  - 5s post-search waits for report grids.
+  - 4s between chunk/advisor waits where configured.
+  - 30s-60s report retry delay.
+  - 15s retry/network polling where applicable.
+  - 500ms OTP/file-lock polling.
+- HMIL historical was stopped before the rollback to prevent more empty month progress.
+- HMIL historical resume state was rewound to re-run from dealer N5806 / hyundai-repair-order-list / full-month range index 35, so affected ranges are fetched again with safer timing.
+- The historical runner now opens each report page once per dealer/report, then only changes date ranges for subsequent months on the same page.
+- If the browser closes or relogs, the report-page reuse flag resets and the report menu is opened again.
+- Unknown pager state plus 0 visible rows is no longer treated as no data; export is skipped only when Kendo/pager explicitly reports 0 items or the grid shows an explicit no-data message.
+
+2026-06-08 AM Platinum N6824 RO Billing verification:
+- Frontend reported Platinum Rajouri/N6824 RO Billing latest date as 25 Jun 2024.
+- Direct DB check confirmed am_platinum_ro_billing_report for source_dealer_code/dealer_code N6824 has max bill_date 2024-06-24 UTC (25 Jun 2024 IST), 2264 rows.
+- A targeted refetch was run after the speed rollback for N6824 / hyundai-ro-billing-report from 2024-07-01 through 2026-06-08.
+- The bot logged in, switched to N6824, exported each monthly range, and parsed each exported workbook successfully.
+- Every exported month from Jul 2024 through Jun 2026 had headers but 0 data rows; no Supabase rows were inserted.
+- Conclusion: the cron is not skipping those months now; DMS/export itself is returning no RO Billing rows for N6824 after Jun 2024, or the billing moved under another dealer/report/filter.
+- Temporary PM2 refetch process am-platinum-n6824-ro-billing-refetch was stopped/deleted after completion, and am-platinum-cron-job was restarted and saved.
+
+2026-06-08 Kia stale scheduler lock fix:
+- Frontend appeared stale around 2 PM because Kia scheduled runs after the 14:00 run were skipped by a stale temp/kia-scheduler.lock.
+- Logs showed 15:00, 16:00, 17:00, and 18:00 regular Kia triggers skipped with "KIA scheduler lock is busy; skipping overlapping run".
+- The stale lock was created by old PID 20644 at 2026-06-08T08:30:00Z; that process was no longer running.
+- src/utils/file-lock.js now reads lock meta.json and removes a lock immediately when the recorded PID is dead, instead of waiting only for the 6-hour stale timeout.
+- npm run check passed after the lock utility change.
+- kia-cron-job was restarted with PM2 and confirmed online.
+- A hidden one-time Kia regular catch-up was started at 2026-06-08 18:05 IST:
+  - PowerShell PID 17560
+  - log: logs/kia-catchup-regular-20260608-180555.log
+  - The catch-up acquired temp/kia-scheduler.lock, logged in successfully, submitted OTP, and began regular report-first processing from RO Billing.
+- AM Platinum normal cron ran successfully at 17:47 IST with successCount=36/failureCount=0, then started the 18:01 IST scheduled run and continued after a temporary network wait.
+- RSA did not complete on 2026-06-08; the 10:00 RSA trigger was queued while another Kia run was active and did not finish before later restarts. Last confirmed RSA success in logs was 2026-06-06 10:04 IST with 8 rows.
+
+2026-06-08 Kia Service MIS menu retry hardening:
+- Kia catch-up logs showed recoverable first-attempt timeouts while opening Service MIS child menus such as Repair Billing, Customer Followup / Report, and Ext. Warranty. The submenu link existed but remained hidden after the first top-menu click, so the report burned a full 30s wait before retrying.
+- src/navigation/kia-menu.js now uses ensureMenuTargetVisible() for Service MIS report paths. It tries up to 3 short menu-open checks before falling back to the final visibility wait.
+- This reduces future scheduled first-attempt hidden-menu failures; the already-running one-off catch-up keeps using the old in-memory code until that process exits.
+- npm run check passed and kia-cron-job was restarted with --update-env, then pm2 save was run.
+
+2026-06-09 AM Platinum data verification:
+- Queried all 14 am_platinum_* tables via Supabase to check actual row counts per dealer.
+- Results: Both am_platinum_adv_wise_lubricants_vas (9,250 rows) and am_platinum_operation_wise_analysis_report (9,253 rows) have data for all dealers — no refetch needed.
+- N5211 has only current-month data from regular cron (Jun 5-9, 2026) — was never included in historical backfill.
+- N6824 has historical data for all 12 reports from Jun 6-7 backfill (rows per table range from 37 to 2,264).
+- N6828 has historical data for all 12 reports from Jun 7-8 backfill (rows per table range from 50 to 3,284).
+- 4 tables don't exist in Supabase: am_platinum_customer_complaint_list, am_platinum_open_ro_yearly, am_platinum_demo_job_cards, am_platinum_mcp_report — these are KIA-only reports, not Hyundai/AM Platinum reports.
+- Tables with "ACTIVE" dealerCode rows exist (from initial clone account setup).
+- Script used: scripts/check-am-platinum-data.js (can be re-run to verify).
+
+2026-06-09 Removed unnecessary 5-second post-search delay for Hyundai/AM Platinum cloned reports:
+- src/config.js: Changed hmilRepairOrderPostSearchDelayMs default from 5000 to 0.
+- src/config.js: Changed amPlatinumRepairOrderPostSearchDelayMs default fallback from 5000 to 0.
+- The delay in hyundai-kia-clone.js:258-266 was redundant because waitForKendoGridIdle (line 256) already ensures the grid finishes loading after clicking search. The 5-second fixed delay served no purpose and accumulated ~3+ hours of wasted waiting across the full AM Platinum historical backfill (~2,268 range iterations x 5s = 11,340s).
+- The guard code remains (if delayMs > 0) so delay can be re-enabled via env var for debugging.
+
+2026-06-09 Deep analysis reveals VAS tables have NO historical data - only current month:
+- Created deep-analysis-platinum-data.js script to verify actual date ranges (not just row counts).
+- Findings:
+  ✅ 8 Tables WITH full 2021-2026 historical data:
+     - repair_order_list, ro_billing_report, call_center_complaints, demo_car_list, service_appointment, trust_package, psf_yearly, ew_report
+  ❌ 2 Tables with CURRENT MONTH ONLY (no historical dates):
+     - am_platinum_adv_wise_lubricants_vas (9,250 rows but all dated 2026-06 only)
+     - am_platinum_operation_wise_analysis_report (9,253 rows but all dated 2026-06 only)
+- These VAS tables only have uploaded_at timestamp (2026-06-05 to 2026-06-08); no business date columns (report_month, billing_date, etc.).
+- Likely reason: These are "snapshot" reports that don't store historical periods; they only show current month data in the DMS system itself.
+- Started new historical backfill (am-platinum-backfill-visible, headless=false) for all dealers (N5211, N6824, N6828) to see if historical runs fetch any dated data for VAS tables.
+- Backfill in progress; will monitor completion to verify if VAS tables get historical dates or remain current-month-only.

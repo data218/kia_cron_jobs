@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { config } from '../config.js';
 import { isFreshTimestamp, isOtp } from '../utils/otp.js';
 
 function sleep(ms) {
@@ -14,7 +15,7 @@ export async function getOtpFromFile({ filePath, timeoutMs, notBefore }) {
       const payload = JSON.parse(raw);
       const otp = String(payload.otp ?? '').trim();
 
-      if (isOtp(otp) && isFreshTimestamp(payload.receivedAt, notBefore)) {
+      if (isOtp(otp) && isFreshTimestamp(payload.receivedAt, notBefore, config.otpFreshnessGraceMs)) {
         return otp;
       }
     } catch (error) {
@@ -23,7 +24,7 @@ export async function getOtpFromFile({ filePath, timeoutMs, notBefore }) {
       }
     }
 
-    await sleep(2000);
+    await sleep(500);
   }
 
   throw new Error(`Timed out waiting for OTP in ${filePath}`);

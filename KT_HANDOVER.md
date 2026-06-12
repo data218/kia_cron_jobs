@@ -1,6 +1,6 @@
 # KIA Cron Automation KT Handover
 
-Last updated: 2026-05-27
+Last updated: 2026-05-29
 
 This document explains the current KIA automation project so another developer can take over, operate it, debug failures, and add new report crons without needing the full chat history.
 
@@ -96,14 +96,14 @@ Report registry:
 
 Current scheduler lanes:
 
-- Regular lane: hourly from 10 AM to 6 PM.
+- Regular lane: every 30 minutes from 9 AM to 6 PM.
 - Open RO Yearly lane: once daily at 6 PM.
 - Kia Call Center Complaints lane: once daily at 6 PM.
 
 Relevant `.env` schedules:
 
 ```env
-REGULAR_REPORTS_CRON_SCHEDULE=0 10-18 * * *
+REGULAR_REPORTS_CRON_SCHEDULE=*/30 9-18 * * *
 OPEN_RO_YEARLY_CRON_SCHEDULE=0 18 * * *
 KIA_CALL_CENTER_COMPLAINTS_CRON_SCHEDULE=0 18 * * *
 ```
@@ -226,6 +226,29 @@ npm run check
 - Normal range: current month start -> current date
 - Historical backfill was tested and then disabled.
 
+### Operation Wise Analysis Advisor Report
+
+- Report id: `operation-wise-analysis-advisor-report`
+- Table: `operation_wise_analysis_advisor_report`
+- Sheet name: `Operation Wise Analysis Advisor Report`
+- Navigation: Service MIS -> Work Profit -> Operation Wise Analysis Report
+- Report Type: `Operation`
+- Date Type: `Billing Date`
+- Service Advisor dropdown: `#advEmpNo`
+- Date fields: `#startDate`, `#endDate`
+- Range: current month start -> current date
+- Flow: loop through every non-empty Service Advisor option, search, select 300 rows, export every page, merge page exports, and save to the advisor table.
+- Additional columns:
+  - `report_type`
+  - `date_type`
+  - `service_advisor`
+  - `report_month`
+  - `report_period_start`
+  - `report_period_end`
+- This is separate from `operation_wise_analysis_report` so advisor-wise Operation data can be analyzed independently without disturbing the existing Operation/Part table.
+- Historical backfill was completed on 2026-05-29. A resumed run inserted 288 rows after Windows sleep interrupted an earlier attempt.
+- Long manual runs on Windows can use `npm run reports:awake`, which calls `scripts/run-awake.ps1` to keep the system/display awake while the report command is running.
+
 ### RSA Report
 
 - Report id: `rsa-report`
@@ -281,6 +304,7 @@ rsa_report
 psf_yearly
 adv_wise_lubricants_vas
 operation_wise_analysis_report
+operation_wise_analysis_advisor_report
 kia_call_center_complaints
 ```
 
@@ -481,6 +505,9 @@ Implementation:
 - ngrok reserved URL can only be owned by one running ngrok process unless pooling is enabled.
 - The old JSON backup table may not exist. That warning is harmless if relational save completed.
 - Do not leave testing flags enabled after backfill.
+- If duplicate rows are found in relational tables after hash logic changes, run `npm run dedupe:relational`.
+- `dedupe:relational` removes exact duplicate rows based on all saved SQL column values except `id`, `row_hash`, and `uploaded_at`, then rebuilds `row_hash` so future cron upserts dedupe correctly.
+- Duplicate checks that group by only invoice number, VIN, certificate, etc. can still show repeated business keys when other saved columns differ; use full-row checks to identify exact duplicate records.
 
 ## 14. How to Add a New Report
 

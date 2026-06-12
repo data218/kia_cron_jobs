@@ -79,7 +79,7 @@ export async function getOtpFromTelegram({
       }
 
       const receivedAt = messageTimestamp(message);
-      if (!isFreshTimestamp(receivedAt, notBefore)) {
+      if (!isFreshTimestamp(receivedAt, notBefore, config.otpFreshnessGraceMs)) {
         logger.warn('Telegram update ignored because it is older than Send OTP click', summary);
         continue;
       }

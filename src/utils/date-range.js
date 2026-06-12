@@ -91,6 +91,26 @@ export function parseIsoLocalDate(value) {
   return new Date(year, month - 1, day);
 }
 
+export function getReportDateOverrideRange() {
+  const startValue = config.reportDateOverrideStartDate;
+  const endValue = config.reportDateOverrideEndDate;
+  if (!startValue && !endValue) {
+    return null;
+  }
+
+  const startDate = parseIsoLocalDate(startValue || endValue);
+  const endDate = parseIsoLocalDate(endValue || startValue);
+
+  return {
+    startDate,
+    endDate,
+    startPortal: formatDateForPortal(startDate),
+    endPortal: formatDateForPortal(endDate),
+    startIso: toIsoDate(startDate),
+    endIso: toIsoDate(endDate)
+  };
+}
+
 export function addDays(date, days) {
   const next = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   next.setDate(next.getDate() + days);

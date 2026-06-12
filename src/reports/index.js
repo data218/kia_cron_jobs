@@ -1,12 +1,16 @@
 import { downloadRoBillingReport } from './ro-billing.js';
 import { downloadKiaCallCenterComplaintsReport } from './kia-call-center-complaints.js';
 import { downloadOpenRoYearlyReport } from './open-ro-yearly.js';
+import { downloadDemoJobCardsReport } from './demo-job-cards.js';
+import { downloadDemoCarListReport } from './demo-car-list.js';
+import { downloadServiceAppointmentReport } from './service-appointment.js';
 import { downloadPsfYearlyReport } from './psf-yearly.js';
 import { downloadEwReport } from './ew-report.js';
 import { downloadMcpReport } from './mcp-report.js';
 import { downloadRsaReport } from './rsa-report.js';
 import { downloadAdvWiseLubricantsVasReport } from './adv-wise-lubricants-vas.js';
 import { downloadOperationWiseAnalysisReport } from './operation-wise-analysis-report.js';
+import { downloadOperationWiseAnalysisAdvisorReport } from './operation-wise-analysis-advisor-report.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { executeWithRetry } from '../utils/execute-with-retry.js';
@@ -31,6 +35,24 @@ export const reportDefinitions = [
     name: 'Open RO Yearly',
     requiresKiaDms: true,
     run: downloadOpenRoYearlyReport
+  },
+  {
+    id: 'demo-job-cards',
+    name: 'Demo Job Cards',
+    requiresKiaDms: true,
+    run: downloadDemoJobCardsReport
+  },
+  {
+    id: 'demo-car-list',
+    name: 'Demo Car List',
+    requiresKiaDms: true,
+    run: downloadDemoCarListReport
+  },
+  {
+    id: 'service-appointment',
+    name: 'Service Appointment',
+    requiresKiaDms: true,
+    run: downloadServiceAppointmentReport
   },
   {
     id: 'psf-yearly',
@@ -63,6 +85,12 @@ export const reportDefinitions = [
     run: downloadOperationWiseAnalysisReport
   },
   {
+    id: 'operation-wise-analysis-advisor-report',
+    name: 'Operation Wise Analysis Advisor Report',
+    requiresKiaDms: true,
+    run: downloadOperationWiseAnalysisAdvisorReport
+  },
+  {
     id: 'rsa-report',
     name: 'RSA Report',
     requiresKiaDms: false,
@@ -72,7 +100,14 @@ export const reportDefinitions = [
 
 const defaultReportDefinitions = reportDefinitions.filter(report => report.includeInAll !== false);
 const regularReportDefinitions = defaultReportDefinitions.filter(report =>
-  !['open-ro-yearly', 'kia-call-center-complaints'].includes(report.id)
+  ![
+    'open-ro-yearly',
+    'kia-call-center-complaints',
+    'demo-job-cards',
+    'demo-car-list',
+    'service-appointment',
+    'rsa-report'
+  ].includes(report.id)
 );
 
 export function getSelectedReports({ mode = 'configured' } = {}) {
@@ -99,6 +134,22 @@ export function getSelectedReports({ mode = 'configured' } = {}) {
 
   if (mode === 'kia-call-center-complaints') {
     return reportDefinitions.filter(report => report.id === 'kia-call-center-complaints');
+  }
+
+  if (mode === 'demo-job-cards') {
+    return reportDefinitions.filter(report => report.id === 'demo-job-cards');
+  }
+
+  if (mode === 'demo-car-list') {
+    return reportDefinitions.filter(report => report.id === 'demo-car-list');
+  }
+
+  if (mode === 'service-appointment') {
+    return reportDefinitions.filter(report => report.id === 'service-appointment');
+  }
+
+  if (mode === 'rsa-report') {
+    return reportDefinitions.filter(report => report.id === 'rsa-report');
   }
 
   const requested = config.reportsToRun
@@ -140,7 +191,9 @@ async function runDryReport(report, mode) {
     mode,
     delayMs: config.dryRunReportDelayMs
   });
-  await sleep(config.dryRunReportDelayMs);
+  if (config.dryRunReportDelayMs > 0) {
+    await sleep(config.dryRunReportDelayMs);
+  }
   logger.info('Dry-run report completed', {
     report: report.name,
     reportId: report.id,
@@ -159,19 +212,20 @@ async function runDryReport(report, mode) {
   };
 }
 
-export async function runConfiguredReports(page, { mode = 'configured' } = {}) {
+export async function runConfiguredReports(page, { mode = 'configured', dealerCode = 'active', reports } = {}) {
   const results = [];
-  const selectedReports = getSelectedReports({ mode });
+  const selectedReports = reports ?? getSelectedReports({ mode });
 
   logger.info('Configured reports selected', {
     reportsToRun: config.reportsToRun,
     mode,
+    dealerCode,
     count: selectedReports.length,
     reports: selectedReports.map(report => report.id)
   });
 
   for (const report of selectedReports) {
-    logger.info('Starting report', { report: report.name });
+    logger.info('Starting report', { report: report.name, dealerCode });
     const startedAt = Date.now();
     try {
       await waitForConnectivity({ label: `${report.name} preflight` });
@@ -180,11 +234,15 @@ export async function runConfiguredReports(page, { mode = 'configured' } = {}) {
         page,
         fn: () => config.dryRunReports
           ? runDryReport(report, mode)
-          : report.run(page)
+          : report.run(page, { dealerCode, mode })
       });
-      results.push(result);
+      results.push({
+        ...result,
+        dealerCode
+      });
       logger.info('Completed report', {
         report: report.name,
+        dealerCode,
         sheetName: result.sheetName,
         dbAction: result.dbResult?.action,
         rowCount: result.dbResult?.rowCount,
@@ -193,6 +251,7 @@ export async function runConfiguredReports(page, { mode = 'configured' } = {}) {
     } catch (error) {
       logger.error('Report failed after all retries; continuing with remaining reports', {
         report: report.name,
+        dealerCode,
         durationMs: Date.now() - startedAt,
         err: {
           name: error.name,
@@ -203,6 +262,7 @@ export async function runConfiguredReports(page, { mode = 'configured' } = {}) {
       results.push({
         name: report.name,
         sheetName: null,
+        dealerCode,
         failed: true,
         error: {
           name: error.name,

@@ -1,15 +1,18 @@
+import path from 'node:path';
 import { config } from '../config.js';
 import { openMcpReport } from '../navigation/kia-menu.js';
 import { findContextWithVisibleSelector } from '../playwright/frame-resolver.js';
-import { getCurrentMonthToDateRange } from '../utils/date-range.js';
+import { saveReportSheetToSupabase } from '../supabase/report-store.js';
+import { formatDateForPortal, getCurrentMonthToDateRange, getReportDateOverrideRange, getThirtyDayChunks, parseIsoLocalDate, toIsoDate } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
 import { selectKendoPagerSize, waitForKendoGridIdle } from './grid.js';
-import { exportPagedGridToSupabase } from './paged-export.js';
+import { cleanupReportExportDir, exportAllGridPagesToFiles, mergeExcelFiles } from './paged-export.js';
 import {
   clickSearch,
   fillDate
 } from './report-actions.js';
+import { addDealerCodeToDataset } from './report-metadata.js';
 
 async function resolveMcpReportContext(page) {
   const context = await findContextWithVisibleSelector(page, '#sFromRegDate', {
@@ -30,44 +33,88 @@ async function fillMcpDateRange(page, range) {
   });
 
   await fillDate(page, '#sToRegDate', range.endPortal);
-  await sleep(500);
   await fillDate(page, '#sFromRegDate', range.startPortal);
 }
 
-export async function downloadMcpReport(page) {
-  logger.info('MCP Report started');
+export async function downloadMcpReport(page, { dealerCode = 'active' } = {}) {
+  logger.info('MCP Report started', { dealerCode });
   await openMcpReport(page);
   const reportContext = await resolveMcpReportContext(page);
 
-  const range = getCurrentMonthToDateRange();
-  await fillMcpDateRange(reportContext, range);
+  const overrideRange = getReportDateOverrideRange();
+  const range = overrideRange ?? (config.historicalBackfillEnabled
+    ? {
+        startDate: parseIsoLocalDate(config.historicalBackfillStartDate),
+        endDate: new Date()
+      }
+    : getCurrentMonthToDateRange());
+  if (config.historicalBackfillEnabled && !overrideRange) {
+    range.startPortal = formatDateForPortal(range.startDate);
+    range.endPortal = formatDateForPortal(range.endDate);
+    range.startIso = toIsoDate(range.startDate);
+    range.endIso = toIsoDate(range.endDate);
+  }
 
-  logger.info('Searching MCP Report');
-  await clickSearch(reportContext);
-  await waitForKendoGridIdle(reportContext, { timeout: 120000 });
+  const chunks = (config.historicalBackfillEnabled || overrideRange)
+    ? getThirtyDayChunks(range.startDate, range.endDate)
+    : [range];
+  const exportDir = path.join(config.reportChunksDir, 'mcp-report', toIsoDate(new Date()));
+  const exportFiles = [];
 
-  logger.info('Waiting briefly after MCP Report search before changing page size', {
-    delayMs: config.mcpReportPostSearchDelayMs
+  logger.info('MCP Report date chunks prepared', {
+    dealerCode,
+    mode: config.historicalBackfillEnabled ? 'historical-backfill' : 'current-month',
+    startDate: range.startIso,
+    endDate: range.endIso,
+    chunkCount: chunks.length,
+    exportDir
   });
-  await sleep(config.mcpReportPostSearchDelayMs);
 
-  await selectKendoPagerSize(reportContext, config.mcpReportPageSize);
-  await waitForKendoGridIdle(reportContext, { timeout: 120000 });
+  for (const [index, chunk] of chunks.entries()) {
+    await fillMcpDateRange(reportContext, chunk);
 
-  logger.info('Exporting MCP Report pages');
-  const dbResult = await exportPagedGridToSupabase(reportContext, {
-    reportId: 'mcp-report',
+    logger.info('Searching MCP Report chunk', {
+      chunk: `${index + 1}/${chunks.length}`,
+      startDate: chunk.startPortal,
+      endDate: chunk.endPortal
+    });
+    await clickSearch(reportContext);
+    await waitForKendoGridIdle(reportContext, { timeout: 120000 });
+
+    if (config.mcpReportPostSearchDelayMs > 0) {
+      logger.info('Waiting briefly after MCP Report search before changing page size', {
+        delayMs: config.mcpReportPostSearchDelayMs
+      });
+      await sleep(config.mcpReportPostSearchDelayMs);
+    }
+
+    await selectKendoPagerSize(reportContext, config.mcpReportPageSize);
+    await waitForKendoGridIdle(reportContext, { timeout: 120000 });
+
+    logger.info('Exporting MCP Report chunk pages');
+    const chunkFiles = await exportAllGridPagesToFiles(reportContext, {
+      outputDir: exportDir,
+      filenameBase: `mcp_report_${chunk.startIso}_to_${chunk.endIso}`,
+      pageSize: config.mcpReportPageSize
+    });
+    exportFiles.push(...chunkFiles);
+  }
+
+  const merged = addDealerCodeToDataset(await mergeExcelFiles(exportFiles), dealerCode);
+  const dbResult = await saveReportSheetToSupabase({
+    brand: 'kia',
     sheetName: config.mcpReportSheetName,
-    filenameBase: `mcp_report_${range.startIso}_to_${range.endIso}`,
-    pageSize: config.mcpReportPageSize
+    headers: merged.headers,
+    rows: merged.rows
   });
+  await cleanupReportExportDir(exportDir);
 
   logger.info('MCP Report finished', {
     sheetName: config.mcpReportSheetName,
     dbAction: dbResult.action,
-    rowCount: dbResult.rowCount,
-    headerCount: dbResult.headerCount,
-    pageCount: dbResult.pageCount,
+    rowCount: merged.rows.length,
+    headerCount: merged.headers.length,
+    pageCount: exportFiles.length,
     addedRowCount: dbResult.addedRowCount,
     duplicateRowCount: dbResult.duplicateRowCount
   });
@@ -75,7 +122,12 @@ export async function downloadMcpReport(page) {
   return {
     name: 'MCP Report',
     sheetName: config.mcpReportSheetName,
-    dbResult,
+    dbResult: {
+      ...dbResult,
+      rowCount: merged.rows.length,
+      headerCount: merged.headers.length,
+      pageCount: exportFiles.length
+    },
     dateRange: range
   };
 }

@@ -2,7 +2,6 @@ import fs from 'node:fs/promises';
 import { config } from '../config.js';
 
 export async function ensureRuntimeDirs() {
-  await fs.rm(config.tempDir, { recursive: true, force: true }).catch(() => {});
   await Promise.all([
     fs.mkdir(config.logsDir, { recursive: true }),
     fs.mkdir(config.screenshotsDir, { recursive: true }),

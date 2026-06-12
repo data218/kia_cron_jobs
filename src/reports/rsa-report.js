@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config, requireSecret } from '../config.js';
 import { firstVisible, saveSessionStateToPath } from '../playwright/browser.js';
 import { saveReportSheetToSupabase } from '../supabase/report-store.js';
-import { getCurrentMonthToDateRange, toIsoDate } from '../utils/date-range.js';
+import { getCurrentMonthToDateRange, getReportDateOverrideRange, getThirtyDayChunks, parseIsoLocalDate, toIsoDate } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
 import { cleanupReportExportDir, mergeExcelFiles } from './paged-export.js';
@@ -35,6 +35,10 @@ async function humanPause(label, multiplier = 1) {
   const min = Math.max(0, config.rsaHumanDelayMinMs);
   const max = Math.max(min, config.rsaHumanDelayMaxMs);
   const delayMs = Math.round(randomInt(min, max) * multiplier);
+
+  if (delayMs <= 0) {
+    return;
+  }
 
   logger.info('Human-like RSA pause', { label, delayMs });
   await sleep(delayMs);
@@ -314,7 +318,9 @@ async function selectRsaReportType(page) {
 async function waitForRsaReportFiltersReady(page) {
   logger.info('Waiting for RSA report filters after report type selection');
   await waitForRsaDataIdle(page);
-  await sleep(config.rsaReportPageLoadDelayMs);
+  if (config.rsaReportPageLoadDelayMs > 0) {
+    await sleep(config.rsaReportPageLoadDelayMs);
+  }
 
   await page.waitForFunction(() => {
     const visibleInputs = Array.from(document.querySelectorAll('input')).filter(input => {
@@ -539,13 +545,22 @@ async function exportAllRsaPages(page, outputDir, filenameBase) {
       break;
     }
 
-    logger.info('Waiting after RSA page change before next export', {
-      delayMs: config.rsaReportPageLoadDelayMs
-    });
-    await sleep(config.rsaReportPageLoadDelayMs);
+    if (config.rsaReportPageLoadDelayMs > 0) {
+      logger.info('Waiting after RSA page change before next export', {
+        delayMs: config.rsaReportPageLoadDelayMs
+      });
+      await sleep(config.rsaReportPageLoadDelayMs);
+    }
   }
 
   return files;
+}
+
+async function hasNoRsaRecords(page) {
+  return page.locator('text=/No Records found/i')
+    .first()
+    .isVisible({ timeout: 2000 })
+    .catch(() => false);
 }
 
 export async function downloadRsaReport(page) {
@@ -554,23 +569,90 @@ export async function downloadRsaReport(page) {
   await openRsaReportPage(page);
   await selectRsaReportType(page);
 
-  const range = getCurrentMonthToDateRange();
-  await fillRsaDateRange(page, range);
-
-  logger.info('Requesting RSA report details');
-  await clickGetDetails(page);
-  await waitForCaptchaIfPresent(page, 'after RSA get details');
-  logger.info('Waiting for RSA asynchronous table data', {
-    delayMs: config.rsaReportPostSearchDelayMs
-  });
-  await sleep(config.rsaReportPostSearchDelayMs);
-
+  const overrideRange = getReportDateOverrideRange();
+  const range = overrideRange ?? (config.historicalBackfillEnabled
+    ? {
+        startDate: parseIsoLocalDate(config.historicalBackfillStartDate),
+        endDate: new Date()
+      }
+    : getCurrentMonthToDateRange());
+  if (config.historicalBackfillEnabled && !overrideRange) {
+    range.startIso = toIsoDate(range.startDate);
+    range.endIso = toIsoDate(range.endDate);
+  }
+  const chunks = (config.historicalBackfillEnabled || overrideRange)
+    ? getThirtyDayChunks(range.startDate, range.endDate)
+    : [range];
   const exportDir = buildRunDir();
-  const exportFiles = await exportAllRsaPages(
-    page,
-    exportDir,
-    `rsa_report_${range.startIso}_to_${range.endIso}`
-  );
+  const exportFiles = [];
+
+  logger.info('RSA Report date chunks prepared', {
+    mode: config.historicalBackfillEnabled ? 'historical-backfill' : 'current-month',
+    startDate: range.startIso,
+    endDate: range.endIso,
+    chunkCount: chunks.length,
+    exportDir
+  });
+
+  for (const [index, chunk] of chunks.entries()) {
+    await fillRsaDateRange(page, chunk);
+
+    logger.info('Requesting RSA report details for chunk', {
+      chunk: `${index + 1}/${chunks.length}`,
+      startDate: chunk.startIso,
+      endDate: chunk.endIso
+    });
+    await clickGetDetails(page);
+    await waitForCaptchaIfPresent(page, 'after RSA get details');
+    if (config.rsaReportPostSearchDelayMs > 0) {
+      logger.info('Waiting for RSA asynchronous table data', {
+        delayMs: config.rsaReportPostSearchDelayMs
+      });
+      await sleep(config.rsaReportPostSearchDelayMs);
+    }
+
+    if (await hasNoRsaRecords(page)) {
+      logger.info('RSA report chunk has no records; skipping export', {
+        chunk: `${index + 1}/${chunks.length}`,
+        startDate: chunk.startIso,
+        endDate: chunk.endIso
+      });
+      continue;
+    }
+
+    const chunkFiles = await exportAllRsaPages(
+      page,
+      exportDir,
+      `rsa_report_${chunk.startIso}_to_${chunk.endIso}`
+    );
+    exportFiles.push(...chunkFiles);
+  }
+
+  if (!exportFiles.length) {
+    await cleanupReportExportDir(exportDir);
+
+    logger.info('RSA Report finished with no records to export', {
+      sheetName: config.rsaReportSheetName,
+      chunkCount: chunks.length,
+      pageCount: 0,
+      rowCount: 0
+    });
+
+    return {
+      name: 'RSA Report',
+      sheetName: config.rsaReportSheetName,
+      dbResult: {
+        action: 'no-records',
+        rowCount: 0,
+        headerCount: 0,
+        chunkCount: chunks.length,
+        pageCount: 0,
+        addedRowCount: 0,
+        duplicateRowCount: 0
+      },
+      dateRange: range
+    };
+  }
 
   const merged = await mergeExcelFiles(exportFiles);
   const dbResult = await saveReportSheetToSupabase({
@@ -587,6 +669,7 @@ export async function downloadRsaReport(page) {
     dbAction: dbResult.action,
     rowCount: merged.rows.length,
     headerCount: merged.headers.length,
+    chunkCount: chunks.length,
     pageCount: exportFiles.length,
     addedRowCount: dbResult.addedRowCount,
     duplicateRowCount: dbResult.duplicateRowCount
@@ -599,6 +682,7 @@ export async function downloadRsaReport(page) {
       ...dbResult,
       rowCount: merged.rows.length,
       headerCount: merged.headers.length,
+      chunkCount: chunks.length,
       pageCount: exportFiles.length
     },
     dateRange: range

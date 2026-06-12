@@ -35,7 +35,7 @@ const streams = [
 const baseLogger = pino({
   level: process.env.LOG_LEVEL || 'info',
   base: {
-    service: 'kia-cron-job',
+    service: process.env.LOG_SERVICE_NAME || 'kia-cron-job',
     env: process.env.NODE_ENV || 'development'
   },
   timestamp: pino.stdTimeFunctions.isoTime,

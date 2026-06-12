@@ -1,11 +1,14 @@
+import path from 'node:path';
 import { config } from '../config.js';
 import { openEwReport } from '../navigation/kia-menu.js';
 import { findContextWithVisibleSelector } from '../playwright/frame-resolver.js';
-import { getCurrentMonthToDateRange } from '../utils/date-range.js';
+import { saveReportSheetToSupabase } from '../supabase/report-store.js';
+import { formatDateForPortal, getCurrentMonthToDateRange, getReportDateOverrideRange, getThirtyDayChunks, parseIsoLocalDate, toIsoDate } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
 import { selectKendoPagerSize, waitForKendoGridIdle } from './grid.js';
-import { exportPagedGridToSupabase } from './paged-export.js';
+import { cleanupReportExportDir, exportAllGridPagesToFiles, mergeExcelFiles } from './paged-export.js';
+import { addDealerCodeToDataset } from './report-metadata.js';
 import {
   clickSearch,
   fillDate
@@ -30,50 +33,98 @@ async function fillEwDateRange(page, range) {
   });
 
   await fillDate(page, '#sRegDateToDate', range.endPortal);
-  await sleep(500);
   await fillDate(page, '#sRegDateFromDate', range.startPortal);
 }
 
-export async function downloadEwReport(page) {
-  logger.info('EW Report started');
+export async function downloadEwReport(page, { dealerCode = 'active' } = {}) {
+  logger.info('EW Report started', { dealerCode });
   await openEwReport(page);
   const reportContext = await resolveEwReportContext(page);
 
-  const range = getCurrentMonthToDateRange();
-  await fillEwDateRange(reportContext, range);
+  const overrideRange = getReportDateOverrideRange();
+  const range = overrideRange ?? (config.historicalBackfillEnabled
+    ? {
+        startDate: parseIsoLocalDate(config.historicalBackfillStartDate),
+        endDate: new Date()
+      }
+    : getCurrentMonthToDateRange());
+  if (config.historicalBackfillEnabled && !overrideRange) {
+    range.startPortal = formatDateForPortal(range.startDate);
+    range.endPortal = formatDateForPortal(range.endDate);
+    range.startIso = toIsoDate(range.startDate);
+    range.endIso = toIsoDate(range.endDate);
+  }
 
-  logger.info('Searching EW Report');
-  await clickSearch(reportContext);
-  await waitForKendoGridIdle(reportContext, { timeout: 120000 });
+  const chunks = (config.historicalBackfillEnabled || overrideRange)
+    ? getThirtyDayChunks(range.startDate, range.endDate)
+    : [range];
+  const exportDir = path.join(config.reportChunksDir, 'ew-report', toIsoDate(new Date()));
+  const exportFiles = [];
 
-  logger.info('Waiting briefly after EW Report search before changing page size', {
-    delayMs: config.ewReportPostSearchDelayMs
+  logger.info('EW Report date chunks prepared', {
+    mode: config.historicalBackfillEnabled ? 'historical-backfill' : 'current-month',
+    startDate: range.startIso,
+    endDate: range.endIso,
+    chunkCount: chunks.length,
+    exportDir
   });
-  await sleep(config.ewReportPostSearchDelayMs);
 
-  await selectKendoPagerSize(reportContext, config.ewReportPageSize);
-  await waitForKendoGridIdle(reportContext, { timeout: 120000 });
+  for (const [index, chunk] of chunks.entries()) {
+    await fillEwDateRange(reportContext, chunk);
 
-  logger.info('Exporting EW Report pages');
-  const dbResult = await exportPagedGridToSupabase(reportContext, {
-    reportId: 'ew-report',
+    logger.info('Searching EW Report chunk', {
+      chunk: `${index + 1}/${chunks.length}`,
+      startDate: chunk.startPortal,
+      endDate: chunk.endPortal
+    });
+    await clickSearch(reportContext);
+    await waitForKendoGridIdle(reportContext, { timeout: 120000 });
+
+    if (config.ewReportPostSearchDelayMs > 0) {
+      logger.info('Waiting briefly after EW Report search before changing page size', {
+        delayMs: config.ewReportPostSearchDelayMs
+      });
+      await sleep(config.ewReportPostSearchDelayMs);
+    }
+
+    await selectKendoPagerSize(reportContext, config.ewReportPageSize);
+    await waitForKendoGridIdle(reportContext, { timeout: 120000 });
+
+    logger.info('Exporting EW Report chunk pages');
+    const chunkFiles = await exportAllGridPagesToFiles(reportContext, {
+      outputDir: exportDir,
+      filenameBase: `ew_report_${chunk.startIso}_to_${chunk.endIso}`,
+      pageSize: config.ewReportPageSize
+    });
+    exportFiles.push(...chunkFiles);
+  }
+
+  const merged = addDealerCodeToDataset(await mergeExcelFiles(exportFiles), dealerCode);
+  const dbResult = await saveReportSheetToSupabase({
+    brand: 'kia',
     sheetName: config.ewReportSheetName,
-    filenameBase: `ew_report_${range.startIso}_to_${range.endIso}`,
-    pageSize: config.ewReportPageSize
+    headers: merged.headers,
+    rows: merged.rows
   });
+  await cleanupReportExportDir(exportDir);
 
   logger.info('EW Report finished', {
     sheetName: config.ewReportSheetName,
     dbAction: dbResult.action,
-    rowCount: dbResult.rowCount,
+    rowCount: merged.rows.length,
     headerCount: dbResult.headerCount,
-    pageCount: dbResult.pageCount
+    pageCount: exportFiles.length
   });
 
   return {
     name: 'EW Report',
     sheetName: config.ewReportSheetName,
-    dbResult,
+    dbResult: {
+      ...dbResult,
+      rowCount: merged.rows.length,
+      headerCount: merged.headers.length,
+      pageCount: exportFiles.length
+    },
     dateRange: range
   };
 }

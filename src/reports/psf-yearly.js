@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { openPsfYearlyReport } from '../navigation/kia-menu.js';
 import { findContextWithVisibleSelector } from '../playwright/frame-resolver.js';
 import { saveReportSheetToSupabase } from '../supabase/report-store.js';
-import { getRollingTwoMonthRange, getThirtyDayChunks, toIsoDate } from '../utils/date-range.js';
+import { formatDateForPortal, getReportDateOverrideRange, getRollingTwoMonthRange, getThirtyDayChunks, parseIsoLocalDate, toIsoDate } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
 import { selectKendoPagerSize, waitForKendoGridIdle } from './grid.js';
@@ -39,7 +39,6 @@ async function fillPsfDateRange(page, range) {
   });
 
   await fillDate(page, '#sRODateToDate', range.endPortal);
-  await sleep(500);
   await fillDate(page, '#sRODateFromDate', range.startPortal);
 }
 
@@ -48,7 +47,18 @@ export async function downloadPsfYearlyReport(page) {
   await openPsfYearlyReport(page);
   const reportContext = await resolvePsfYearlyContext(page);
 
-  const range = getRollingTwoMonthRange();
+  const range = getReportDateOverrideRange() ?? (config.historicalBackfillEnabled
+    ? {
+        startDate: parseIsoLocalDate(config.historicalBackfillStartDate),
+        endDate: new Date()
+      }
+    : getRollingTwoMonthRange());
+  if (config.historicalBackfillEnabled && !getReportDateOverrideRange()) {
+    range.startPortal = formatDateForPortal(range.startDate);
+    range.endPortal = formatDateForPortal(range.endDate);
+    range.startIso = toIsoDate(range.startDate);
+    range.endIso = toIsoDate(range.endDate);
+  }
   const chunks = getThirtyDayChunks(range.startDate, range.endDate);
   const runDate = toIsoDate(new Date());
   const exportDir = path.join(config.reportChunksDir, 'psf-yearly', runDate);
@@ -74,10 +84,12 @@ export async function downloadPsfYearlyReport(page) {
     await clickSearch(reportContext);
     await waitForKendoGridIdle(reportContext, { timeout: 120000 });
 
-    logger.info('Waiting briefly after PSF Yearly search before changing page size', {
-      delayMs: config.psfYearlyPostSearchDelayMs
-    });
-    await sleep(config.psfYearlyPostSearchDelayMs);
+    if (config.psfYearlyPostSearchDelayMs > 0) {
+      logger.info('Waiting briefly after PSF Yearly search before changing page size', {
+        delayMs: config.psfYearlyPostSearchDelayMs
+      });
+      await sleep(config.psfYearlyPostSearchDelayMs);
+    }
 
     await selectKendoPagerSize(reportContext, config.psfYearlyPageSize);
     await waitForKendoGridIdle(reportContext, { timeout: 120000 });
@@ -91,10 +103,12 @@ export async function downloadPsfYearlyReport(page) {
     exportFiles.push(...chunkPageFiles);
 
     if (index < chunks.length - 1) {
-      logger.info('Waiting after PSF Yearly export before entering next date range', {
-        delayMs: config.psfYearlyBetweenChunksDelayMs
-      });
-      await sleep(config.psfYearlyBetweenChunksDelayMs);
+      if (config.psfYearlyBetweenChunksDelayMs > 0) {
+        logger.info('Waiting after PSF Yearly export before entering next date range', {
+          delayMs: config.psfYearlyBetweenChunksDelayMs
+        });
+        await sleep(config.psfYearlyBetweenChunksDelayMs);
+      }
     }
   }
 

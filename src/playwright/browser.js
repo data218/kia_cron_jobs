@@ -55,13 +55,13 @@ export async function createBrowserSession() {
   };
 }
 
-export async function createBrowserSessionWithState(statePath = config.sessionStatePath) {
+export async function createBrowserSessionWithState(statePath = config.sessionStatePath, options = {}) {
   await ensureDir(statePath);
   await ensureDir(config.downloadDir);
 
   const hasStorageState = await fs.access(statePath).then(() => true).catch(() => false);
   const browser = await chromium.launch({
-    headless: config.headless,
+    headless: options.headless ?? config.headless,
     slowMo: config.slowMoMs,
     downloadsPath: config.downloadDir
   });
@@ -86,12 +86,12 @@ export async function createBrowserSessionWithState(statePath = config.sessionSt
   };
 }
 
-export async function createPersistentBrowserSession(userDataDir = config.rsaUserDataDir) {
+export async function createPersistentBrowserSession(userDataDir = config.rsaUserDataDir, options = {}) {
   await ensureDir(userDataDir);
   await ensureDir(config.downloadDir);
 
   const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: config.headless,
+    headless: options.headless ?? config.headless,
     slowMo: config.slowMoMs,
     acceptDownloads: true,
     downloadsPath: config.downloadDir
@@ -163,7 +163,9 @@ export async function firstVisible(page, candidates, timeout = 10000) {
   throw new Error(`Could not find visible element from selectors: ${candidates.join(', ')}`);
 }
 
-export async function clickAndWait(page, locator, timeout) {
-  await locator.click();
-  await page.waitForLoadState('networkidle', { timeout }).catch(() => {});
+export async function clickAndWait(page, locator, timeout = config.pageReadyDelayMs) {
+  await Promise.all([
+    page.waitForLoadState('networkidle', { timeout }).catch(() => {}),
+    locator.click()
+  ]);
 }

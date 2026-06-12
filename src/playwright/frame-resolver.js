@@ -2,7 +2,7 @@ import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
 
 async function isVisibleInContext(context, selector) {
-  return context.locator(selector).first().isVisible({ timeout: 250 }).catch(() => false);
+  return context.locator(selector).first().isVisible({ timeout: 50 }).catch(() => false);
 }
 
 export async function findContextWithVisibleSelector(page, selector, { timeout = 60000, label = selector } = {}) {
@@ -27,7 +27,7 @@ export async function findContextWithVisibleSelector(page, selector, { timeout =
       }
     }
 
-    await sleep(500);
+    await sleep(50);
   }
 
   const frames = page.frames().map(frame => ({

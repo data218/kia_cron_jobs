@@ -29,6 +29,13 @@ function envBool(name, fallback) {
   return ['1', 'true', 'yes', 'y'].includes(raw.toLowerCase());
 }
 
+function envList(name, fallback = '') {
+  return env(name, fallback)
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean);
+}
+
 export const config = {
   rootDir,
   loginUrl: env('KIA_DMS_URL', 'https://dms.kiaindia.net/cmm/cmmi/selectLoginMain.dms'),
@@ -46,10 +53,15 @@ export const config = {
   otpWebhookHost: env('OTP_WEBHOOK_HOST', '0.0.0.0'),
   otpWebhookPort: envInt('OTP_WEBHOOK_PORT', envInt('PORT', 3333)),
   otpWebhookDebug: envBool('OTP_WEBHOOK_DEBUG', false),
-  cronSchedule: env('CRON_SCHEDULE', '0 10-18 * * *'),
-  regularReportsCronSchedule: env('REGULAR_REPORTS_CRON_SCHEDULE', env('CRON_SCHEDULE', '0 10-18 * * *')),
-  openRoYearlyCronSchedule: env('OPEN_RO_YEARLY_CRON_SCHEDULE', '0 18 * * *'),
-  kiaCallCenterComplaintsCronSchedule: env('KIA_CALL_CENTER_COMPLAINTS_CRON_SCHEDULE', '0 18 * * *'),
+  otpFreshnessGraceMs: envInt('OTP_FRESHNESS_GRACE_MS', 15000),
+  cronSchedule: env('CRON_SCHEDULE', '0 9-18 * * *'),
+  regularReportsCronSchedule: env('REGULAR_REPORTS_CRON_SCHEDULE', env('CRON_SCHEDULE', '0 9-18 * * *')),
+  rsaReportCronSchedule: env('RSA_REPORT_CRON_SCHEDULE', '0 10 * * *'),
+  openRoYearlyCronSchedule: env('OPEN_RO_YEARLY_CRON_SCHEDULE', '10 18 * * *'),
+  kiaCallCenterComplaintsCronSchedule: env('KIA_CALL_CENTER_COMPLAINTS_CRON_SCHEDULE', '25 18 * * *'),
+  demoJobCardsCronSchedule: env('DEMO_JOB_CARDS_CRON_SCHEDULE', '30 10,18 * * *'),
+  demoCarListCronSchedule: env('DEMO_CAR_LIST_CRON_SCHEDULE', '30 15 * * 1'),
+  serviceAppointmentCronSchedule: env('SERVICE_APPOINTMENT_CRON_SCHEDULE', '45 18 * * *'),
   headless: envBool('HEADLESS', false),
   slowMoMs: envInt('SLOW_MO_MS', 0),
   pageReadyDelayMs: envDelayMs('PAGE_READY_DELAY_MS', 5000),
@@ -78,8 +90,26 @@ export const config = {
   reportsToRun: env('REPORTS_TO_RUN', 'all'),
   testSingleReport: envBool('TEST_SINGLE_REPORT', false),
   testReportName: env('TEST_REPORT_NAME'),
+  primaryDealerCode: env('PRIMARY_DEALER_CODE', 'JK402').trim().toUpperCase(),
+  forceActiveDealerCode: env('FORCE_ACTIVE_DEALER_CODE', '').trim().toUpperCase(),
+  multiDealerEnabled: envBool('MULTI_DEALER_ENABLED', false),
+  multiDealerExecutionStrategy: env('MULTI_DEALER_EXECUTION_STRATEGY', 'report-first').trim().toLowerCase(),
+  additionalDealerCodes: env('ADDITIONAL_DEALER_CODES', '')
+    .split(',')
+    .map(value => value.trim().toUpperCase())
+    .filter(Boolean),
+  primaryDealerOnlyModes: env('PRIMARY_DEALER_ONLY_MODES', 'demo-car-list')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean),
+  dealerChangeTimeoutMs: envInt('DEALER_CHANGE_TIMEOUT_MS', 90000),
   dryRunReports: envBool('DRY_RUN_REPORTS', false),
   dryRunReportDelayMs: envInt('DRY_RUN_REPORT_DELAY_MS', 500),
+  skipRegularRunWhenSchedulerBusy: envBool('SKIP_REGULAR_RUN_WHEN_SCHEDULER_BUSY', true),
+  historicalBackfillEnabled: envBool('HISTORICAL_BACKFILL_ENABLED', false),
+  historicalBackfillStartDate: env('HISTORICAL_BACKFILL_START_DATE', '2025-01-01'),
+  reportDateOverrideStartDate: env('REPORT_DATE_OVERRIDE_START_DATE'),
+  reportDateOverrideEndDate: env('REPORT_DATE_OVERRIDE_END_DATE'),
   alertEmailFrom: env('ALERT_EMAIL_FROM'),
   alertEmailTo: env('ALERT_EMAIL_TO'),
   alertEmailAppPassword: env('ALERT_EMAIL_APP_PASSWORD'),
@@ -103,6 +133,25 @@ export const config = {
   openRoYearlyStartDate: env('OPEN_RO_YEARLY_START_DATE', '2025-03-01'),
   openRoYearlyPostSearchDelayMs: envDelayMs('OPEN_RO_YEARLY_POST_SEARCH_DELAY_MS', 5000),
   openRoYearlyBetweenChunksDelayMs: envDelayMs('OPEN_RO_YEARLY_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  demoJobCardsSheetName: env('DEMO_JOB_CARDS_SHEET_NAME', 'Demo Job Cards'),
+  demoJobCardsPageSize: env('DEMO_JOB_CARDS_PAGE_SIZE', '300'),
+  demoJobCardsWorkType: env('DEMO_JOB_CARDS_WORK_TYPE', 'Test Drive/CC Maintenance'),
+  demoJobCardsBackfillEnabled: envBool('DEMO_JOB_CARDS_BACKFILL_ENABLED', false),
+  demoJobCardsBackfillStartDate: env('DEMO_JOB_CARDS_BACKFILL_START_DATE', `${new Date().getFullYear()}-01-01`),
+  demoJobCardsPostSearchDelayMs: envDelayMs('DEMO_JOB_CARDS_POST_SEARCH_DELAY_MS', 5000),
+  demoJobCardsBetweenChunksDelayMs: envDelayMs('DEMO_JOB_CARDS_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  demoCarListSheetName: env('DEMO_CAR_LIST_SHEET_NAME', 'demo_car_list'),
+  demoCarListPageSize: env('DEMO_CAR_LIST_PAGE_SIZE', '300'),
+  demoCarListBackfillEnabled: envBool('DEMO_CAR_LIST_BACKFILL_ENABLED', false),
+  demoCarListBackfillStartDate: env('DEMO_CAR_LIST_BACKFILL_START_DATE', '2025-01-01'),
+  demoCarListPostSearchDelayMs: envDelayMs('DEMO_CAR_LIST_POST_SEARCH_DELAY_MS', 5000),
+  demoCarListBetweenChunksDelayMs: envDelayMs('DEMO_CAR_LIST_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  serviceAppointmentSheetName: env('SERVICE_APPOINTMENT_SHEET_NAME', 'service_appointment'),
+  serviceAppointmentPageSize: env('SERVICE_APPOINTMENT_PAGE_SIZE', '300'),
+  serviceAppointmentBackfillEnabled: envBool('SERVICE_APPOINTMENT_BACKFILL_ENABLED', false),
+  serviceAppointmentBackfillStartDate: env('SERVICE_APPOINTMENT_BACKFILL_START_DATE', '2026-05-01'),
+  serviceAppointmentPostSearchDelayMs: envDelayMs('SERVICE_APPOINTMENT_POST_SEARCH_DELAY_MS', 5000),
+  serviceAppointmentBetweenChunksDelayMs: envDelayMs('SERVICE_APPOINTMENT_BETWEEN_CHUNKS_DELAY_MS', 4000),
   psfYearlySheetName: env('PSF_YEARLY_SHEET_NAME', 'PSF Yearly'),
   psfYearlyPageSize: env('PSF_YEARLY_PAGE_SIZE', '300'),
   psfYearlyPostSearchDelayMs: envDelayMs('PSF_YEARLY_POST_SEARCH_DELAY_MS', 5000),
@@ -117,11 +166,24 @@ export const config = {
   advWiseLubricantsVasPageSize: env('ADV_WISE_LUBRICANTS_VAS_PAGE_SIZE', '300'),
   advWiseLubricantsVasPostSearchDelayMs: envDelayMs('ADV_WISE_LUBRICANTS_VAS_POST_SEARCH_DELAY_MS', 5000),
   operationWiseAnalysisSheetName: env('OPERATION_WISE_ANALYSIS_SHEET_NAME', 'Operation Wise Analysis Report'),
-  operationWiseAnalysisPageSize: env('OPERATION_WISE_ANALYSIS_PAGE_SIZE', '300'),
+  operationWiseAnalysisPageSize: env('OPERATION_WISE_ANALYSIS_PAGE_SIZE', '1000'),
+  operationWiseAnalysisReportTypes: env('OPERATION_WISE_ANALYSIS_REPORT_TYPES', 'Operation,Part')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean),
   operationWiseAnalysisBackfillEnabled: envBool('OPERATION_WISE_ANALYSIS_BACKFILL_ENABLED', false),
   operationWiseAnalysisBackfillStartDate: env('OPERATION_WISE_ANALYSIS_BACKFILL_START_DATE', '2025-03-01'),
   operationWiseAnalysisPostSearchDelayMs: envDelayMs('OPERATION_WISE_ANALYSIS_POST_SEARCH_DELAY_MS', 5000),
   operationWiseAnalysisBetweenChunksDelayMs: envDelayMs('OPERATION_WISE_ANALYSIS_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  operationWiseAnalysisAdvisorSheetName: env('OPERATION_WISE_ANALYSIS_ADVISOR_SHEET_NAME', 'Operation Wise Analysis Advisor Report'),
+  operationWiseAnalysisAdvisorPageSize: env('OPERATION_WISE_ANALYSIS_ADVISOR_PAGE_SIZE', '300'),
+  operationWiseAnalysisAdvisorBackfillEnabled: envBool('OPERATION_WISE_ANALYSIS_ADVISOR_BACKFILL_ENABLED', false),
+  operationWiseAnalysisAdvisorBackfillStartDate: env('OPERATION_WISE_ANALYSIS_ADVISOR_BACKFILL_START_DATE', '2025-03-01'),
+  operationWiseAnalysisAdvisorStartAtAdvisor: env('OPERATION_WISE_ANALYSIS_ADVISOR_START_AT_ADVISOR'),
+  operationWiseAnalysisAdvisorStartAtDate: env('OPERATION_WISE_ANALYSIS_ADVISOR_START_AT_DATE'),
+  operationWiseAnalysisAdvisorPostSearchDelayMs: envDelayMs('OPERATION_WISE_ANALYSIS_ADVISOR_POST_SEARCH_DELAY_MS', 5000),
+  operationWiseAnalysisAdvisorBetweenChunksDelayMs: envDelayMs('OPERATION_WISE_ANALYSIS_ADVISOR_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  operationWiseAnalysisAdvisorBetweenAdvisorsDelayMs: envDelayMs('OPERATION_WISE_ANALYSIS_ADVISOR_BETWEEN_ADVISORS_DELAY_MS', 4000),
   rsaPortalUrl: env('RSA_PORTAL_URL', 'https://kia.awpassistance.in/report'),
   rsaReportUrl: env('RSA_REPORT_URL', 'https://kia.awpassistance.in/report'),
   rsaUserId: env('RSA_USER_ID'),
@@ -135,8 +197,48 @@ export const config = {
   rsaTypingDelayMs: envInt('RSA_TYPING_DELAY_MS', 90),
   rsaCaptchaTimeoutMs: envInt('RSA_CAPTCHA_TIMEOUT_MS', 600000),
   rsaCdpEndpoint: env('RSA_CDP_ENDPOINT'),
+  rsaHeadless: envBool('RSA_HEADLESS', false),
   rsaUsePersistentProfile: envBool('RSA_USE_PERSISTENT_PROFILE', false),
-  rsaUserDataDir: path.resolve(rootDir, env('RSA_USER_DATA_DIR', './storage/rsa-chrome-profile'))
+  rsaUserDataDir: path.resolve(rootDir, env('RSA_USER_DATA_DIR', './storage/rsa-chrome-profile')),
+  hmilCronSchedule: env('HMIL_CRON_SCHEDULE', '20 10-18 * * *'),
+  hmilLoginUrl: env('HMIL_DMS_URL', 'https://ndms.hmil.net'),
+  hmilHomeUrl: env('HMIL_HOME_URL', 'https://ndms.hmil.net'),
+  hmilUserId: env('HMIL_USER_ID'),
+  hmilPassword: env('HMIL_PASSWORD'),
+  hmilForceLogin: envBool('HMIL_FORCE_LOGIN', true),
+  hmilSessionCheckTimeoutMs: envInt('HMIL_SESSION_CHECK_TIMEOUT_MS', 8000),
+  hmilSessionStatePath: path.resolve(rootDir, env('HMIL_SESSION_STATE_PATH', './storage/hmil-dms-state.json')),
+  hmilDownloadDir: path.resolve(rootDir, env('HMIL_DOWNLOAD_DIR', './downloads/hmil')),
+  hmilReportChunksDir: path.resolve(rootDir, env('HMIL_REPORT_CHUNKS_DIR', './downloads/report-chunks/hmil')),
+  hmilDealerCodes: envList('HMIL_DEALER_CODES', 'N5216,N6844,N6845,N6846,N6847,N6848')
+    .map(value => value.toUpperCase()),
+  hmilReportsToRun: env('HMIL_REPORTS_TO_RUN', 'all'),
+  hmilRepairOrderSheetName: env('HMIL_REPAIR_ORDER_SHEET_NAME', 'Hyundai Repair Order List'),
+  hmilRepairOrderPageSize: env('HMIL_REPAIR_ORDER_PAGE_SIZE', '5000'),
+  hmilRepairOrderStartDate: env('HMIL_REPAIR_ORDER_START_DATE', '2026-05-01'),
+  hmilRepairOrderEndDate: env('HMIL_REPAIR_ORDER_END_DATE', '2026-05-31'),
+  hmilRepairOrderPostSearchDelayMs: envDelayMs('HMIL_REPAIR_ORDER_POST_SEARCH_DELAY_MS', 0),
+  gdmsOtpLockDir: path.resolve(rootDir, env('GDMS_OTP_LOCK_DIR', './temp/gdms-otp-login.lock')),
+  gdmsOtpLockTimeoutMs: envInt('GDMS_OTP_LOCK_TIMEOUT_MS', 300000),
+  gdmsOtpLockStaleMs: envInt('GDMS_OTP_LOCK_STALE_MS', 600000),
+  amPlatinumCronSchedule: env('AM_PLATINUM_CRON_SCHEDULE', env('HMIL_CRON_SCHEDULE', '20 10-18 * * *')),
+  amPlatinumLoginUrl: env('AM_PLATINUM_DMS_URL', env('HMIL_DMS_URL', 'https://ndms.hmil.net')),
+  amPlatinumHomeUrl: env('AM_PLATINUM_HOME_URL', env('HMIL_HOME_URL', 'https://ndms.hmil.net')),
+  amPlatinumUserId: env('AM_PLATINUM_USER_ID'),
+  amPlatinumPassword: env('AM_PLATINUM_PASSWORD'),
+  amPlatinumForceLogin: envBool('AM_PLATINUM_FORCE_LOGIN', true),
+  amPlatinumSessionCheckTimeoutMs: envInt('AM_PLATINUM_SESSION_CHECK_TIMEOUT_MS', envInt('HMIL_SESSION_CHECK_TIMEOUT_MS', 8000)),
+  amPlatinumSessionStatePath: path.resolve(rootDir, env('AM_PLATINUM_SESSION_STATE_PATH', './storage/am-platinum-dms-state.json')),
+  amPlatinumDownloadDir: path.resolve(rootDir, env('AM_PLATINUM_DOWNLOAD_DIR', './downloads/am-platinum')),
+  amPlatinumReportChunksDir: path.resolve(rootDir, env('AM_PLATINUM_REPORT_CHUNKS_DIR', './downloads/report-chunks/am-platinum')),
+  amPlatinumDealerCodes: envList('AM_PLATINUM_DEALER_CODES', '')
+    .map(value => value.toUpperCase()),
+  amPlatinumReportsToRun: env('AM_PLATINUM_REPORTS_TO_RUN', 'all'),
+  amPlatinumRepairOrderSheetName: env('AM_PLATINUM_REPAIR_ORDER_SHEET_NAME', 'AM Platinum Repair Order List'),
+  amPlatinumRepairOrderPageSize: env('AM_PLATINUM_REPAIR_ORDER_PAGE_SIZE', env('HMIL_REPAIR_ORDER_PAGE_SIZE', '5000')),
+  amPlatinumRepairOrderStartDate: env('AM_PLATINUM_REPAIR_ORDER_START_DATE', env('HMIL_REPAIR_ORDER_START_DATE', '2026-05-01')),
+  amPlatinumRepairOrderEndDate: env('AM_PLATINUM_REPAIR_ORDER_END_DATE', env('HMIL_REPAIR_ORDER_END_DATE', '2026-05-31')),
+  amPlatinumRepairOrderPostSearchDelayMs: envDelayMs('AM_PLATINUM_REPAIR_ORDER_POST_SEARCH_DELAY_MS', envInt('HMIL_REPAIR_ORDER_POST_SEARCH_DELAY_MS', 0))
 };
 
 export function requireSecret(name, value) {

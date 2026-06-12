@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { openKiaCallCenterComplaintList } from '../navigation/kia-menu.js';
 import { findContextWithVisibleSelector } from '../playwright/frame-resolver.js';
-import { formatDateForPortal, getRollingThreeMonthRange, toIsoDate } from '../utils/date-range.js';
+import { formatDateForPortal, getReportDateOverrideRange, getRollingThreeMonthRange, parseIsoLocalDate, toIsoDate } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
 import { selectKendoPagerSize, waitForKendoGridIdle } from './grid.js';
@@ -71,7 +71,9 @@ async function resolveComplaintContext(page) {
 }
 
 function getPreviousYearJanFirstRange(today = new Date()) {
-  const startDate = new Date(today.getFullYear() - 1, 0, 1);
+  const startDate = config.historicalBackfillEnabled
+    ? parseIsoLocalDate(config.historicalBackfillStartDate)
+    : new Date(today.getFullYear() - 1, 0, 1);
   const endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
   return {
@@ -91,9 +93,9 @@ export async function downloadKiaCallCenterComplaintsReport(page) {
 
   await selectKendoDropdownByLabel(reportContext, 'Business Type', 'Service');
 
-  const range = config.kiaCallCenterComplaintsNoSearchBackfill
+  const range = getReportDateOverrideRange() ?? ((config.historicalBackfillEnabled || config.kiaCallCenterComplaintsNoSearchBackfill)
     ? getPreviousYearJanFirstRange()
-    : getRollingThreeMonthRange();
+    : getRollingThreeMonthRange());
 
   logger.info('Applying complaints date range', {
     startDate: range.startPortal,
@@ -114,10 +116,12 @@ export async function downloadKiaCallCenterComplaintsReport(page) {
     await waitForKendoGridIdle(reportContext, { timeout: 120000 });
   }
 
-  logger.info('Waiting briefly after complaints search before changing page size', {
-    delayMs: config.kiaCallCenterComplaintsPostSearchDelayMs
-  });
-  await sleep(config.kiaCallCenterComplaintsPostSearchDelayMs);
+  if (config.kiaCallCenterComplaintsPostSearchDelayMs > 0) {
+    logger.info('Waiting briefly after complaints search before changing page size', {
+      delayMs: config.kiaCallCenterComplaintsPostSearchDelayMs
+    });
+    await sleep(config.kiaCallCenterComplaintsPostSearchDelayMs);
+  }
 
   await selectKendoPagerSize(reportContext, config.kiaCallCenterComplaintsPageSize);
   await waitForKendoGridIdle(reportContext, { timeout: 120000 });

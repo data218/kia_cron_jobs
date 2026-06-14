@@ -3,6 +3,16 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../src/config.js';
 import { createGdmsAccountProfile } from '../src/accounts/gdms-account-profile.js';
+import {
+  applyHistoricalRunOptions,
+  createAmPlatinumAccountForRange,
+  describeAmPlatinumLoginPlan,
+  normalizeRajouriDealerCode,
+  resolveAmPlatinumDealerForFetch,
+  resolveAmPlatinumSourceDealerCode,
+  resolveAmPlatinumStoredDealerCodesForSkipCheck,
+  shouldSkipAmPlatinumRangeForDealer
+} from '../src/accounts/am-platinum-accounts.js';
 import { loginToHmilDms } from '../src/auth/hmil-login.js';
 import { changeActiveDealerForDms } from '../src/navigation/dealer-change.js';
 import { getSelectedHmilReports } from '../src/reports/hmil-reports.js';
@@ -103,11 +113,12 @@ function getMonthlySafeRanges(startDate, endDate) {
   return ranges;
 }
 
-function selectedDealers({ account, envPrefix }) {
+function selectedDealers({ account, envPrefix, accountId = 'hmil' }) {
   const dealers = env(`${envPrefix}_HISTORICAL_DEALERS`, account.dealerCodes.join(','))
     .split(',')
     .map(value => value.trim().toUpperCase())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map(code => accountId === 'am-platinum' ? normalizeRajouriDealerCode(code) : code);
   return dealers.length ? dealers : ['active'];
 }
 
@@ -166,7 +177,17 @@ async function tableColumns(client, tableName) {
   return new Set(result.rows.map(row => row.column_name));
 }
 
-async function existingDealerReportRowCount({ account, report, dealerCode }) {
+function getHistoricalDateColumnsForReport(reportId) {
+  if (reportId === 'hyundai-repair-order-list') {
+    return ['r_o_date', 'ro_date'];
+  }
+  if (reportId === 'hyundai-ro-billing-report') {
+    return ['bill_date'];
+  }
+  return ['report_month', 'report_period_start', 'bill_date', 'ro_date', 'r_o_date'];
+}
+
+async function existingDealerReportRangeRowCount({ account, report, dealerCode, startIso, endIso }) {
   const tableName = normalizeTableName(report.sheetName);
 
   return withPostgresClient(async client => {
@@ -180,42 +201,70 @@ async function existingDealerReportRowCount({ account, report, dealerCode }) {
     }
 
     const columns = await tableColumns(client, tableName);
-    const dealerColumn = ['source_dealer_code', 'dealer_code'].find(column => columns.has(column));
+    const dealerColumns = ['source_dealer_code', 'dealer_code'].filter(column => columns.has(column));
+    const dateColumns = getHistoricalDateColumnsForReport(report.id).filter(column => columns.has(column));
 
-    if (!dealerColumn) {
-      logger.warn(`${account.logPrefix} historical skip check found table without dealer column`, {
+    if (!dealerColumns.length || !dateColumns.length) {
+      logger.warn(`${account.logPrefix} historical range skip check found table without dealer/date columns`, {
         reportId: report.id,
         sheetName: report.sheetName,
         tableName,
-        dealerCode
+        dealerCode,
+        startIso,
+        endIso,
+        dealerColumns,
+        dateColumns
       });
       return {
         exists: true,
         tableName,
         rowCount: 0,
-        dealerColumn: null
+        dealerColumn: dealerColumns[0] ?? null,
+        dateColumn: dateColumns[0] ?? null
       };
     }
 
-    const result = await client.query(
-      `
-        select count(*)::int as row_count
-        from public.${quoteIdentifier(tableName)}
-        where upper(trim(${quoteIdentifier(dealerColumn)}::text)) = upper(trim($1::text))
-      `,
-      [dealerCode]
-    );
+    for (const dealerColumn of dealerColumns) {
+      for (const dateColumn of dateColumns) {
+        const result = await client.query(
+          `
+            select count(*)::int as row_count
+            from public.${quoteIdentifier(tableName)}
+            where upper(trim(${quoteIdentifier(dealerColumn)}::text)) = upper(trim($1::text))
+              and ${quoteIdentifier(dateColumn)}::date >= $2::date
+              and ${quoteIdentifier(dateColumn)}::date <= $3::date
+          `,
+          [dealerCode, startIso, endIso]
+        );
+
+        const rowCount = Number(result.rows[0]?.row_count ?? 0);
+        if (rowCount > 0) {
+          return {
+            exists: true,
+            tableName,
+            rowCount,
+            dealerColumn,
+            dateColumn,
+            startIso,
+            endIso
+          };
+        }
+      }
+    }
 
     return {
       exists: true,
       tableName,
-      rowCount: Number(result.rows[0]?.row_count ?? 0),
-      dealerColumn
+      rowCount: 0,
+      dealerColumn: dealerColumns[0],
+      dateColumn: dateColumns[0],
+      startIso,
+      endIso
     };
   });
 }
 
-async function shouldSkipExistingDealerReport({ account, report, dealerCode, skipExisting }) {
+async function shouldSkipExistingDealerReportRange({ account, report, dealerCode, range, skipExisting }) {
   if (!skipExisting || isActiveDealerAlias(dealerCode)) {
     return {
       skip: false,
@@ -224,29 +273,55 @@ async function shouldSkipExistingDealerReport({ account, report, dealerCode, ski
     };
   }
 
-  const existing = await existingDealerReportRowCount({ account, report, dealerCode });
-  if (existing.rowCount <= 0) {
+  const dealerCodesToCheck = account?.id?.startsWith('am-platinum')
+    ? resolveAmPlatinumStoredDealerCodesForSkipCheck(dealerCode, range)
+    : [dealerCode];
+
+  let fallback = null;
+
+  for (const code of dealerCodesToCheck) {
+    const existing = await existingDealerReportRangeRowCount({
+      account,
+      report,
+      dealerCode: code,
+      startIso: range.startIso,
+      endIso: range.endIso
+    });
+
+    if (!fallback) {
+      fallback = existing;
+    }
+
+    if (existing.rowCount <= 0) {
+      continue;
+    }
+
+    logger.info(`${account.logPrefix} historical dealer/report/range already has data; skipping fetch`, {
+      reportId: report.id,
+      report: report.name,
+      sheetName: report.sheetName,
+      dealerCode,
+      storedDealerCode: code,
+      startIso: range.startIso,
+      endIso: range.endIso,
+      tableName: existing.tableName,
+      dealerColumn: existing.dealerColumn,
+      dateColumn: existing.dateColumn,
+      existingRowCount: existing.rowCount
+    });
+
     return {
-      skip: false,
-      reason: existing.exists ? 'no-existing-dealer-rows' : 'table-missing',
+      skip: true,
+      reason: 'existing-dealer-report-range-data',
+      storedDealerCode: code,
       ...existing
     };
   }
 
-  logger.info(`${account.logPrefix} historical dealer/report already has data; skipping fetch`, {
-    reportId: report.id,
-    report: report.name,
-    sheetName: report.sheetName,
-    dealerCode,
-    tableName: existing.tableName,
-    dealerColumn: existing.dealerColumn,
-    existingRowCount: existing.rowCount
-  });
-
   return {
-    skip: true,
-    reason: 'existing-dealer-report-data',
-    ...existing
+    skip: false,
+    reason: fallback?.exists ? 'no-existing-dealer-range-rows' : 'table-missing',
+    ...fallback
   };
 }
 
@@ -358,6 +433,60 @@ async function loginForDealer(account, dealerCode) {
   }
 
   return session;
+}
+
+async function ensureAmPlatinumSessionForRange({
+  session,
+  activeAccountKey,
+  activeAccount,
+  activeDealerCode,
+  dealerCode,
+  range,
+  serviceName
+}) {
+  const { accountKey, account: rangeAccount } = createAmPlatinumAccountForRange(range, dealerCode);
+  const fetchDealerCode = resolveAmPlatinumDealerForFetch(dealerCode, range);
+  const fullAccount = {
+    ...applyHistoricalRunOptions(rangeAccount),
+    serviceName
+  };
+  const accountChanged = !session || activeAccountKey !== accountKey;
+  const dealerChanged = activeDealerCode !== fetchDealerCode;
+
+  if (!accountChanged && !dealerChanged && session) {
+    return {
+      session,
+      activeAccountKey: accountKey,
+      activeAccount: fullAccount,
+      activeDealerCode: fetchDealerCode,
+      accountSwitched: false
+    };
+  }
+
+  if (accountChanged) {
+    await session?.close?.().catch(() => {});
+    logger.info(`${fullAccount.logPrefix} historical login for range`, {
+      userId: fullAccount.userId,
+      startIso: range.startIso,
+      endIso: range.endIso,
+      fetchDealerCode,
+      storeDealerCode: resolveAmPlatinumSourceDealerCode(dealerCode, range)
+    });
+    session = await loginForDealer(fullAccount, fetchDealerCode);
+  } else if (!isActiveDealerAlias(fetchDealerCode)) {
+    await changeActiveDealerForDms(session.page, fetchDealerCode, {
+      homeUrl: fullAccount.homeUrl,
+      systemLabel: fullAccount.systemLabel
+    });
+  }
+
+  return {
+    session,
+    activeAccountKey: accountKey,
+    activeAccount: fullAccount,
+    activeDealerCode: fetchDealerCode,
+    accountSwitched: accountChanged
+  };
 }
 
 async function runHistoricalReportRange({
@@ -525,11 +654,15 @@ export async function runGdmsReportFirstHistoricalBackfill({
     ...baseAccount,
     forceLogin: envBool(`${envPrefix}_HISTORICAL_FORCE_LOGIN`, baseAccount.forceLogin),
     headless: envBool(`${envPrefix}_HISTORICAL_HEADLESS`, defaultHeadless),
+    otpProvider: env(
+      `${envPrefix}_HISTORICAL_OTP_PROVIDER`,
+      accountId === 'am-platinum' ? config.amPlatinumHistoricalOtpProvider : 'manual'
+    ),
     serviceName
   };
   const reports = selectedReports({ account, envPrefix, historicalReportIds });
   const reportIds = reports.map(report => report.id);
-  const dealerCodes = selectedDealers({ account, envPrefix });
+  const dealerCodes = selectedDealers({ account, envPrefix, accountId });
   const startIso = env(`${envPrefix}_HISTORICAL_START_DATE`, defaultStartDate);
   const endIso = env(`${envPrefix}_HISTORICAL_END_DATE`, todayIso());
   const ranges = optimizedFullRangeNoSearch
@@ -598,9 +731,15 @@ export async function runGdmsReportFirstHistoricalBackfill({
     skipExistingDealerReports,
     resumedFromState: Boolean(resumeState),
     resumeStateUpdatedAt: resumeState?.updatedAt ?? null,
+    amPlatinumHistoricalUserId: accountId === 'am-platinum' ? config.amPlatinumHistoricalUserId : null,
+    amPlatinumCurrentUserId: accountId === 'am-platinum' ? config.amPlatinumUserId : null,
+    amPlatinumHistoricalCutoffDate: accountId === 'am-platinum' ? config.amPlatinumHistoricalCutoffDate : null,
     logFile
   };
   await writeJson(stateFile, initialState);
+  if (accountId === 'am-platinum') {
+    logger.info(describeAmPlatinumLoginPlan(startIso, endIso, dealerCodes));
+  }
   await writeHealthStatus(account, {
     status: 'running',
     mode: reportIds.join(','),
@@ -619,6 +758,9 @@ export async function runGdmsReportFirstHistoricalBackfill({
         ? reports.slice(dealerReportOffset, dealerReportOffset + maxReports)
         : reports.slice(dealerReportOffset);
       let session = null;
+      let activeAccountKey = null;
+      let activeAccount = account;
+      let activeDealerCode = null;
 
       try {
         writeLogLine(logStream, {
@@ -628,7 +770,11 @@ export async function runGdmsReportFirstHistoricalBackfill({
           reportCount: selectedReportsForDealer.length,
           totalRanges: ranges.length
         });
-        session = await loginForDealer(account, dealerCode);
+
+        if (accountId !== 'am-platinum') {
+          session = await loginForDealer(account, dealerCode);
+          activeDealerCode = dealerCode;
+        }
 
         for (const report of selectedReportsForDealer) {
           let openReportId = null;
@@ -649,66 +795,104 @@ export async function runGdmsReportFirstHistoricalBackfill({
             rangeCount: selectedRanges.length
           });
 
-          const existingCheck = await shouldSkipExistingDealerReport({
-            account,
-            report,
-            dealerCode,
-            skipExisting: skipExistingDealerReports
-          });
-
-          if (existingCheck.skip) {
-            const range = selectedRanges[0] ?? ranges[0];
-            const summary = summarizeResult({
-              dealerCode,
-              dealerIndex,
-              report,
-              reportIndex,
-              range,
-              rangeIndex: ranges.indexOf(range),
-              result: {
-                status: 'skipped',
-                dbAction: 'skipped_existing_dealer_report_data',
-                rowCount: existingCheck.rowCount,
-                durationMs: 0
-              }
-            });
-            summary.tableName = existingCheck.tableName;
-            summary.dealerColumn = existingCheck.dealerColumn;
-            summary.reason = existingCheck.reason;
-            results.push(summary);
-
-            await writeJson(stateFile, {
-              ...initialState,
-              status: 'running',
-              updatedAt: new Date().toISOString(),
-              currentDealerCode: dealerCode,
-              currentDealerIndex: dealerIndex,
-              currentReportId: report.id,
-              currentReportIndex: reportIndex,
-              currentRangeIndex: summary.rangeIndex,
-              lastCompletedReportId: report.id,
-              lastCompletedRangeIndex: summary.rangeIndex,
-              nextDealerIndex: reportIndex + 1 >= reports.length ? dealerIndex + 1 : dealerIndex,
-              nextReportIndex: reportIndex + 1,
-              nextRangeIndex: 0,
-              completedWorkItemCount: results.length,
-              latestResult: summary
-            });
-
-            writeLogLine(logStream, {
-              event: 'report_skipped_existing_data',
-              dealerCode,
-              reportId: report.id,
-              report: report.name,
-              tableName: existingCheck.tableName,
-              dealerColumn: existingCheck.dealerColumn,
-              existingRowCount: existingCheck.rowCount
-            });
-            continue;
-          }
-
           for (const range of selectedRanges) {
             const rangeIndex = ranges.indexOf(range);
+
+            if (accountId === 'am-platinum' && shouldSkipAmPlatinumRangeForDealer(dealerCode, range)) {
+              const summary = summarizeResult({
+                dealerCode,
+                dealerIndex,
+                report,
+                reportIndex,
+                range,
+                rangeIndex,
+                result: {
+                  status: 'skipped',
+                  dbAction: 'skipped_post_2024_not_on_current_login',
+                  rowCount: 0,
+                  durationMs: 0
+                }
+              });
+              summary.reason = 'post-2024-not-on-current-login';
+              results.push(summary);
+
+              writeLogLine(logStream, {
+                event: 'range_skipped_post_2024_not_on_current_login',
+                dealerCode,
+                reportId: report.id,
+                report: report.name,
+                rangeIndex,
+                startIso: range.startIso,
+                endIso: range.endIso
+              });
+              continue;
+            }
+
+            const existingRangeCheck = await shouldSkipExistingDealerReportRange({
+              account,
+              report,
+              dealerCode,
+              range,
+              skipExisting: skipExistingDealerReports
+            });
+
+            if (existingRangeCheck.skip) {
+              const summary = summarizeResult({
+                dealerCode,
+                dealerIndex,
+                report,
+                reportIndex,
+                range,
+                rangeIndex,
+                result: {
+                  status: 'skipped',
+                  dbAction: 'skipped_existing_dealer_report_range_data',
+                  rowCount: existingRangeCheck.rowCount,
+                  durationMs: 0
+                }
+              });
+              summary.tableName = existingRangeCheck.tableName;
+              summary.dealerColumn = existingRangeCheck.dealerColumn;
+              summary.dateColumn = existingRangeCheck.dateColumn;
+              summary.reason = existingRangeCheck.reason;
+              results.push(summary);
+
+              await writeJson(stateFile, {
+                ...initialState,
+                status: 'running',
+                updatedAt: new Date().toISOString(),
+                currentDealerCode: dealerCode,
+                currentDealerIndex: dealerIndex,
+                currentReportId: report.id,
+                currentReportIndex: reportIndex,
+                currentRangeIndex: rangeIndex,
+                lastCompletedReportId: report.id,
+                lastCompletedRangeIndex: rangeIndex,
+                nextDealerIndex: rangeIndex + 1 >= ranges.length && reportIndex + 1 >= reports.length
+                  ? dealerIndex + 1
+                  : dealerIndex,
+                nextReportIndex: rangeIndex + 1 >= ranges.length ? reportIndex + 1 : reportIndex,
+                nextRangeIndex: rangeIndex + 1 >= ranges.length ? 0 : rangeIndex + 1,
+                completedWorkItemCount: results.length,
+                latestResult: summary
+              });
+
+              writeLogLine(logStream, {
+                event: 'range_skipped_existing_data',
+                dealerCode,
+                reportId: report.id,
+                report: report.name,
+                rangeIndex,
+                startIso: range.startIso,
+                endIso: range.endIso,
+                tableName: existingRangeCheck.tableName,
+                dealerColumn: existingRangeCheck.dealerColumn,
+                dateColumn: existingRangeCheck.dateColumn,
+                existingRowCount: existingRangeCheck.rowCount
+              });
+              continue;
+            }
+
             const currentState = {
               ...initialState,
               updatedAt: new Date().toISOString(),
@@ -735,12 +919,47 @@ export async function runGdmsReportFirstHistoricalBackfill({
               endIso: range.endIso
             });
 
+            let rangeAccount = account;
+            if (accountId === 'am-platinum') {
+              const ensured = await ensureAmPlatinumSessionForRange({
+                session,
+                activeAccountKey,
+                activeAccount,
+                activeDealerCode,
+                dealerCode,
+                range,
+                serviceName
+              });
+              session = ensured.session;
+              activeAccountKey = ensured.activeAccountKey;
+              activeAccount = ensured.activeAccount;
+              activeDealerCode = ensured.activeDealerCode;
+              rangeAccount = ensured.activeAccount;
+              if (ensured.accountSwitched) {
+                openReportId = null;
+              }
+
+              writeLogLine(logStream, {
+                event: 'am_platinum_login_selected',
+                dealerCode,
+                reportId: report.id,
+                rangeIndex,
+                userId: rangeAccount.userId,
+                startIso: range.startIso,
+                endIso: range.endIso
+              });
+            }
+
+            const storedDealerCode = accountId === 'am-platinum'
+              ? resolveAmPlatinumSourceDealerCode(dealerCode, range)
+              : dealerCode;
+
             const result = optimizedFullRangeNoSearch
               ? await runOptimizedHistoricalReportRange({
                   page: session.page,
-                  account,
+                  account: rangeAccount,
                   report,
-                  dealerCode,
+                  dealerCode: storedDealerCode,
                   range,
                   skipNavigation: openReportId === report.id,
                   pageSize: optimizedPageSize,
@@ -748,9 +967,9 @@ export async function runGdmsReportFirstHistoricalBackfill({
                 })
               : await runHistoricalReportRange({
                   page: session.page,
-                  account,
+                  account: rangeAccount,
                 report,
-                dealerCode,
+                dealerCode: storedDealerCode,
                 range,
                 skipNavigation: openReportId === report.id,
                 pageSize: optimizedPageSize
@@ -827,13 +1046,31 @@ export async function runGdmsReportFirstHistoricalBackfill({
 
             if (result.browserClosed) {
               openReportId = null;
-              logger.warn(`${account.logPrefix} report-first historical browser closed; relogging for same dealer`, {
+              logger.warn(`${rangeAccount.logPrefix} report-first historical browser closed; relogging for same dealer`, {
                 dealerCode,
                 reportId: report.id,
                 range: `${range.startIso} to ${range.endIso}`
               });
               await session?.close?.().catch(() => {});
-              session = await loginForDealer(account, dealerCode);
+              session = null;
+              activeAccountKey = null;
+              if (accountId === 'am-platinum') {
+                const ensured = await ensureAmPlatinumSessionForRange({
+                  session,
+                  activeAccountKey,
+                  activeAccount,
+                  activeDealerCode,
+                  dealerCode,
+                  range,
+                  serviceName
+                });
+                session = ensured.session;
+                activeAccountKey = ensured.activeAccountKey;
+                activeAccount = ensured.activeAccount;
+                activeDealerCode = ensured.activeDealerCode;
+              } else {
+                session = await loginForDealer(account, dealerCode);
+              }
             } else {
               openReportId = report.id;
             }

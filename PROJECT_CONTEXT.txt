@@ -1941,7 +1941,7 @@ Start OTP webhook server:
   - N5211: PLATINUM AUTOMOBILES PVT LTD (main dealer).
   - N6824: AM HYUNDAI.
   - N6828: AM HYUNDAI.
-- .env now uses AM_PLATINUM_DEALER_CODES=N5211,N6824,N6828 so the AM Platinum GDMS runner can process all three dealers through the shared dealer-change flow.
+- .env now uses AM_PLATINUM_DEALER_CODES=N5211,N6250,N6828 (Rajouri stored as N6250; MIS12345 still fetches legacy N6824 pre-cutoff).
 
 2026-06-05 AM Platinum historical backfill configuration:
 - PM2 app am-platinum-historical-backfill is configured for dealer-first historical fetching from 2021-01-01 through 2026-06-05.
@@ -2227,3 +2227,107 @@ Start OTP webhook server:
 - Likely reason: These are "snapshot" reports that don't store historical periods; they only show current month data in the DMS system itself.
 - Started new historical backfill (am-platinum-backfill-visible, headless=false) for all dealers (N5211, N6824, N6828) to see if historical runs fetch any dated data for VAS tables.
 - Backfill in progress; will monitor completion to verify if VAS tables get historical dates or remain current-month-only.
+
+2026-06-12 HMIL Warranty multi-dealer full-refresh cron:
+- Added dedicated scheduler: src/cron/hmil-warranty-scheduler.js
+- Report modules: src/reports/hmil-warranty-reports.js
+- Runs independently from hmil-cron-job and am-platinum-cron-job.
+- Dual login sequence:
+  1. HMIL_USER_ID (primary, e.g. sahiltech)
+  2. HMIL_SECONDARY_USER_ID (secondary, e.g. MIS5216)
+- Dealer lists are per account (see 2026-06-12 dealer-change fix section below).
+- Per dealer execution order:
+  1. MIS -> Claim -> Warranty Claim List
+  2. Service -> Claim -> Warranty Claim -> Claim YTP
+- Date range for both historical and scheduled daily runs:
+  HMIL_WARRANTY_HISTORICAL_START_DATE (default 2025-01-01) through today.
+- Page size: HMIL_WARRANTY_PAGE_SIZE (default 300).
+- Saved relational tables:
+  - hyundai_warranty_claim_list
+  - hyundai_warranty_claim_ytp
+- Row metadata columns:
+  - source_login_id
+  - source_dealer_code
+- Full-refresh policy:
+  - Before every historical or scheduled run, both warranty tables are truncated (DELETE ALL / TRUNCATE RESTART IDENTITY).
+  - Then all dealers and both logins insert fresh rows.
+  - If a run fails after truncate, tables may be partially empty until the next successful run.
+- OTP modes:
+  - historical: HMIL_WARRANTY_HISTORICAL_OTP_PROVIDER=manual (enter OTP in terminal for each login)
+  - scheduled daily cron: OTP_PROVIDER=webhook (uses existing kia-otp-webhook + ngrok stack)
+- Commands:
+  - npm run hmil:warranty:test
+  - npm run hmil:warranty:historical
+  - npm run hmil:warranty:once
+  - npm run hmil:warranty:cron
+- Health file: logs/hmil-warranty-health.json
+- Required env:
+  - HMIL_USER_ID / HMIL_PASSWORD
+  - HMIL_SECONDARY_USER_ID / HMIL_SECONDARY_PASSWORD
+  - HMIL_DEALER_CODES
+  - HMIL_WARRANTY_HISTORICAL_START_DATE=2025-01-01
+  - HMIL_WARRANTY_PAGE_SIZE=300
+  - HMIL_WARRANTY_CRON_SCHEDULE=0 18 * * *
+  - HMIL_WARRANTY_CRON_TIMEZONE=Asia/Kolkata
+  - DATABASE_URL (required for truncate + relational insert)
+  - OTP_PROVIDER=webhook for scheduled runs
+- Historical run tips:
+  - Set HEADLESS=false for visible browser during manual OTP.
+  - Stop hmil-cron-job / am-platinum-cron-job during historical if GDMS OTP lock collisions occur.
+  - After historical completes, restore OTP_PROVIDER=webhook.
+- PM2 TODO (not added to ecosystem.config.cjs yet; add on production cron machine):
+  {
+    name: 'hmil-warranty-cron-job',
+    script: './src/cron/hmil-warranty-scheduler.js',
+    args: '--scheduler',
+    instances: 1,
+    exec_mode: 'fork',
+    autorestart: true,
+    out_file: './logs/pm2-hmil-warranty-out.log',
+    error_file: './logs/pm2-hmil-warranty-error.log',
+    env: { NODE_ENV: 'production', LOG_SERVICE_NAME: 'hmil-warranty-cron-job' }
+  }
+  Start with: pm2 start ecosystem.config.cjs --only hmil-warranty-cron-job
+
+2026-06-12 HMIL Warranty dealer-change and Claim YTP fixes:
+- Per-account dealer lists:
+  - sahiltech / hmil-warranty-primary uses HMIL_DEALER_CODES
+  - MIS5216 / hmil-warranty-secondary uses HMIL_WARRANTY_SECONDARY_DEALER_CODES
+    (default N5216,N6844,N6845,N6846,N6847,N6848 for Jammu Auto Mart)
+- HMIL dealer change skips sidebar nav_cmm menu:
+  - src/navigation/dealer-change.js resets to /cmm/cmmd/selectHome.dms when leaving a report page
+  - Then opens /cmm/cmmh/selectDealerChangeMain.dms directly
+  - Menu navigation is fallback only if direct URL fails
+- Claim YTP date flow (hyundai-warranty-claim-ytp):
+  - Start date on #sRoFromDate (widget fill)
+  - End date on #sRoToDate via Kendo calendar UI click (pickKendoDateViaCalendar in report-actions.js)
+  - ~1.5-2s delay before and after page size 300 selection
+- Scheduler keeps one browser session per login until all dealers for that account finish.
+- Dealer-change failures log currentUrl and loginFormVisible to distinguish nav failure from logout.
+
+2026-06-13 AM Platinum dual-account historical backfill:
+- DMS data visibility differs by login user and dealer era:
+  - MIS12345 (AM_PLATINUM_HISTORICAL_USER_ID): N5211, N6824 fetch (Rajouri), N6828 — historical before cutoff
+  - MIS1988 (AM_PLATINUM_USER_ID): Rajouri from cutoff onward — dealer ACTIVE resolves to N6250
+- Rajouri canonical stored dealer code: N6250 (legacy portal fetch code N6824 on MIS12345 only).
+- Cutoff: AM_PLATINUM_HISTORICAL_CUTOFF_DATE=2024-03-01 (non-Rajouri dealers switch at cutoff)
+- Rajouri MIS1988 start: AM_PLATINUM_RAJOURI_MIS1988_START_DATE=2024-01-01 (all Rajouri 2024+ uses MIS1988, never MIS12345)
+- Stored dealer code: AM_PLATINUM_POST_2024_DEALER_CODE=N6250 (always stored for Rajouri)
+- Dealer list: AM_PLATINUM_DEALER_CODES=N5211,N6250,N6828
+- Shared resolver: src/accounts/am-platinum-accounts.js
+  - createAmPlatinumAccount('current' | 'historical')
+  - resolveAmPlatinumAccountKeyForRange(range, targetDealer) — Rajouri from 2024-01-01 → current/MIS1988
+  - resolveAmPlatinumDealerForFetch(targetDealer, range) — Rajouri current → 'active'; historical → N6824 fetch
+  - resolveAmPlatinumSourceDealerCode(targetDealer, range) — Rajouri always → N6250
+  - resolveAmPlatinumStoredDealerCodesForSkipCheck — checks N6250 + legacy N6824
+  - shouldSkipAmPlatinumRangeForDealer — skips N5211/N6828 on MIS1988 (post-cutoff)
+  - applyHistoricalRunOptions(account)
+- DB migration script: scripts/migrate-am-platinum-rajouri-dealer-code.js (N6824 → N6250 all am_platinum_* rows)
+- Separate session cookies:
+  - ./storage/am-platinum-dms-state.json (MIS1988)
+  - ./storage/am-platinum-historical-dms-state.json (MIS12345)
+- Historical scripts re-login when crossing the cutoff:
+  - scripts/recover-am-platinum-operation-wise.js
+  - scripts/hmil-report-first-historical-runner.js (accountId am-platinum only)
+- Scheduled am-platinum-cron-job unchanged; uses AM_PLATINUM_USER_ID (MIS1988) only.
+- Expect two manual OTP prompts when a run spans both sides of 2024-03-01.

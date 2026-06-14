@@ -59,6 +59,8 @@ export async function withDirectoryLock(lockDir, fn, {
 
   await fs.mkdir(path.dirname(lockDir), { recursive: true });
 
+  let lastWaitLogAt = 0;
+
   while (Date.now() - startedAt < timeoutMs) {
     try {
       await fs.mkdir(lockDir);
@@ -73,6 +75,16 @@ export async function withDirectoryLock(lockDir, fn, {
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
       await removeStaleLock(lockDir, staleMs, label);
+
+      const now = Date.now();
+      if (now - lastWaitLogAt >= 10000) {
+        lastWaitLogAt = now;
+        const waitedSec = Math.round((now - startedAt) / 1000);
+        const message = `Waiting for ${label} lock (${waitedSec}s)... Close the other GDMS login window or stop the other run.`;
+        logger.warn(message, { label, lockDir, waitedSec });
+        process.stdout.write(`${message}\n`);
+      }
+
       await sleep(pollMs);
     }
   }

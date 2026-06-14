@@ -4,12 +4,12 @@ import { getOtpFromFile } from './file.js';
 import { getOtpFromWebhook } from './webhook-client.js';
 import { getOtpFromTelegram } from '../telegram/otp-provider.js';
 
-export async function getOtp({ notBefore, purpose } = {}) {
-  switch (config.otpProvider) {
+export async function getOtp({ notBefore, purpose, provider = config.otpProvider } = {}) {
+  switch (provider) {
     case 'telegram':
       return getOtpFromTelegram({ notBefore, timeoutMs: config.otpTimeoutMs });
     case 'manual':
-      return getOtpManual({ timeoutMs: config.otpTimeoutMs });
+      return getOtpManual({ timeoutMs: config.otpTimeoutMs, purpose });
     case 'file':
       return getOtpFromFile({
         filePath: config.otpFilePath,
@@ -25,6 +25,6 @@ export async function getOtp({ notBefore, purpose } = {}) {
         purpose
       });
     default:
-      throw new Error(`Unknown OTP_PROVIDER: ${config.otpProvider}`);
+      throw new Error(`Unknown OTP provider: ${provider}`);
   }
 }

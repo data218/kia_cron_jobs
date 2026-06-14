@@ -190,3 +190,54 @@ npm run reports
 Add new reports to [src/reports/index.js](C:/Users/HP/Downloads/Kia_Cron_Job/src/reports/index.js). Each report receives the existing logged-in `page`, so future downloads do not need a new OTP/login.
 
 For all manual setup steps, read [SETUP_GUIDE.txt](C:/Users/HP/Downloads/Kia_Cron_Job/SETUP_GUIDE.txt).
+
+## Hyundai Warranty Reports
+
+The dedicated Hyundai warranty scheduler runs independently from the normal HMIL scheduler. It logs in sequentially with the primary (`HMIL_USER_ID`) and secondary (`HMIL_SECONDARY_USER_ID`) HMIL accounts, loops every dealer in `HMIL_DEALER_CODES`, and full-refreshes both warranty tables on every run.
+
+Execution order per dealer:
+
+1. `MIS -> Claim -> Warranty Claim List`
+2. `Service -> Claim -> Warranty Claim -> Claim YTP`
+
+Both reports use page size 300, date range `HMIL_WARRANTY_HISTORICAL_START_DATE` (default `2025-01-01`) through today, and save rows with `source_login_id` plus `source_dealer_code`.
+
+Before each run (historical and daily), all rows are deleted from:
+
+- `hyundai_warranty_claim_list`
+- `hyundai_warranty_claim_ytp`
+
+Required environment:
+
+```env
+OTP_PROVIDER=webhook
+DATABASE_URL=
+
+HMIL_USER_ID=sahiltech
+HMIL_PASSWORD=
+HMIL_SECONDARY_USER_ID=MIS5216
+HMIL_SECONDARY_PASSWORD=
+HMIL_DEALER_CODES=N5216,N6844,N6845,N6846,N6847,N6848
+
+HMIL_WARRANTY_CRON_SCHEDULE=0 18 * * *
+HMIL_WARRANTY_CRON_TIMEZONE=Asia/Kolkata
+HMIL_WARRANTY_HISTORICAL_OTP_PROVIDER=manual
+HMIL_WARRANTY_HISTORICAL_START_DATE=2025-01-01
+HMIL_WARRANTY_PAGE_SIZE=300
+```
+
+Commands:
+
+```powershell
+npm run hmil:warranty:test
+npm run hmil:warranty:historical
+npm run hmil:warranty:once
+npm run hmil:warranty:cron
+```
+
+Modes:
+
+- `historical`: manual OTP, visible browser recommended (`HEADLESS=false`), one-time backfill for all dealers and both logins
+- `scheduled`: webhook OTP, same date range and dealer loop, used by daily cron at 6 PM IST
+
+PM2 is not configured in `ecosystem.config.cjs` yet. On the production cron machine, add a `hmil-warranty-cron-job` PM2 app that runs `src/cron/hmil-warranty-scheduler.js --scheduler`. See `PROJECT_CONTEXT.txt` for the exact block.

@@ -182,6 +182,10 @@ export async function runOptimizedHistoricalBackfill({
     ...baseAccount,
     forceLogin: envBool(`${envPrefix}_HISTORICAL_FORCE_LOGIN`, baseAccount.forceLogin),
     headless: envBool(`${envPrefix}_HISTORICAL_HEADLESS`, defaultHeadless),
+    otpProvider: env(
+      `${envPrefix}_HISTORICAL_OTP_PROVIDER`,
+      accountId === 'am-platinum' ? config.amPlatinumHistoricalOtpProvider : 'manual'
+    ),
     serviceName
   };
   const reports = selectedReports({ account, envPrefix });

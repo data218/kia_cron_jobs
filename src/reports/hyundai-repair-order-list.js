@@ -8,7 +8,7 @@ import { formatDateForPortal, getReportDateOverrideRange, parseIsoLocalDate, toI
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
 import { openHmilRepairOrderListReport } from '../navigation/hmil-menu.js';
-import { selectKendoPagerSize, selectKendoPagerSizeByVisibleClick, waitForKendoGridIdle } from './grid.js';
+import { selectKendoPagerSizeWithPreferredFallback, waitForKendoGridIdle } from './grid.js';
 import { exportAllGridPagesToFiles, mergeExcelFiles } from './paged-export.js';
 import { addSourceDealerCodeToDataset } from './report-metadata.js';
 import { clickSearch, fillDate } from './report-actions.js';
@@ -141,11 +141,13 @@ export async function downloadHyundaiRepairOrderListReport(
     }
   }
 
-  const selectPagerSize = optimizedNoSearch ? selectKendoPagerSizeByVisibleClick : selectKendoPagerSize;
-  const selectedPageSize = await selectPagerSize(
+  const selectedPageSize = await selectKendoPagerSizeWithPreferredFallback(
     reportContext,
-    suppliedPageSize ?? account.repairOrderPageSize ?? (optimizedNoSearch ? '1000' : '300'),
-    { timeout: optimizedNoSearch ? 300000 : 45000 }
+    ['1000', '500', '300'],
+    {
+      visibleClick: optimizedNoSearch,
+      timeout: optimizedNoSearch ? 300000 : 45000
+    }
   );
   await waitForKendoGridIdle(reportContext, { timeout: optimizedNoSearch ? 300000 : 120000 });
 

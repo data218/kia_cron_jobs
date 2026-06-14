@@ -37,7 +37,7 @@ function normalizeRowValue(value) {
 function rowSignature(row) {
   const entries = Object.entries(row ?? {})
     .map(([key, value]) => [normalizeHeader(key), normalizeRowValue(value)])
-    .filter(([key, value]) => key && value !== '')
+    .filter(([key, value]) => key && value !== '' && key.toLowerCase() !== 'source_login_id')
     .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
 
   return JSON.stringify(entries);

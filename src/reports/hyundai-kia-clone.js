@@ -12,8 +12,8 @@ import {
 } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
-import { selectKendoPagerSize, selectKendoPagerSizeByVisibleClick, waitForKendoGridIdle } from './grid.js';
-import { exportAllGridPagesToFiles, getPagerState, mergeExcelFiles } from './paged-export.js';
+import { selectKendoPagerSizeWithPreferredFallback, waitForKendoGridIdle } from './grid.js';
+import { exportAllGridPagesToFiles, getPagerState, gridHasNoExportableData, mergeExcelFiles } from './paged-export.js';
 import { addMetadataToDataset, addSourceDealerCodeToDataset } from './report-metadata.js';
 import {
   clickSearch,
@@ -176,21 +176,14 @@ async function fillStartDateOnly(context, report, range) {
 }
 
 async function selectPagerSizeWithFallback(context, size, reportId, { visibleClick = false } = {}) {
-  const selectPagerSize = visibleClick ? selectKendoPagerSizeByVisibleClick : selectKendoPagerSize;
-  try {
-    return await selectPagerSize(context, size, { timeout: visibleClick ? 300000 : 45000 });
-  } catch (error) {
-    if (String(size) === '300') {
-      throw error;
+  return selectKendoPagerSizeWithPreferredFallback(
+    context,
+    ['1000', '500', '300'],
+    {
+      visibleClick,
+      timeout: visibleClick ? 300000 : 45000
     }
-
-    logger.warn('Hyundai mirrored report page size selection failed; falling back to 300', {
-      reportId,
-      requestedSize: size,
-      error: error.message
-    });
-    return await selectPagerSize(context, '300', { timeout: visibleClick ? 300000 : 45000 });
-  }
+  );
 }
 
 async function getLoopValues(context, report) {
@@ -321,9 +314,44 @@ export function createHyundaiKiaCloneReport(report) {
           }
         }
 
+        const requestedPageSize = suppliedPageSize ?? report.pageSize ?? (optimizedNoSearch ? '1000' : '300');
+        const emptyCheck = optimizedNoSearch
+          ? { noData: false }
+          : await gridHasNoExportableData(reportContext, requestedPageSize);
+
+        if (emptyCheck.noData) {
+          logger.info(`${account.logPrefix} mirrored report month has no data; skipping pager size and export`, {
+            reportId: report.id,
+            dealerCode,
+            loopValue,
+            range: `${range.startIso} to ${range.endIso}`,
+            totalItems: emptyCheck.totalItems,
+            visibleRowCount: emptyCheck.visibleRowCount,
+            hasNoDataMessage: emptyCheck.hasNoDataMessage
+          });
+
+          const emptyResult = {
+            action: 'no_rows',
+            rowCount: 0,
+            headerCount: 0,
+            addedRowCount: 0,
+            duplicateRowCount: 0,
+            relationalInsertedRowCount: 0,
+            relationalDuplicateRowCount: 0
+          };
+
+          results.push({
+            dbResult: emptyResult,
+            rowCount: 0,
+            headerCount: 0,
+            pageCount: 0
+          });
+          continue;
+        }
+
         const selectedPageSize = await selectPagerSizeWithFallback(
           reportContext,
-          suppliedPageSize ?? report.pageSize ?? (optimizedNoSearch ? '1000' : '300'),
+          requestedPageSize,
           report.id,
           { visibleClick: true }
         );

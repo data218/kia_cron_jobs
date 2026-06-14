@@ -14,13 +14,17 @@ export function addDealerCodeToDataset(merged, dealerCode) {
 
 export function addSourceDealerCodeToDataset(merged, dealerCode) {
   const value = String(dealerCode || 'active').trim().toUpperCase();
-  const header = 'source_dealer_code';
-  const headers = merged.headers.includes(header)
-    ? merged.headers
-    : [header, ...merged.headers];
+  const headers = [...merged.headers];
+  for (const header of ['source_dealer_code', 'dealer_code']) {
+    if (!headers.includes(header)) {
+      headers.unshift(header);
+    }
+  }
+
   const rows = merged.rows.map(row => ({
     ...row,
-    [header]: value
+    source_dealer_code: value,
+    dealer_code: value
   }));
 
   return { headers, rows };

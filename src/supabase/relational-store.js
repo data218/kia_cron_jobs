@@ -1,6 +1,12 @@
 import crypto from 'node:crypto';
 import { logger } from '../utils/logger.js';
 import { quoteIdentifier, withPostgresClient } from './postgres.js';
+import {
+  NON_BUSINESS_HASH_COLUMNS,
+  WARRANTY_TABLES,
+  identityGroupsForTable,
+  resolveBusinessIdentityKey
+} from './row-identity.js';
 
 const IMPORTANT_INDEX_COLUMNS = new Set([
   'bill_date',
@@ -19,209 +25,12 @@ const IMPORTANT_INDEX_COLUMNS = new Set([
   'uploaded_at'
 ]);
 const RESERVED_COLUMNS = new Set(['id', 'row_hash', 'uploaded_at']);
-const NON_BUSINESS_HASH_COLUMNS = new Set([
-  'id',
-  'row_hash',
-  'uploaded_at',
-  's_no',
-  'sno',
-  'sr_no',
-  'serial_no',
-  'sl_no',
-  'no'
-]);
-const TABLE_IDENTITY_COLUMNS = {
-  ro_billing_report: [
-    ['dealer_code', 'bill_no'],
-    ['bill_no'],
-    ['dealer_code', 'ro_no', 'bill_date'],
-    ['ro_no', 'bill_date', 'vin']
-  ],
-  kia_call_center_complaints: [
-    ['complaint_no', 'sr_no'],
-    ['complaint_no']
-  ],
-  open_ro_yearly: [
-    ['dealer_code', 'r_o_no'],
-    ['r_o_no'],
-    ['vin', 'ro_date', 'work_type']
-  ],
-  hyundai_repair_order_list: [
-    ['dealer_code', 'r_o_no'],
-    ['r_o_no'],
-    ['vin', 'ro_date', 'work_type']
-  ],
-  hyundai_ro_billing_report: [
-    ['source_dealer_code', 'bill_no'],
-    ['dealer_code', 'bill_no'],
-    ['bill_no'],
-    ['source_dealer_code', 'ro_no', 'bill_date'],
-    ['dealer_code', 'ro_no', 'bill_date'],
-    ['ro_no', 'bill_date', 'vin']
-  ],
-  hyundai_call_center_complaints: [
-    ['source_dealer_code', 'complaint_no', 'sr_no'],
-    ['complaint_no', 'sr_no'],
-    ['complaint_no']
-  ],
-  hyundai_customer_complaint_list: [
-    ['source_dealer_code', 'complaint_no', 'sr_no'],
-    ['source_dealer_code', 'complaint_no'],
-    ['complaint_no', 'sr_no'],
-    ['complaint_no']
-  ],
-  hyundai_open_ro_yearly: [
-    ['source_dealer_code', 'r_o_no'],
-    ['dealer_code', 'r_o_no'],
-    ['r_o_no'],
-    ['vin', 'ro_date', 'work_type']
-  ],
-  hyundai_demo_job_cards: [
-    ['source_dealer_code', 'r_o_no'],
-    ['dealer_code', 'r_o_no'],
-    ['r_o_no'],
-    ['vin', 'ro_date', 'work_type']
-  ],
-  hyundai_demo_car_list: [
-    ['source_dealer_code', 'vin'],
-    ['vin'],
-    ['vin_no'],
-    ['chassis_no'],
-    ['vin_chassis_no'],
-    ['vin_chasis_no'],
-    ['invoice_no', 'vin'],
-    ['invoice_no', 'chassis_no'],
-    ['purchase_invoice_no']
-  ],
-  hyundai_service_appointment: [
-    ['source_dealer_code', 'a_t_no'],
-    ['source_dealer_code', 'appointment_no'],
-    ['source_dealer_code', 'booking_no'],
-    ['dealer_code', 'a_t_no'],
-    ['dealer_code', 'appointment_no'],
-    ['dealer_code', 'booking_no'],
-    ['appointment_no'],
-    ['booking_no'],
-    ['source_dealer_code', 'vin', 'appointment_date', 'appointment_time'],
-    ['source_dealer_code', 'vin_no', 'appointment_date', 'appointment_time'],
-    ['source_dealer_code', 'vehicle_reg_no', 'appointment_date', 'appointment_time'],
-    ['source_dealer_code', 'reg_no', 'appointment_date', 'appointment_time'],
-    ['vin', 'appointment_date', 'appointment_time'],
-    ['vin_no', 'appointment_date', 'appointment_time'],
-    ['vehicle_reg_no', 'appointment_date', 'appointment_time'],
-    ['reg_no', 'appointment_date', 'appointment_time']
-  ],
-  hyundai_psf_yearly: [
-    ['source_dealer_code', 'ro_no'],
-    ['ro_no'],
-    ['vin', 'ro_date', 'visit_type']
-  ],
-  hyundai_ew_report: [
-    ['source_dealer_code', 'certi_no'],
-    ['certi_no'],
-    ['vin', 'reg_date', 'scheme_desc']
-  ],
-  hyundai_mcp_report: [
-    ['source_dealer_code', 'cert_no'],
-    ['source_dealer_code', 'vin', 'package_purchase_date', 'package_name'],
-    ['dealer_code', 'cert_no'],
-    ['dealer_code', 'vin', 'package_purchase_date', 'package_name'],
-    ['cert_no'],
-    ['vin', 'package_purchase_date', 'package_name']
-  ],
-  hyundai_adv_wise_lubricants_vas: [
-    ['source_dealer_code', 'gst_invoice_no', 'op_part_code', 'vin_no'],
-    ['source_dealer_code', 'invoice_no', 'op_part_code', 'vin_no'],
-    ['source_dealer_code', 'ro_no', 'op_part_code', 'vin_no'],
-    ['gst_invoice_no', 'op_part_code', 'vin_no'],
-    ['invoice_no', 'op_part_code', 'vin_no'],
-    ['ro_no', 'op_part_code', 'vin_no']
-  ],
-  hyundai_operation_wise_analysis_report: [
-    ['report_type', 'source_dealer_code', 'op_part_code'],
-    ['report_type', 'source_dealer_code', 'report_period_start', 'report_period_end', 'op_part_code'],
-    ['report_type', 'source_dealer_code', 'report_month', 'op_part_code']
-  ],
-  trust_package: [
-    ['trust_package_section', 'source_dealer_code', 'cert_no'],
-    ['trust_package_section', 'source_dealer_code', 'certi_no'],
-    ['trust_package_section', 'source_dealer_code', 'certificate_no'],
-    ['trust_package_section', 'source_dealer_code', 'scheme_no', 'vin'],
-    ['trust_package_section', 'source_dealer_code', 'vin', 'reg_date'],
-    ['trust_package_section', 'cert_no'],
-    ['trust_package_section', 'certi_no'],
-    ['trust_package_section', 'certificate_no'],
-    ['trust_package_section', 'vin', 'reg_date']
-  ],
-  demo_job_cards: [
-    ['dealer_code', 'r_o_no'],
-    ['r_o_no'],
-    ['vin', 'ro_date', 'work_type']
-  ],
-  demo_car_list: [
-    ['vin'],
-    ['vin_no'],
-    ['chassis_no'],
-    ['vin_chassis_no'],
-    ['vin_chasis_no'],
-    ['invoice_no', 'vin'],
-    ['invoice_no', 'chassis_no'],
-    ['purchase_invoice_no']
-  ],
-  service_appointment: [
-    ['dealer_code', 'a_t_no'],
-    ['dealer_code', 'a_t_date_time', 'vin'],
-    ['dealer_code', 'a_t_date_time', 'reg_no'],
-    ['dealer_code', 'appointment_no'],
-    ['dealer_code', 'booking_no'],
-    ['appointment_no'],
-    ['booking_no'],
-    ['dealer_code', 'vin', 'appointment_date', 'appointment_time'],
-    ['dealer_code', 'vin_no', 'appointment_date', 'appointment_time'],
-    ['dealer_code', 'vehicle_reg_no', 'appointment_date', 'appointment_time'],
-    ['dealer_code', 'reg_no', 'appointment_date', 'appointment_time'],
-    ['vin', 'appointment_date', 'appointment_time'],
-    ['vin_no', 'appointment_date', 'appointment_time'],
-    ['vehicle_reg_no', 'appointment_date', 'appointment_time'],
-    ['reg_no', 'appointment_date', 'appointment_time'],
-    ['mobile_no', 'appointment_date', 'customer_name'],
-    ['mobile_no', 'appointement_date', 'customer_name'],
-    ['dealer_code', 'customer_name', 'booking_date']
-  ],
-  psf_yearly: [
-    ['ro_no'],
-    ['vin', 'ro_date', 'visit_type']
-  ],
-  ew_report: [
-    ['certi_no'],
-    ['vin', 'reg_date', 'scheme_desc']
-  ],
-  mcp_report: [
-    ['dealer_code', 'cert_no'],
-    ['dealer_code', 'vin', 'package_purchase_date', 'package_name'],
-    ['cert_no'],
-    ['vin', 'package_purchase_date', 'package_name']
-  ],
-  rsa_report: [
-    ['invoice_no', 'vin_chasis_no'],
-    ['invoice_no'],
-    ['vin_chasis_no', 'invoice_date', 'policy_name']
-  ],
-  adv_wise_lubricants_vas: [
-    ['gst_invoice_no', 'op_part_code', 'vin_no'],
-    ['invoice_no', 'op_part_code', 'vin_no'],
-    ['ro_no', 'op_part_code', 'vin_no'],
-    ['gst_invoice_no', 'labour_code', 'vin_no'],
-    ['gst_invoice_no', 'part_no', 'vin_no']
-  ],
-  operation_wise_analysis_report: [
-    ['report_type', 'report_period_start', 'report_period_end', 'dealer_code', 'op_part_code'],
-    ['report_type', 'report_month', 'dealer_code', 'op_part_code']
-  ],
-  operation_wise_analysis_advisor_report: [
-    ['report_type', 'date_type', 'service_advisor', 'report_period_start', 'report_period_end', 'dealer_code', 'op_part_code'],
-    ['report_type', 'service_advisor', 'report_month', 'dealer_code', 'op_part_code']
-  ]
+const IDENTITY_COLUMN_ALIASES = {
+  claim_no: ['claim_no', 'claim_number', 'warranty_claim_no'],
+  r_o_no: ['r_o_no', 'ro_no'],
+  claim_type: ['claim_type', 'warranty_claim_type'],
+  claim_date: ['claim_date', 'warranty_claim_date'],
+  ro_date: ['ro_date', 'r_o_date']
 };
 
 function normalizeSqlName(value, fallback = 'column') {
@@ -418,7 +227,8 @@ function identityHashEntries(tableName, columns, normalizedValues) {
   for (const group of identityGroups) {
     const entries = group
       .map(columnName => {
-        const index = columns.findIndex(column => column.name === columnName);
+        const aliases = IDENTITY_COLUMN_ALIASES[columnName] ?? [columnName];
+        const index = columns.findIndex(column => aliases.includes(column.name));
         return index >= 0 ? [columnName, normalizedValues[index]] : null;
       })
       .filter(entry => entry && !isEmpty(entry[1]));
@@ -431,23 +241,23 @@ function identityHashEntries(tableName, columns, normalizedValues) {
   return null;
 }
 
-function identityGroupsForTable(tableName) {
-  if (TABLE_IDENTITY_COLUMNS[tableName]) {
-    return TABLE_IDENTITY_COLUMNS[tableName];
-  }
-
-  if (tableName.startsWith('am_platinum_')) {
-    const suffix = tableName.slice('am_platinum_'.length);
-    return TABLE_IDENTITY_COLUMNS[`hyundai_${suffix}`] ??
-      TABLE_IDENTITY_COLUMNS[suffix] ??
-      [];
-  }
-
-  return [];
+function buildBusinessIdentityKey(tableName, columns, normalizedValues) {
+  const data = Object.fromEntries(
+    columns.map((column, index) => [column.name, normalizedValues[index]])
+  );
+  return resolveBusinessIdentityKey(tableName, data);
 }
 
 export function rowSignature(row) {
   return hashEntries(normalizedRowEntries(row));
+}
+
+export function reportRowSignature(sheetName, row) {
+  const headers = Object.keys(row ?? {});
+  const rows = [row ?? {}];
+  const columns = buildColumns(headers, rows);
+  const normalizedValues = columns.map(column => normalizeValue(row?.[column.header], column));
+  return rowSignatureFromNormalizedValues(columns, normalizedValues, normalizeTableName(sheetName));
 }
 
 function rowSignatureFromNormalizedValues(columns, normalizedValues, tableName = null) {
@@ -511,7 +321,13 @@ function buildColumns(headers, rows) {
   }));
 }
 
+const ensuredTableSignatures = new Set();
+
 async function ensureReportTable(client, tableName, columns) {
+  const signature = `${tableName}:${columns.map(column => `${column.name}:${column.type}`).join('|')}`;
+  if (ensuredTableSignatures.has(signature)) {
+    return;
+  }
   const table = `public.${quoteIdentifier(tableName)}`;
   const columnSql = columns
     .map(column => `${quoteIdentifier(column.name)} ${columnSqlType(column.type)}`)
@@ -556,39 +372,87 @@ async function ensureReportTable(client, tableName, columns) {
       on ${table}(${quoteIdentifier(columnName)})
     `);
   }
+
+  if (WARRANTY_TABLES.has(tableName)) {
+    await client.query(`
+      alter table ${table}
+      add column if not exists business_identity_key text
+    `);
+    await client.query(`
+      create unique index if not exists ${quoteIdentifier(`idx_${tableName}_business_identity_key`)}
+      on ${table}(business_identity_key)
+      where business_identity_key is not null
+    `);
+  }
+
+  ensuredTableSignatures.add(signature);
 }
 
-async function insertBatch(client, tableName, columns, batch, uploadedAt, stats) {
-  if (!batch.length) return 0;
+function sqlParamCast(columnIndex, columnCount, usesBusinessKey, column) {
+  if (columnIndex === 0) return '::text';
+  if (usesBusinessKey && columnIndex === 1) return '::text';
+  if (columnIndex === columnCount - 1) return '::timestamptz';
+  if (column?.type === 'date') return '::date';
+  if (column?.type === 'numeric') return '::numeric';
+  return '::text';
+}
+
+function prepareBatchRows(tableName, columns, batch, uploadedAt, stats, usesBusinessKey) {
+  return batch.map(row => {
+    const normalizedValues = columns.map(column => normalizeValue(row[column.header], column, stats));
+    const rowHash = rowSignatureFromNormalizedValues(columns, normalizedValues, tableName);
+    const businessIdentityKey = usesBusinessKey
+      ? buildBusinessIdentityKey(tableName, columns, normalizedValues)
+      : null;
+    const rowValues = usesBusinessKey
+      ? [rowHash, businessIdentityKey, ...normalizedValues, uploadedAt]
+      : [rowHash, ...normalizedValues, uploadedAt];
+
+    return { rowHash, businessIdentityKey, rowValues };
+  });
+}
+
+async function upsertPreparedRows(client, tableName, columns, preparedRows, usesBusinessKey, conflictTarget) {
+  if (!preparedRows.length) {
+    return { insertedCount: 0, updatedCount: 0 };
+  }
 
   const table = `public.${quoteIdentifier(tableName)}`;
-  const insertColumns = ['row_hash', ...columns.map(column => column.name), 'uploaded_at'];
+  const insertColumns = usesBusinessKey
+    ? ['row_hash', 'business_identity_key', ...columns.map(column => column.name), 'uploaded_at']
+    : ['row_hash', ...columns.map(column => column.name), 'uploaded_at'];
   const values = [];
-  const placeholders = [];
+  const rowGroups = [];
+  let paramIndex = 1;
 
-  batch.forEach((row, rowIndex) => {
-    const normalizedValues = columns.map(column => normalizeValue(row[column.header], column, stats));
-    const rowValues = [
-      rowSignatureFromNormalizedValues(columns, normalizedValues, tableName),
-      ...normalizedValues,
-      uploadedAt
-    ];
-    const rowPlaceholders = rowValues.map((value, columnIndex) => {
+  for (const { rowValues } of preparedRows) {
+    const placeholders = rowValues.map((value, columnIndex) => {
+      const column = usesBusinessKey
+        ? (columnIndex <= 1 ? null : columns[columnIndex - 2])
+        : (columnIndex === 0 ? null : columns[columnIndex - 1]);
+      const placeholder = `$${paramIndex}${sqlParamCast(columnIndex, rowValues.length, usesBusinessKey, column)}`;
       values.push(value);
-      return `$${rowIndex * insertColumns.length + columnIndex + 1}`;
+      paramIndex += 1;
+      return placeholder;
     });
-    placeholders.push(`(${rowPlaceholders.join(', ')})`);
-  });
+    rowGroups.push(`(${placeholders.join(', ')})`);
+  }
 
   const updateSql = columns
     .map(column => `${quoteIdentifier(column.name)} = excluded.${quoteIdentifier(column.name)}`)
-    .join(',\n        ');
+    .join(',\n          ');
+
+  const businessKeyUpdate = usesBusinessKey
+    ? 'business_identity_key = excluded.business_identity_key,'
+    : '';
 
   const result = await client.query(
     `
       insert into ${table} (${insertColumns.map(quoteIdentifier).join(', ')})
-      values ${placeholders.join(',\n             ')}
-      on conflict (row_hash) do update set
+      values ${rowGroups.join(',\n        ')}
+      on conflict (${quoteIdentifier(conflictTarget)}) do update set
+        row_hash = excluded.row_hash,
+        ${businessKeyUpdate}
         ${updateSql},
         uploaded_at = excluded.uploaded_at
       returning (xmax = 0) as inserted
@@ -596,7 +460,51 @@ async function insertBatch(client, tableName, columns, batch, uploadedAt, stats)
     values
   );
 
-  return result.rows.filter(row => row.inserted).length;
+  let insertedCount = 0;
+  let updatedCount = 0;
+  for (const row of result.rows) {
+    if (row.inserted) insertedCount += 1;
+    else updatedCount += 1;
+  }
+
+  return { insertedCount, updatedCount };
+}
+
+async function insertBatch(client, tableName, columns, batch, uploadedAt, stats) {
+  if (!batch.length) {
+    return { insertedCount: 0, updatedCount: 0 };
+  }
+
+  const usesBusinessKey = WARRANTY_TABLES.has(tableName);
+  const preparedRows = prepareBatchRows(tableName, columns, batch, uploadedAt, stats, usesBusinessKey);
+
+  if (!usesBusinessKey) {
+    return upsertPreparedRows(client, tableName, columns, preparedRows, false, 'row_hash');
+  }
+
+  const withBusinessKey = preparedRows.filter(row => row.businessIdentityKey);
+  const withoutBusinessKey = preparedRows.filter(row => !row.businessIdentityKey);
+  const businessResult = await upsertPreparedRows(
+    client,
+    tableName,
+    columns,
+    withBusinessKey,
+    true,
+    'business_identity_key'
+  );
+  const rowHashResult = await upsertPreparedRows(
+    client,
+    tableName,
+    columns,
+    withoutBusinessKey,
+    true,
+    'row_hash'
+  );
+
+  return {
+    insertedCount: businessResult.insertedCount + rowHashResult.insertedCount,
+    updatedCount: businessResult.updatedCount + rowHashResult.updatedCount
+  };
 }
 
 export async function saveReportSheetToRelationalTable({
@@ -614,15 +522,31 @@ export async function saveReportSheetToRelationalTable({
   const uploadedAt = new Date().toISOString();
   const startedAt = Date.now();
   const effectiveBatchSize = Math.max(1, Math.min(batchSize, Math.floor(60000 / (columns.length + 2))));
-  const seenIncomingRows = new Set();
+  const seenBusinessKeys = new Set();
+  const seenFullRowHashes = new Set();
   const uniqueRows = [];
+  let skippedDuplicateIncomingRows = 0;
+
   for (const row of rows) {
     const normalizedValues = columns.map(column => normalizeValue(row[column.header], column));
-    const signature = rowSignatureFromNormalizedValues(columns, normalizedValues, tableName);
-    if (seenIncomingRows.has(signature)) {
+    const rowHash = rowSignatureFromNormalizedValues(columns, normalizedValues, tableName);
+    const businessIdentityKey = WARRANTY_TABLES.has(tableName)
+      ? buildBusinessIdentityKey(tableName, columns, normalizedValues)
+      : null;
+
+    if (businessIdentityKey) {
+      if (seenBusinessKeys.has(businessIdentityKey)) {
+        skippedDuplicateIncomingRows += 1;
+        continue;
+      }
+      seenBusinessKeys.add(businessIdentityKey);
+    } else if (seenFullRowHashes.has(rowHash)) {
+      skippedDuplicateIncomingRows += 1;
       continue;
+    } else {
+      seenFullRowHashes.add(rowHash);
     }
-    seenIncomingRows.add(signature);
+
     uniqueRows.push(row);
   }
   const stats = {
@@ -643,12 +567,15 @@ export async function saveReportSheetToRelationalTable({
     });
 
     let insertedRowCount = 0;
+    let updatedRowCount = 0;
     let batchCount = 0;
     for (let index = 0; index < uniqueRows.length; index += effectiveBatchSize) {
       const batch = uniqueRows.slice(index, index + effectiveBatchSize);
       batchCount += 1;
       try {
-        insertedRowCount += await insertBatch(client, tableName, columns, batch, uploadedAt, stats);
+        const batchResult = await insertBatch(client, tableName, columns, batch, uploadedAt, stats);
+        insertedRowCount += batchResult.insertedCount;
+        updatedRowCount += batchResult.updatedCount;
       } catch (error) {
         logger.error('Relational report batch insert failed', {
           sheetName,
@@ -665,13 +592,15 @@ export async function saveReportSheetToRelationalTable({
       }
     }
 
-    const duplicateRowCount = rows.length - insertedRowCount;
+    const duplicateRowCount = skippedDuplicateIncomingRows + updatedRowCount;
     logger.info('Relational report rows inserted', {
       sheetName,
       tableName,
       incomingRowCount: rows.length,
       uniqueIncomingRowCount: uniqueRows.length,
+      skippedDuplicateIncomingRows,
       insertedRowCount,
+      updatedRowCount,
       duplicateRowCount,
       batchCount,
       batchSize: effectiveBatchSize,
@@ -686,6 +615,7 @@ export async function saveReportSheetToRelationalTable({
       tableName,
       incomingRowCount: rows.length,
       insertedRowCount,
+      updatedRowCount,
       duplicateRowCount,
       batchCount,
       batchSize: effectiveBatchSize,
@@ -693,5 +623,34 @@ export async function saveReportSheetToRelationalTable({
       invalidDates: stats.invalidDates,
       invalidNumerics: stats.invalidNumerics
     };
+  });
+}
+
+export async function clearRelationalTable(sheetName) {
+  const tableName = normalizeTableName(sheetName);
+  const table = quoteIdentifier(tableName);
+
+  return withPostgresClient(async client => {
+    const exists = await client.query(
+      `select to_regclass($1) as regclass`,
+      [`public.${tableName}`]
+    );
+    if (!exists.rows[0]?.regclass) {
+      logger.info('Relational table clear skipped because table does not exist yet', {
+        sheetName,
+        tableName
+      });
+      return { tableName, cleared: false, previousRowCount: 0 };
+    }
+
+    const countResult = await client.query(`select count(*)::bigint as row_count from ${table}`);
+    const previousRowCount = Number(countResult.rows[0]?.row_count ?? 0);
+    await client.query(`truncate table ${table} restart identity`);
+    logger.info('Relational table cleared', {
+      sheetName,
+      tableName,
+      previousRowCount
+    });
+    return { tableName, cleared: true, previousRowCount };
   });
 }

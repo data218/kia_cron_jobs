@@ -117,6 +117,36 @@ export function addDays(date, days) {
   return next;
 }
 
+export function getCalendarMonthRanges(startDate, endDate) {
+  const ranges = [];
+  const finalEnd = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  let monthCursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+
+  while (monthCursor <= finalEnd) {
+    const firstOfMonth = new Date(monthCursor.getFullYear(), monthCursor.getMonth(), 1);
+    const lastOfMonth = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 0);
+    const monthStart = firstOfMonth < startDate
+      ? new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())
+      : firstOfMonth;
+    const monthEnd = lastOfMonth > finalEnd
+      ? finalEnd
+      : lastOfMonth;
+
+    ranges.push({
+      startDate: monthStart,
+      endDate: monthEnd,
+      startPortal: formatDateForPortal(monthStart),
+      endPortal: formatDateForPortal(monthEnd),
+      startIso: toIsoDate(monthStart),
+      endIso: toIsoDate(monthEnd)
+    });
+
+    monthCursor = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1);
+  }
+
+  return ranges;
+}
+
 export function getThirtyDayChunks(startDate, endDate) {
   const chunks = [];
   let currentStart = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());

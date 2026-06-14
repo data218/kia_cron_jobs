@@ -7,6 +7,26 @@ import { openDealerChangePage } from './kia-menu.js';
 
 const KIA_HOME_URL = 'https://dms.kiaindia.net/cmm/cmmd/selectHome.dms';
 
+function isHmilDms(homeUrl) {
+  return String(homeUrl || '').includes('ndms.hmil.net');
+}
+
+function isHmilHomeOrDealerChangeUrl(url) {
+  const normalized = String(url || '').toLowerCase();
+  return (
+    normalized.includes('selecthome.dms') ||
+    normalized.includes('selectdealerchangemain.dms')
+  );
+}
+
+async function openHmilDealerChangePageDirect(page, expectedOrigin) {
+  const dealerChangeUrl = `${expectedOrigin}/cmm/cmmh/selectDealerChangeMain.dms`;
+  logger.info('Opening HMIL dealer change via direct URL', { dealerChangeUrl });
+  await page.goto(dealerChangeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+  await page.locator('#chgDlrCd').first().waitFor({ state: 'visible', timeout: 30000 });
+}
+
 function dealerRowSelectors(dealerCode) {
   return [
     `tr:has(td:text-is("${dealerCode}"))`,
@@ -194,20 +214,46 @@ export async function changeActiveDealerForDms(page, dealerCode, {
     });
   }
 
-  await openDealerChangePage(page).catch(async error => {
-    logger.warn(`Dealer Change navigation failed from current page; retrying from ${systemLabel} home`, {
-      dealerCode: normalizedDealerCode,
-      currentUrl,
-      error: error.message
+  if (isHmilDms(homeUrl)) {
+    if (!isHmilHomeOrDealerChangeUrl(currentUrl)) {
+      const hmilHomeUrl = `${expectedOrigin}/cmm/cmmd/selectHome.dms`;
+      logger.info('Resetting HMIL session to home before dealer change', {
+        fromUrl: currentUrl,
+        hmilHomeUrl
+      });
+      await page.goto(hmilHomeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    }
+
+    try {
+      await openHmilDealerChangePageDirect(page, expectedOrigin);
+    } catch (directError) {
+      logger.warn('HMIL direct dealer change URL failed, falling back to menu navigation', {
+        dealerCode: normalizedDealerCode,
+        error: directError.message
+      });
+      await openDealerChangePage(page);
+    }
+  } else {
+    await openDealerChangePage(page).catch(async error => {
+      logger.warn(`Dealer Change navigation failed from current page; retrying from ${systemLabel} home`, {
+        dealerCode: normalizedDealerCode,
+        currentUrl,
+        error: error.message
+      });
+      await page.goto(homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await openDealerChangePage(page);
     });
-    await page.goto(homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await openDealerChangePage(page);
-  });
+  }
 
   const changeContext = await findContextWithVisibleSelector(page, '#chgDlrCd', {
-    timeout: 7000,
+    timeout: config.dealerChangeTimeoutMs,
     label: 'Dealer Change field'
   }).catch(async error => {
+    if (isHmilDms(homeUrl)) {
+      throw error;
+    }
+
     const directDealerChangeUrl = `${expectedOrigin}/cmm/cmmh/selectDealerChangeMain.dms`;
     logger.warn(`Dealer Change field did not load after menu click; opening direct ${systemLabel} Dealer Change URL`, {
       dealerCode: normalizedDealerCode,

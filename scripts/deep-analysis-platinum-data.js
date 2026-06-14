@@ -13,7 +13,7 @@ const platinumTables = [
   'am_platinum_operation_wise_analysis_report',
 ];
 
-const dealers = ['N5211', 'N6824', 'N6828'];
+const dealers = ['N5211', 'N6250', 'N6828'];
 
 async function deepAnalyzeTable(client, tableName) {
   console.log(`\n${'='.repeat(100)}`);
@@ -183,7 +183,7 @@ async function main() {
     console.log('║                                    SUMMARY REPORT                                                    ║');
     console.log('╚════════════════════════════════════════════════════════════════════════════════════════════════════════╝\n');
 
-    console.log('Table Name                               | Total | N5211 | N6824 | N6828 | Has Historical Data?');
+    console.log('Table Name                               | Total | N5211 | N6250 | N6828 | Has Historical Data?');
     console.log('-'.repeat(110));
 
     const historicalTables = [];
@@ -192,7 +192,7 @@ async function main() {
 
     for (const result of results) {
       const n5211 = result.dealers.N5211 || 0;
-      const n6824 = result.dealers.N6824 || 0;
+      const n6250 = result.dealers.N6250 || 0;
       const n6828 = result.dealers.N6828 || 0;
       
       const status = result.hasHistoricalData === null ? '?' : result.hasHistoricalData ? '✅ YES' : '❌ NO';
@@ -208,10 +208,10 @@ async function main() {
       const tableName = result.tableName.padEnd(40);
       const totalStr = String(result.totalRows).padStart(5);
       const n5211Str = String(n5211).padStart(5);
-      const n6824Str = String(n6824).padStart(5);
+      const n6250Str = String(n6250).padStart(5);
       const n6828Str = String(n6828).padStart(5);
       
-      console.log(`${tableName} | ${totalStr} | ${n5211Str} | ${n6824Str} | ${n6828Str} | ${status}`);
+      console.log(`${tableName} | ${totalStr} | ${n5211Str} | ${n6250Str} | ${n6828Str} | ${status}`);
     }
 
     console.log('-'.repeat(110));

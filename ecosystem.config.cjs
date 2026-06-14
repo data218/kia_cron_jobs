@@ -133,6 +133,26 @@ module.exports = {
       }
     },
     {
+      name: 'hmil-warranty-cron-job',
+      script: './src/cron/hmil-warranty-scheduler.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-hmil-warranty-out.log',
+      error_file: './logs/pm2-hmil-warranty-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'hmil-warranty-cron-job',
+        OTP_PROVIDER: 'webhook',
+        HMIL_WARRANTY_CRON_SCHEDULE: '0 15 * * *',
+        HMIL_WARRANTY_CRON_TIMEZONE: 'Asia/Kolkata'
+      }
+    },
+    {
       name: 'kia-otp-webhook',
       script: './src/otp/webhook-server.js',
       instances: 1,

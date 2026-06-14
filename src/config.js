@@ -201,8 +201,8 @@ export const config = {
   rsaUsePersistentProfile: envBool('RSA_USE_PERSISTENT_PROFILE', false),
   rsaUserDataDir: path.resolve(rootDir, env('RSA_USER_DATA_DIR', './storage/rsa-chrome-profile')),
   hmilCronSchedule: env('HMIL_CRON_SCHEDULE', '20 10-18 * * *'),
-  hmilLoginUrl: env('HMIL_DMS_URL', 'https://ndms.hmil.net'),
-  hmilHomeUrl: env('HMIL_HOME_URL', 'https://ndms.hmil.net'),
+  hmilLoginUrl: env('HMIL_DMS_URL', 'https://ndms.hmil.net/cmm/cmmi/selectLoginMain.dms'),
+  hmilHomeUrl: env('HMIL_HOME_URL', 'https://ndms.hmil.net/cmm/cmmd/selectHome.dms'),
   hmilUserId: env('HMIL_USER_ID'),
   hmilPassword: env('HMIL_PASSWORD'),
   hmilForceLogin: envBool('HMIL_FORCE_LOGIN', true),
@@ -218,14 +218,50 @@ export const config = {
   hmilRepairOrderStartDate: env('HMIL_REPAIR_ORDER_START_DATE', '2026-05-01'),
   hmilRepairOrderEndDate: env('HMIL_REPAIR_ORDER_END_DATE', '2026-05-31'),
   hmilRepairOrderPostSearchDelayMs: envDelayMs('HMIL_REPAIR_ORDER_POST_SEARCH_DELAY_MS', 0),
+  hmilSecondaryUserId: env('HMIL_SECONDARY_USER_ID', 'MIS5216'),
+  hmilSecondaryPassword: env('HMIL_SECONDARY_PASSWORD'),
+  hmilWarrantyCronSchedule: env('HMIL_WARRANTY_CRON_SCHEDULE', '0 15 * * *'),
+  hmilWarrantyCronTimezone: env('HMIL_WARRANTY_CRON_TIMEZONE', 'Asia/Kolkata'),
+  hmilWarrantyHistoricalOtpProvider: env('HMIL_WARRANTY_HISTORICAL_OTP_PROVIDER', 'manual'),
+  hmilWarrantyHistoricalStartDate: env('HMIL_WARRANTY_HISTORICAL_START_DATE', '2025-01-01'),
+  hmilWarrantyPageSize: env('HMIL_WARRANTY_PAGE_SIZE', '300'),
+  hmilWarrantyResume: envBool('HMIL_WARRANTY_RESUME', false),
+  hmilWarrantySecondaryDealerCodes: envList(
+    'HMIL_WARRANTY_SECONDARY_DEALER_CODES',
+    'N5216,N6844,N6845,N6846,N6847,N6848'
+  ).map(value => value.toUpperCase()),
+  hmilWarrantyForceLogin: envBool('HMIL_WARRANTY_FORCE_LOGIN', false),
+  hmilWarrantyPrimarySessionStatePath: path.resolve(
+    rootDir,
+    env('HMIL_WARRANTY_PRIMARY_SESSION_STATE_PATH', './storage/hmil-warranty-sahiltech-state.json')
+  ),
+  hmilWarrantySecondarySessionStatePath: path.resolve(
+    rootDir,
+    env('HMIL_WARRANTY_SECONDARY_SESSION_STATE_PATH', './storage/hmil-warranty-mis5216-state.json')
+  ),
+  hmilWarrantyDownloadDir: path.resolve(rootDir, env('HMIL_WARRANTY_DOWNLOAD_DIR', './downloads/hmil-warranty')),
+  hmilWarrantyReportChunksDir: path.resolve(
+    rootDir,
+    env('HMIL_WARRANTY_REPORT_CHUNKS_DIR', './downloads/report-chunks/hmil-warranty')
+  ),
   gdmsOtpLockDir: path.resolve(rootDir, env('GDMS_OTP_LOCK_DIR', './temp/gdms-otp-login.lock')),
+  gdmsOtpLockEnabled: envBool('GDMS_OTP_LOCK_ENABLED', true),
   gdmsOtpLockTimeoutMs: envInt('GDMS_OTP_LOCK_TIMEOUT_MS', 300000),
   gdmsOtpLockStaleMs: envInt('GDMS_OTP_LOCK_STALE_MS', 600000),
   amPlatinumCronSchedule: env('AM_PLATINUM_CRON_SCHEDULE', env('HMIL_CRON_SCHEDULE', '20 10-18 * * *')),
-  amPlatinumLoginUrl: env('AM_PLATINUM_DMS_URL', env('HMIL_DMS_URL', 'https://ndms.hmil.net')),
-  amPlatinumHomeUrl: env('AM_PLATINUM_HOME_URL', env('HMIL_HOME_URL', 'https://ndms.hmil.net')),
+  amPlatinumLoginUrl: env('AM_PLATINUM_DMS_URL', env('HMIL_DMS_URL', 'https://ndms.hmil.net/cmm/cmmi/selectLoginMain.dms')),
+  amPlatinumHomeUrl: env('AM_PLATINUM_HOME_URL', env('HMIL_HOME_URL', 'https://ndms.hmil.net/cmm/cmmd/selectHome.dms')),
   amPlatinumUserId: env('AM_PLATINUM_USER_ID'),
   amPlatinumPassword: env('AM_PLATINUM_PASSWORD'),
+  amPlatinumHistoricalUserId: env('AM_PLATINUM_HISTORICAL_USER_ID', 'MIS12345'),
+  amPlatinumHistoricalPassword: env('AM_PLATINUM_HISTORICAL_PASSWORD', env('AM_PLATINUM_PASSWORD')),
+  amPlatinumHistoricalCutoffDate: env('AM_PLATINUM_HISTORICAL_CUTOFF_DATE', '2024-03-01'),
+  amPlatinumRajouriMis1988StartDate: env('AM_PLATINUM_RAJOURI_MIS1988_START_DATE', '2024-01-01'),
+  amPlatinumPost2024DealerCode: env('AM_PLATINUM_POST_2024_DEALER_CODE', 'N6250').trim().toUpperCase(),
+  amPlatinumHistoricalSessionStatePath: path.resolve(
+    rootDir,
+    env('AM_PLATINUM_HISTORICAL_SESSION_STATE_PATH', './storage/am-platinum-historical-dms-state.json')
+  ),
   amPlatinumForceLogin: envBool('AM_PLATINUM_FORCE_LOGIN', true),
   amPlatinumSessionCheckTimeoutMs: envInt('AM_PLATINUM_SESSION_CHECK_TIMEOUT_MS', envInt('HMIL_SESSION_CHECK_TIMEOUT_MS', 8000)),
   amPlatinumSessionStatePath: path.resolve(rootDir, env('AM_PLATINUM_SESSION_STATE_PATH', './storage/am-platinum-dms-state.json')),
@@ -238,7 +274,8 @@ export const config = {
   amPlatinumRepairOrderPageSize: env('AM_PLATINUM_REPAIR_ORDER_PAGE_SIZE', env('HMIL_REPAIR_ORDER_PAGE_SIZE', '5000')),
   amPlatinumRepairOrderStartDate: env('AM_PLATINUM_REPAIR_ORDER_START_DATE', env('HMIL_REPAIR_ORDER_START_DATE', '2026-05-01')),
   amPlatinumRepairOrderEndDate: env('AM_PLATINUM_REPAIR_ORDER_END_DATE', env('HMIL_REPAIR_ORDER_END_DATE', '2026-05-31')),
-  amPlatinumRepairOrderPostSearchDelayMs: envDelayMs('AM_PLATINUM_REPAIR_ORDER_POST_SEARCH_DELAY_MS', envInt('HMIL_REPAIR_ORDER_POST_SEARCH_DELAY_MS', 0))
+  amPlatinumRepairOrderPostSearchDelayMs: envDelayMs('AM_PLATINUM_REPAIR_ORDER_POST_SEARCH_DELAY_MS', envInt('HMIL_REPAIR_ORDER_POST_SEARCH_DELAY_MS', 0)),
+  amPlatinumHistoricalOtpProvider: env('AM_PLATINUM_HISTORICAL_OTP_PROVIDER', 'manual')
 };
 
 export function requireSecret(name, value) {

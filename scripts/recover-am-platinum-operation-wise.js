@@ -1,7 +1,17 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../src/config.js';
-import { createGdmsAccountProfile } from '../src/accounts/gdms-account-profile.js';
+import {
+  applyHistoricalRunOptions,
+  createAmPlatinumAccount,
+  createAmPlatinumAccountForRange,
+  describeAmPlatinumLoginPlan,
+  normalizeRajouriDealerCode,
+  resolveAmPlatinumDealerForFetch,
+  resolveAmPlatinumSourceDealerCode,
+  resolveAmPlatinumStoredDealerCodesForSkipCheck,
+  shouldSkipAmPlatinumRangeForDealer
+} from '../src/accounts/am-platinum-accounts.js';
 import { loginToHmilDms } from '../src/auth/hmil-login.js';
 import { changeActiveDealerForDms } from '../src/navigation/dealer-change.js';
 import { openAdvWiseLubricantsVasReport } from '../src/navigation/kia-menu.js';
@@ -16,11 +26,12 @@ import {
 import { executeWithRetry } from '../src/utils/execute-with-retry.js';
 import { logger } from '../src/utils/logger.js';
 import { retry } from '../src/utils/retry.js';
-import { selectKendoPagerSizeByVisibleClick, waitForKendoGridIdle } from '../src/reports/grid.js';
+import { selectKendoPagerSizeWithPreferredFallback, waitForKendoGridIdle } from '../src/reports/grid.js';
 import {
   cleanupReportExportDir,
   exportAllGridPagesToFiles,
   getPagerState,
+  gridHasNoExportableData,
   mergeExcelFiles
 } from '../src/reports/paged-export.js';
 import {
@@ -29,17 +40,22 @@ import {
   selectKendoDropdownByInputId
 } from '../src/reports/report-actions.js';
 import { sleep } from '../src/utils/sleep.js';
+import { recordPortalEmptyAcceptance } from '../src/am-platinum/portal-empty-acceptance.js';
 
 // ─── Configuration ──────────────────────────────────────────────
 
-const START_DATE = '2021-01-01';
-const END_DATE = toIsoDate(new Date());
+const START_DATE = process.env.AM_PLATINUM_OPERATION_WISE_START_DATE || '2021-01-01';
+const END_DATE = process.env.AM_PLATINUM_OPERATION_WISE_END_DATE || toIsoDate(new Date());
+const SKIP_EXISTING = envBool('AM_PLATINUM_OPERATION_WISE_SKIP_EXISTING', true);
+const PREFERRED_PAGE_SIZES = ['1000', '500', '300'];
 const SHEET_NAME = 'AM Platinum Operation Wise Analysis Report';
 const TABLE_NAME = normalizeTableName(SHEET_NAME);
 const REPORT_TYPES = ['Operation', 'Part'];
-const PAGE_SIZE = '1000';
-const PAGE_SIZE_NUM = 1000;
-const STATE_FILE = path.join(config.logsDir, 'am-platinum-operation-wise-recovery-state.json');
+const STATE_FILE = path.join(
+  config.logsDir,
+  process.env.AM_PLATINUM_OPERATION_WISE_STATE_FILE
+    || 'am-platinum-operation-wise-recovery-state.json'
+);
 
 function envBool(name, fallback) {
   const raw = process.env[name];
@@ -48,11 +64,72 @@ function envBool(name, fallback) {
 }
 
 function createAccount() {
-  const account = createGdmsAccountProfile('am-platinum');
-  if (process.env.AM_PLATINUM_HISTORICAL_HEADLESS != null && process.env.AM_PLATINUM_HISTORICAL_HEADLESS !== '') {
-    account.headless = envBool('AM_PLATINUM_HISTORICAL_HEADLESS', config.headless);
+  return applyHistoricalRunOptions(createAmPlatinumAccount('current'));
+}
+
+async function ensureSessionForRange({
+  session,
+  activeAccountKey,
+  activeAccount,
+  activeDealerCode,
+  reportContext,
+  dealerCode,
+  range
+}) {
+  const { accountKey, account } = createAmPlatinumAccountForRange(range, dealerCode);
+  const fetchDealerCode = resolveAmPlatinumDealerForFetch(dealerCode, range);
+  const accountChanged = !session || activeAccountKey !== accountKey;
+  const dealerChanged = activeDealerCode !== fetchDealerCode;
+
+  if (!accountChanged && !dealerChanged && session && reportContext) {
+    return {
+      session,
+      activeAccountKey: accountKey,
+      activeAccount: account,
+      activeDealerCode: fetchDealerCode,
+      reportContext,
+      reusedSession: true
+    };
   }
-  return account;
+
+  if (accountChanged) {
+    await session?.close?.().catch(() => {});
+    console.log(`\n   Using ${account.userId} for ${range.startIso} to ${range.endIso}...`);
+    console.log(`   Session file: ${account.sessionStatePath}`);
+    console.log(`   Force OTP login: ${account.forceLogin ? 'yes' : 'no'}`);
+    session = await loginSession(account, `${account.logPrefix} login for ${range.startIso}`);
+  }
+
+  if (accountChanged || dealerChanged) {
+    await switchToDealer(session.page, fetchDealerCode, account);
+    const storeDealerCode = resolveAmPlatinumSourceDealerCode(dealerCode, range);
+    console.log(`   Dealer ${fetchDealerCode} active on ${account.userId} (stored as ${storeDealerCode}).`);
+  }
+
+  const nextReportContext = await openReportContext(session.page, dealerCode, account);
+
+  return {
+    session,
+    activeAccountKey: accountKey,
+    activeAccount: account,
+    activeDealerCode: fetchDealerCode,
+    reportContext: nextReportContext,
+    reusedSession: false
+  };
+}
+
+function selectedDealerCodes(account) {
+  const raw = process.env.AM_PLATINUM_OPERATION_WISE_DEALERS
+    || process.env.AM_PLATINUM_DEALER_CODES
+    || process.env.AM_PLATINUM_HISTORICAL_DEALERS;
+
+  if (raw) {
+    return raw.split(',').map(value => normalizeRajouriDealerCode(value)).filter(Boolean);
+  }
+
+  return account.dealerCodes.length
+    ? account.dealerCodes
+    : ['N5211', 'N6250', 'N6828'];
 }
 
 // ─── Helper functions ───────────────────────────────────────────
@@ -129,7 +206,10 @@ async function tableExists(client, tableName) {
 }
 
 async function loadResumeState(dealerCodes) {
-  if (process.env.FORCE_RECOVERY === 'true') {
+  if (
+    process.env.FORCE_RECOVERY === 'true'
+    || process.env.AM_PLATINUM_OPERATION_WISE_RESET_STATE === 'true'
+  ) {
     return {
       dealerIndex: 0,
       reportTypeIndex: 0,
@@ -149,8 +229,21 @@ async function loadResumeState(dealerCodes) {
       JSON.stringify(state.dealerCodes || []) === JSON.stringify(dealerCodes);
 
     if (sameScope) {
+      const dealerIndex = Number(state.dealerIndex ?? 0);
+      if (dealerIndex >= dealerCodes.length) {
+        console.log('   Previous run marked complete; restarting gap-fill from first dealer (skip-existing still applies).');
+        return {
+          dealerIndex: 0,
+          reportTypeIndex: 0,
+          rangeIndex: 0,
+          startDate: START_DATE,
+          endDate: END_DATE,
+          dealerCodes
+        };
+      }
+
       return {
-        dealerIndex: state.dealerIndex ?? 0,
+        dealerIndex,
         reportTypeIndex: state.reportTypeIndex ?? 0,
         rangeIndex: state.rangeIndex ?? 0,
         startDate: START_DATE,
@@ -230,6 +323,40 @@ async function checkExistingData() {
   });
 }
 
+async function rangeAlreadyExists(dealerCode, reportType, range) {
+  if (!SKIP_EXISTING || isActiveDealerAlias(dealerCode)) {
+    return false;
+  }
+
+  const dealerCodes = resolveAmPlatinumStoredDealerCodesForSkipCheck(dealerCode, range);
+
+  return withPostgresClient(async client => {
+    if (!(await tableExists(client, TABLE_NAME))) {
+      return false;
+    }
+
+    for (const code of dealerCodes) {
+      const result = await client.query(
+        `
+          SELECT COUNT(*)::int AS cnt
+          FROM "${TABLE_NAME}"
+          WHERE upper(trim(source_dealer_code::text)) = upper(trim($1::text))
+            AND report_type = $2
+            AND report_period_start <= $4::date
+            AND COALESCE(report_period_end, report_period_start) >= $3::date
+        `,
+        [code, reportType, range.startIso, range.endIso]
+      );
+
+      if (Number(result.rows[0]?.cnt ?? 0) > 0) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+}
+
 // ─── Report extraction functions ────────────────────────────────
 
 async function resolveOperationWiseContext(page) {
@@ -269,49 +396,38 @@ function addReportMetadata(reportType, range, dataset, dealerCode) {
     ...metadataHeaders,
     ...dataset.headers.filter(h => !metadataHeaders.includes(h))
   ];
-  const dealerVal = isActiveDealerAlias(dealerCode) ? '' : dealerCode;
+  const storeDealerCode = resolveAmPlatinumSourceDealerCode(dealerCode, range);
+  const dealerVal = isActiveDealerAlias(storeDealerCode)
+    ? ''
+    : String(storeDealerCode).trim().toUpperCase();
   const rows = dataset.rows.map(row => ({
     report_type: reportType,
     report_month: range.reportMonthIso,
     report_period_start: range.startIso,
     report_period_end: range.endIso,
-    source_dealer_code: dealerVal || row.dealer_code || row.source_dealer_code || '',
+    source_dealer_code: dealerVal || row.source_dealer_code || row.dealer_code || '',
     ...row
   }));
   return { headers, rows };
 }
 
 async function ensureOperationWisePagerSize(context) {
-  const gridTimeout = 300000;
+  const selectedPageSize = await selectKendoPagerSizeWithPreferredFallback(
+    context,
+    PREFERRED_PAGE_SIZES,
+    { visibleClick: true, timeout: 300000 }
+  );
+  await waitForKendoGridIdle(context, { timeout: 300000 });
 
-  for (let attempt = 1; attempt <= 4; attempt += 1) {
-    await selectKendoPagerSizeByVisibleClick(context, PAGE_SIZE, { timeout: 60000 });
-    await waitForKendoGridIdle(context, { timeout: gridTimeout });
+  const pager = await getPagerState(context, Number(selectedPageSize));
+  logger.info('Operation wise pager size confirmed', {
+    requestedSizes: PREFERRED_PAGE_SIZES,
+    selectedPageSize,
+    totalItems: pager.totalItems,
+    totalPages: pager.totalPages
+  });
 
-    const pager = await getPagerState(context, PAGE_SIZE_NUM);
-    const appliedSize = pager.selectedPageSize || pager.pageSize;
-
-    if (Number(appliedSize) >= PAGE_SIZE_NUM) {
-      logger.info('Operation wise pager size confirmed', {
-        pageSize: appliedSize,
-        totalItems: pager.totalItems,
-        totalPages: pager.totalPages,
-        attempt
-      });
-      return String(appliedSize);
-    }
-
-    logger.warn('Pager size 1000 not applied yet; retrying', {
-      attempt,
-      selectedPageSize: pager.selectedPageSize,
-      resolvedPageSize: pager.pageSize,
-      visibleRangeSize: pager.visibleRangeSize,
-      totalItems: pager.totalItems
-    });
-    await sleep(2000);
-  }
-
-  throw new Error(`Could not apply Kendo pager size ${PAGE_SIZE} after retries`);
+  return Number(selectedPageSize);
 }
 
 async function exportForTypeAndRange(context, reportType, range, outputDir, dealerCode) {
@@ -327,7 +443,18 @@ async function exportForTypeAndRange(context, reportType, range, outputDir, deal
     await sleep(config.operationWiseAnalysisPostSearchDelayMs);
   }
 
-  await ensureOperationWisePagerSize(context);
+  const emptyCheck = await gridHasNoExportableData(context, PREFERRED_PAGE_SIZES[0]);
+  if (emptyCheck.noData) {
+    logger.info('Operation wise month has no data; skipping pager size and export', {
+      reportType,
+      rangeStart: range.startIso,
+      rangeEnd: range.endIso,
+      ...emptyCheck
+    });
+    return { rows: [], dbResult: null };
+  }
+
+  const selectedPageSize = await ensureOperationWisePagerSize(context);
 
   const exportDir = path.join(outputDir, sanitizeName(reportType), `${range.startIso}_to_${range.endIso}`);
   const filenameBase = [
@@ -341,7 +468,7 @@ async function exportForTypeAndRange(context, reportType, range, outputDir, deal
   const pageFiles = await exportAllGridPagesToFiles(context, {
     outputDir: exportDir,
     filenameBase,
-    pageSize: PAGE_SIZE_NUM,
+    pageSize: selectedPageSize,
     maxPages: 500,
     downloadTimeoutMs: 120000
   });
@@ -430,7 +557,9 @@ async function main() {
   console.log(`  End date: ${END_DATE}`);
   console.log(`  Report types: ${REPORT_TYPES.join(', ')}`);
   console.log(`  Target table: ${TABLE_NAME}`);
-  console.log(`  Page size: ${PAGE_SIZE} rows per export page`);
+  console.log(`  Page sizes: ${PREFERRED_PAGE_SIZES.join(' -> ')}`);
+  console.log(`  Skip existing ranges: ${SKIP_EXISTING}`);
+  console.log(`  ${describeAmPlatinumLoginPlan(START_DATE, END_DATE, selectedDealerCodes(createAccount()))}`);
   console.log(`  Post-search delay: ${config.operationWiseAnalysisPostSearchDelayMs}ms`);
   console.log(`  Between-chunk delay: ${config.operationWiseAnalysisBetweenChunksDelayMs}ms\n`);
 
@@ -446,7 +575,7 @@ async function main() {
   console.log('\n▶ Step 2: Starting recovery...\n');
 
   const account = createAccount();
-  const dealerCodes = account.dealerCodes.length ? account.dealerCodes : ['active'];
+  const dealerCodes = selectedDealerCodes(account);
   const ranges = getMonthlySafeRanges(START_DATE, END_DATE);
   const resume = await loadResumeState(dealerCodes);
 
@@ -461,9 +590,13 @@ async function main() {
   let totalInserted = 0;
   let totalFailed = 0;
   let totalSkipped = 0;
+  let totalSkippedExisting = 0;
 
-  let session = await loginSession(account);
-  console.log('   Logged into AM Platinum DMS.\n');
+  let session = null;
+  let activeAccountKey = null;
+  let activeAccount = null;
+  let activeDealerCode = null;
+  let context = null;
 
   try {
     for (let dealerIndex = resume.dealerIndex; dealerIndex < dealerCodes.length; dealerIndex++) {
@@ -474,12 +607,8 @@ async function main() {
       console.log(`  Processing Dealer: ${dealerCode}`);
       console.log(`═══════════════════════════════════════════\n`);
 
-      await switchToDealer(session.page, dealerCode, account);
-      console.log(`   Dealer ${dealerCode} active.`);
-
-      let context = await openReportContext(session.page, dealerCode, account);
       const baseOutputDir = path.join(
-        account.reportChunksDir,
+        config.amPlatinumReportChunksDir,
         'operation-wise-analysis-recovery',
         sanitizeName(dealerCode)
       );
@@ -498,6 +627,67 @@ async function main() {
           const label = `${reportType} ${range.startIso} to ${range.endIso}`;
 
           process.stdout.write(`     ${progress} ${label}... `);
+
+          if (shouldSkipAmPlatinumRangeForDealer(dealerCode, range)) {
+            console.log('⏭️  Skipped (not on MIS1988 for this dealer/range)');
+            totalSkipped += 1;
+
+            const next = nextResumeIndices(dealerIndex, reportTypeIndex, rangeIndex, dealerCodes, ranges);
+            await saveResumeState({
+              dealerCodes,
+              dealerIndex: next.dealerIndex,
+              reportTypeIndex: next.reportTypeIndex,
+              rangeIndex: next.rangeIndex,
+              activeAccountKey,
+              lastCompleted: {
+                dealerCode,
+                reportType,
+                rangeStart: range.startIso,
+                rangeEnd: range.endIso,
+                loginUserId: activeAccount?.userId,
+                skipped: 'post-2024-not-on-current-login'
+              }
+            });
+            continue;
+          }
+
+          if (await rangeAlreadyExists(dealerCode, reportType, range)) {
+            console.log('⏭️  Already in DB');
+            totalSkippedExisting += 1;
+
+            const next = nextResumeIndices(dealerIndex, reportTypeIndex, rangeIndex, dealerCodes, ranges);
+            await saveResumeState({
+              dealerCodes,
+              dealerIndex: next.dealerIndex,
+              reportTypeIndex: next.reportTypeIndex,
+              rangeIndex: next.rangeIndex,
+              activeAccountKey,
+              lastCompleted: {
+                dealerCode,
+                reportType,
+                rangeStart: range.startIso,
+                rangeEnd: range.endIso,
+                loginUserId: activeAccount?.userId
+              }
+            });
+            continue;
+          }
+
+          ({
+            session,
+            activeAccountKey,
+            activeAccount,
+            activeDealerCode,
+            reportContext: context
+          } = await ensureSessionForRange({
+            session,
+            activeAccountKey,
+            activeAccount,
+            activeDealerCode,
+            reportContext: context,
+            dealerCode,
+            range
+          }));
 
           let attempt = 0;
           let done = false;
@@ -518,6 +708,24 @@ async function main() {
               } else {
                 console.log(`⚠️  No data`);
                 totalSkipped += 1;
+                await recordPortalEmptyAcceptance({
+                  reportId: 'hyundai-operation-wise-analysis-report',
+                  dealerCode,
+                  reportType,
+                  startIso: range.startIso,
+                  endIso: range.endIso,
+                  kind: 'no_rows',
+                  source: 'operation-wise-recovery',
+                  phase: 'operation-wise'
+                }).catch(error => {
+                  logger.warn('Failed to record portal empty acceptance', {
+                    dealerCode,
+                    reportType,
+                    rangeStart: range.startIso,
+                    rangeEnd: range.endIso,
+                    error: error.message
+                  });
+                });
               }
 
               const next = nextResumeIndices(dealerIndex, reportTypeIndex, rangeIndex, dealerCodes, ranges);
@@ -526,15 +734,21 @@ async function main() {
                 dealerIndex: next.dealerIndex,
                 reportTypeIndex: next.reportTypeIndex,
                 rangeIndex: next.rangeIndex,
+                activeAccountKey,
                 lastCompleted: {
                   dealerCode,
                   reportType,
                   rangeStart: range.startIso,
-                  rangeEnd: range.endIso
+                  rangeEnd: range.endIso,
+                  loginUserId: activeAccount?.userId
                 }
               });
 
-              if (rangeIndex < ranges.length - 1 && config.operationWiseAnalysisBetweenChunksDelayMs > 0) {
+              if (
+                rangeIndex < ranges.length - 1 &&
+                config.operationWiseAnalysisBetweenChunksDelayMs > 0 &&
+                (result.rows?.length ?? 0) > 0
+              ) {
                 await sleep(config.operationWiseAnalysisBetweenChunksDelayMs);
               }
 
@@ -542,10 +756,23 @@ async function main() {
             } catch (error) {
               if (attempt < 2 && isBrowserClosedError(error)) {
                 console.log(`\n     Browser issue detected. Relogging and retrying ${label}...`);
-                await session?.close?.().catch(() => {});
-                session = await loginSession(account, `AM Platinum re-login for ${dealerCode}`);
-                await switchToDealer(session.page, dealerCode, account);
-                context = await openReportContext(session.page, dealerCode, account);
+                session = null;
+                activeAccountKey = null;
+                ({
+                  session,
+                  activeAccountKey,
+                  activeAccount,
+                  activeDealerCode,
+                  reportContext: context
+                } = await ensureSessionForRange({
+                  session,
+                  activeAccountKey,
+                  activeAccount,
+                  activeDealerCode,
+                  reportContext: null,
+                  dealerCode,
+                  range
+                }));
                 process.stdout.write(`     ${progress} ${label}... `);
                 continue;
               }
@@ -570,6 +797,7 @@ async function main() {
   console.log('  Recovery Complete');
   console.log('═══════════════════════════════════════════════════════════');
   console.log(`  Total rows inserted: ${totalInserted}`);
+  console.log(`  Skipped existing in DB: ${totalSkippedExisting}`);
   console.log(`  Failed iterations: ${totalFailed}`);
   console.log(`  Skipped (no data): ${totalSkipped}\n`);
 

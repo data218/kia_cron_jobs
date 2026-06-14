@@ -21,31 +21,43 @@ async function dismissBlockingMessages(page) {
 }
 
 async function clickLocator(page, locator, label, timeout = 30000) {
+  let target = locator.first();
+
   try {
     await dismissBlockingMessages(page);
-    const visible = await locator.isVisible({ timeout: Math.min(timeout, 2000) }).catch(() => false);
+    const count = await locator.count();
+
+    for (let index = 0; index < count; index += 1) {
+      const candidate = locator.nth(index);
+      if (await candidate.isVisible({ timeout: 250 }).catch(() => false)) {
+        target = candidate;
+        break;
+      }
+    }
+
+    const visible = await target.isVisible({ timeout: Math.min(timeout, 2000) }).catch(() => false);
 
     if (!visible) {
       logger.warn('Hyundai menu item is not visible; dispatching DOM click fallback', { label });
-      await locator.evaluate(element => element.click());
+      await target.evaluate(element => element.click());
       return;
     }
 
-    await locator.scrollIntoViewIfNeeded().catch(() => {});
-    await locator.click({ timeout: Math.min(timeout, 5000) });
+    await target.scrollIntoViewIfNeeded().catch(() => {});
+    await target.click({ timeout: Math.min(timeout, 5000) });
   } catch (error) {
     logger.warn('Standard Hyundai menu click failed; dispatching DOM click fallback', {
       label,
       error: error.message
     });
     await dismissBlockingMessages(page);
-    await locator.evaluate(element => element.click());
+    await target.evaluate(element => element.click());
   }
 }
 
 async function openRootMenu(page, selectors, label) {
-  const root = page.locator(selectors.join(',')).first();
-  await root.waitFor({ state: 'attached', timeout: 15000 });
+  const root = page.locator(selectors.join(','));
+  await root.first().waitFor({ state: 'attached', timeout: 15000 });
   await clickLocator(page, root, label);
 }
 
@@ -55,8 +67,21 @@ async function openParentIfNeeded(page, parentLocator, reportLocator, parentLabe
   }
 
   if (await parentLocator.count().catch(() => 0)) {
-    await clickLocator(page, parentLocator.first(), parentLabel);
+    await clickLocator(page, parentLocator, parentLabel);
   }
+}
+
+async function openAuthenticatedReportUrl(page, reportLink, fallbackPath, label) {
+  const reportPath = await reportLink.first()
+    .getAttribute('data-url', { timeout: 500 })
+    .catch(() => null);
+  const targetUrl = new URL(reportPath || fallbackPath, page.url()).href;
+
+  logger.info('Opening Hyundai report URL directly', { label, targetUrl });
+  await page.goto(targetUrl, {
+    waitUntil: 'domcontentloaded',
+    timeout: 30000
+  });
 }
 
 export async function openHmilRepairOrderListReport(page) {
@@ -344,4 +369,48 @@ export async function openHmilOperationWiseAnalysisReport(page) {
   await clickLocator(page, reportLink, 'Operation Wise Analysis Report page');
   await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
   logger.info('Operation Wise Analysis Report menu item clicked');
+}
+
+export async function openHmilWarrantyClaim(page) {
+  logger.info('Navigating to Hyundai Service > Claim > Warranty Claim');
+  await dismissBlockingMessages(page);
+
+  const reportLink = page.locator([
+    'li.nav_ser a.menuItem[data-title="Warranty Claim"]',
+    'li.nav_ser a.menuItem:text-is("Warranty Claim")',
+    'li.nav_ser a.menuItem[data-url*="WarrantyClaim"]',
+    'li.nav_ser a.menuItem[data-url*="warrantyClaim"]',
+    'a.menuItem[data-title="Warranty Claim"]',
+    'a.menuItem:text-is("Warranty Claim")'
+  ].join(','));
+
+  await openAuthenticatedReportUrl(
+    page,
+    reportLink,
+    '/ser/sere/selectWarrantyClaimRequestMain.dms',
+    'Hyundai Warranty Claim'
+  );
+  logger.info('Hyundai Warranty Claim report opened');
+}
+
+export async function openHmilWarrantyClaimList(page) {
+  logger.info('Navigating to Hyundai MIS > Claim > Warranty Claim List');
+  await dismissBlockingMessages(page);
+
+  const reportLink = page.locator([
+    'li.nav_ser_mis a.menuItem[data-title="Warranty Claim List"]',
+    'li.nav_ser_mis a.menuItem:text-is("Warranty Claim List")',
+    'li.nav_ser_mis a.menuItem[data-url*="WarrantyClaimList"]',
+    'li.nav_ser_mis a.menuItem[data-url*="warrantyClaimList"]',
+    'a.menuItem[data-title="Warranty Claim List"]',
+    'a.menuItem:text-is("Warranty Claim List")'
+  ].join(','));
+
+  await openAuthenticatedReportUrl(
+    page,
+    reportLink,
+    '/mis/misc/selectWarrantyClaimListMain.dms',
+    'Hyundai Warranty Claim List'
+  );
+  logger.info('Hyundai Warranty Claim List report opened');
 }

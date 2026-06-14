@@ -113,21 +113,107 @@ export async function fillDate(page, selector, value) {
     const win = element.ownerDocument?.defaultView;
     const kendo = win?.kendo;
     const jquery = win?.jQuery ?? win?.$;
+    const [day, month, year] = String(nextValue)
+      .split(/[./-]/)
+      .map(part => Number.parseInt(part, 10));
+    const widgetDate = Number.isFinite(day) && Number.isFinite(month) && Number.isFinite(year)
+      ? new Date(year, month - 1, day)
+      : nextValue;
     if (kendo && jquery) {
       const widget = jquery(element).data('kendoDatePicker') ??
         jquery(element).data('kendoMaskedTextBox') ??
         jquery(element).data('kendoExtMaskedDatePicker') ??
         jquery(element).data('extmaskeddatepicker');
       if (widget?.value) {
-        widget.value(nextValue);
+        widget.value(widgetDate);
       }
       if (widget?.trigger) {
         widget.trigger('change');
       }
     }
+
+    element.value = nextValue;
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
   }, value);
 
   await input.press('Tab').catch(() => {});
+}
+
+function formatLongDateLabel(date) {
+  return date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+}
+
+export async function pickKendoDateViaCalendar(page, selector, targetDate) {
+  const input = page.locator(selector).first();
+  await input.waitFor({ state: 'visible', timeout: 30000 });
+
+  const pickerWrap = input.locator('xpath=ancestor::*[contains(@class,"k-datepicker") or contains(@class,"k-picker-wrap")][1]');
+  const calendarIcon = pickerWrap.locator([
+    'span.k-icon.k-i-calendar',
+    '.k-select',
+    'span.k-select'
+  ].join(',')).first();
+
+  if (await calendarIcon.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await calendarIcon.click({ force: true });
+  } else {
+    await input.click({ force: true });
+  }
+
+  const calendar = page.locator([
+    '.k-animation-container:visible .k-calendar',
+    '.k-calendar:visible'
+  ].join(',')).first();
+  await calendar.waitFor({ state: 'visible', timeout: 15000 });
+
+  const longLabel = formatLongDateLabel(targetDate);
+  const dayText = String(targetDate.getDate());
+  const footer = calendar.locator('.k-footer').first();
+  const footerLink = footer.locator(`a:has-text("${longLabel}"), .k-footer:has-text("${longLabel}")`).first();
+
+  if (await footerLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await footerLink.click({ force: true });
+  } else {
+    const todayLink = calendar.locator('.k-nav-today, a.k-nav-today').first();
+    if (await todayLink.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await todayLink.click({ force: true });
+    } else {
+      const dayCell = calendar.locator([
+        `td:not(.k-other-month) a.k-link:text-is("${dayText}")`,
+        `td:not(.k-other-month) .k-link:text-is("${dayText}")`,
+        `a.k-link:text-is("${dayText}")`
+      ].join(',')).first();
+      await dayCell.waitFor({ state: 'visible', timeout: 10000 });
+      await dayCell.click({ force: true });
+    }
+  }
+
+  await calendar.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {});
+  await page.keyboard.press('Escape').catch(() => {});
+
+  const expectedPortal = [
+    String(targetDate.getDate()).padStart(2, '0'),
+    String(targetDate.getMonth() + 1).padStart(2, '0'),
+    String(targetDate.getFullYear())
+  ].join('/');
+
+  const actual = (await input.inputValue()).trim();
+  if (actual !== expectedPortal) {
+    await fillDate(page, selector, expectedPortal);
+  }
+
+  const verified = (await input.inputValue()).trim();
+  if (verified !== expectedPortal) {
+    throw new Error(`Calendar date pick failed for ${selector}. Expected ${expectedPortal}, got ${verified}`);
+  }
+
+  logger.info('Kendo calendar date selected', { selector, value: verified });
 }
 
 export async function getInputValue(page, selector) {
@@ -137,6 +223,8 @@ export async function getInputValue(page, selector) {
 }
 
 export async function clickSearch(page) {
+  await dismissKendoCommonMessages(page);
+
   const searchButton = await firstVisible(page, [
     'div.btn_right #btnSearch',
     '#btnSearch',

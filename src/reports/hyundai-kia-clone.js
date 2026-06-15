@@ -390,7 +390,7 @@ export function createHyundaiKiaCloneReport(report) {
             : {})
         };
         const merged = Object.keys(metadata).length
-          ? addMetadataToDataset(withDealer, metadata, { range })
+          ? addMetadataToDataset(withDealer, metadata, { range, loopValue })
           : withDealer;
 
         if (!merged.rows.length && !report.saveEmptyDataset) {

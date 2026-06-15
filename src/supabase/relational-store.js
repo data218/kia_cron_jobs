@@ -18,6 +18,9 @@ const IMPORTANT_INDEX_COLUMNS = new Set([
   'source_dealer_code',
   'trust_package_section',
   'report_type',
+  'report_month',
+  'report_period_start',
+  'report_period_end',
   'work_type',
   'appointment_date',
   'appointement_date',
@@ -382,6 +385,18 @@ async function ensureReportTable(client, tableName, columns) {
       create unique index if not exists ${quoteIdentifier(`idx_${tableName}_business_identity_key`)}
       on ${table}(business_identity_key)
       where business_identity_key is not null
+    `);
+  }
+
+  if (tableName === 'am_platinum_operation_wise_analysis_report') {
+    await client.query(`
+      create index if not exists ${quoteIdentifier(`idx_${tableName}_dealer_period_type`)}
+      on ${table}(
+        ${quoteIdentifier('source_dealer_code')},
+        ${quoteIdentifier('report_period_start')},
+        ${quoteIdentifier('report_period_end')},
+        ${quoteIdentifier('report_type')}
+      )
     `);
   }
 

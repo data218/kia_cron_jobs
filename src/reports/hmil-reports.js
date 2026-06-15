@@ -19,6 +19,7 @@ import {
   openHmilTrustPackageSection
 } from '../navigation/hmil-menu.js';
 import { downloadHyundaiRepairOrderListReport } from './hyundai-repair-order-list.js';
+import { runAmPlatinumOperationWiseForDealer } from './am-platinum-operation-wise-export.js';
 import { createHyundaiKiaCloneReport } from './hyundai-kia-clone.js';
 
 const COMPLAINT_EXPORT_HEADERS = [
@@ -117,6 +118,50 @@ function trustPackageReport({ id, name, sectionTitle }, account) {
     saveEmptyDataset: true,
     metadata: {
       trust_package_section: sectionTitle
+    }
+  }, account);
+}
+
+function operationWiseReport(account) {
+  if (account.id === 'am-platinum') {
+    return {
+      id: 'hyundai-operation-wise-analysis-report',
+      name: 'Hyundai Operation Wise Analysis Report',
+      sheetName: account.sheetName('Hyundai Operation Wise Analysis Report'),
+      run: (page, options = {}) => runAmPlatinumOperationWiseForDealer(page, {
+        ...options,
+        account
+      })
+    };
+  }
+
+  return cloneReport({
+    id: 'hyundai-operation-wise-analysis-report',
+    name: 'Hyundai Operation Wise Analysis Report',
+    sheetName: 'Hyundai Operation Wise Analysis Report',
+    open: openAdvWiseLubricantsVasReport,
+    dateFromSelector: '#startDate',
+    dateToSelector: '#endDate',
+    loopDropdown: {
+      inputId: 'reportType',
+      metadataHeader: 'report_type',
+      excludeValues: []
+    },
+    preDateDropdowns: [
+      { inputId: 'dateType', value: 'Billing Date', timeout: 10000 }
+    ],
+    metadata: {
+      report_month: ({ range }) => {
+        const startDate = new Date(`${range.startIso}T00:00:00`);
+        return [
+          startDate.getFullYear(),
+          String(startDate.getMonth() + 1).padStart(2, '0'),
+          '01'
+        ].join('-');
+      },
+      report_period_start: ({ range }) => range.startIso,
+      report_period_end: ({ range }) => range.endIso,
+      report_type: ({ loopValue }) => loopValue
     }
   }, account);
 }
@@ -251,24 +296,7 @@ export function createHmilReportDefinitions(account = defaultAccount()) {
       { inputId: 'dateType', value: 'Billing Date', timeout: 10000 }
     ]
   }, account),
-    cloneReport({
-    id: 'hyundai-operation-wise-analysis-report',
-    name: 'Hyundai Operation Wise Analysis Report',
-    sheetName: 'Hyundai Operation Wise Analysis Report',
-    open: openAdvWiseLubricantsVasReport,
-    dateFromSelector: '#startDate',
-    dateToSelector: '#endDate',
-    preDateDropdowns: [
-      { inputId: 'reportType', value: 'Operation', timeout: 10000 },
-      { inputId: 'dateType', value: 'Billing Date', timeout: 10000 }
-    ],
-    metadata: {
-      report_type: 'Operation',
-      report_month: ({ range }) => range.startIso,
-      report_period_start: ({ range }) => range.startIso,
-      report_period_end: ({ range }) => range.endIso
-    }
-  }, account)
+    operationWiseReport(account)
   ];
 }
 

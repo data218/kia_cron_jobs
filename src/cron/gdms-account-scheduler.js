@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { loginToHmilDms } from '../auth/hmil-login.js';
 import { getSelectedHmilReports } from '../reports/hmil-reports.js';
 import { changeActiveDealerForDms } from '../navigation/dealer-change.js';
+import { refreshAmPlatinumMaterializedViews } from '../supabase/materialized-views.js';
 import { retry } from '../utils/retry.js';
 import { logger } from '../utils/logger.js';
 import { executeWithRetry } from '../utils/execute-with-retry.js';
@@ -218,6 +219,16 @@ export function createGdmsAccountScheduler(account) {
 
       const failedReports = reportResults.filter(result => result.status === 'failed');
       const successfulReports = reportResults.filter(result => result.status === 'success');
+
+      if (account.id === 'am-platinum' && failedReports.length === 0) {
+        logger.info(`${account.logPrefix} all imports completed successfully; refreshing Platinum materialized views`);
+        await refreshAmPlatinumMaterializedViews();
+        logger.info(`${account.logPrefix} Platinum materialized views refreshed after successful imports`);
+      } else if (account.id === 'am-platinum' && failedReports.length > 0) {
+        logger.warn(`${account.logPrefix} skipping Platinum materialized view refresh because one or more imports failed`, {
+          failureCount: failedReports.length
+        });
+      }
 
       logger.info(`${account.logPrefix} report automation job finished`, {
         status: failedReports.length ? 'completed_with_failures' : 'success',

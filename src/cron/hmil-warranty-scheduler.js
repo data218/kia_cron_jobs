@@ -332,6 +332,11 @@ function modeFromArgs() {
   return modeArg ? modeArg.slice('--mode='.length) : 'scheduled';
 }
 
+function reportFromArgs() {
+  const reportArg = process.argv.find(arg => arg.startsWith('--report='));
+  return reportArg ? reportArg.slice('--report='.length) : null;
+}
+
 function isMainModule() {
   if (!process.argv[1]) return false;
   return path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
@@ -340,13 +345,19 @@ function isMainModule() {
 if (isMainModule() && process.argv.includes('--once')) {
   await runHmilWarrantyJob(modeFromArgs());
 } else if (isMainModule()) {
+  const reportFilter = reportFromArgs();
+  const reports = reportFilter
+    ? hmilWarrantyReportDefinitions.filter(r => r.id === reportFilter)
+    : hmilWarrantyReportDefinitions;
+  const label = reportFilter ? reportFilter : 'all';
   logger.info('Scheduling HMIL warranty automation job', {
+    report: label,
     cron: config.hmilWarrantyCronSchedule,
     timezone: config.hmilWarrantyCronTimezone
   });
   cron.schedule(
     config.hmilWarrantyCronSchedule,
-    () => runHmilWarrantyJob('scheduled').catch(error => {
+    () => runHmilWarrantyJob('scheduled', { reports }).catch(error => {
       logger.error('Scheduled HMIL warranty job failed', error);
     }),
     { timezone: config.hmilWarrantyCronTimezone }
@@ -354,6 +365,7 @@ if (isMainModule() && process.argv.includes('--once')) {
   await writeWarrantyHealth({
     status: 'idle',
     mode: 'scheduler',
+    report: label,
     startedAt: new Date().toISOString()
   });
 }

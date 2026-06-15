@@ -77,9 +77,11 @@ export const TABLE_IDENTITY_COLUMNS = {
     ['purchase_invoice_no']
   ],
   hyundai_service_appointment: [
+    ['source_dealer_code', 'b_t_no'],
     ['source_dealer_code', 'a_t_no'],
     ['source_dealer_code', 'appointment_no'],
     ['source_dealer_code', 'booking_no'],
+    ['dealer_code', 'b_t_no'],
     ['dealer_code', 'a_t_no'],
     ['dealer_code', 'appointment_no'],
     ['dealer_code', 'booking_no'],
@@ -89,10 +91,15 @@ export const TABLE_IDENTITY_COLUMNS = {
     ['source_dealer_code', 'vin_no', 'appointment_date', 'appointment_time'],
     ['source_dealer_code', 'vehicle_reg_no', 'appointment_date', 'appointment_time'],
     ['source_dealer_code', 'reg_no', 'appointment_date', 'appointment_time'],
+    ['source_dealer_code', 'vin', 'booking_done_on'],
+    ['source_dealer_code', 'vin_no', 'booking_done_on'],
+    ['source_dealer_code', 'reg_no', 'booking_done_on'],
     ['vin', 'appointment_date', 'appointment_time'],
     ['vin_no', 'appointment_date', 'appointment_time'],
     ['vehicle_reg_no', 'appointment_date', 'appointment_time'],
-    ['reg_no', 'appointment_date', 'appointment_time']
+    ['reg_no', 'appointment_date', 'appointment_time'],
+    ['source_dealer_code', 'b_t_no', 'b_t_date_time'],
+    ['source_dealer_code', 'b_t_no', 'booking_done_on']
   ],
   hyundai_psf_yearly: [
     ['source_dealer_code', 'ro_no'],
@@ -118,7 +125,9 @@ export const TABLE_IDENTITY_COLUMNS = {
     ['source_dealer_code', 'ro_no', 'op_part_code', 'vin_no'],
     ['gst_invoice_no', 'op_part_code', 'vin_no'],
     ['invoice_no', 'op_part_code', 'vin_no'],
-    ['ro_no', 'op_part_code', 'vin_no']
+    ['ro_no', 'op_part_code', 'vin_no'],
+    ['gst_invoice_no', 'labour_code', 'vin_no'],
+    ['gst_invoice_no', 'part_no', 'vin_no']
   ],
   hyundai_operation_wise_analysis_report: [
     ['report_type', 'source_dealer_code', 'op_part_code'],
@@ -170,8 +179,11 @@ export const TABLE_IDENTITY_COLUMNS = {
     ['purchase_invoice_no']
   ],
   service_appointment: [
+    ['dealer_code', 'b_t_no'],
     ['dealer_code', 'a_t_no'],
+    ['dealer_code', 'b_t_date_time', 'vin'],
     ['dealer_code', 'a_t_date_time', 'vin'],
+    ['dealer_code', 'b_t_date_time', 'reg_no'],
     ['dealer_code', 'a_t_date_time', 'reg_no'],
     ['dealer_code', 'appointment_no'],
     ['dealer_code', 'booking_no'],
@@ -181,13 +193,18 @@ export const TABLE_IDENTITY_COLUMNS = {
     ['dealer_code', 'vin_no', 'appointment_date', 'appointment_time'],
     ['dealer_code', 'vehicle_reg_no', 'appointment_date', 'appointment_time'],
     ['dealer_code', 'reg_no', 'appointment_date', 'appointment_time'],
+    ['dealer_code', 'vin', 'booking_done_on'],
+    ['dealer_code', 'vin_no', 'booking_done_on'],
+    ['dealer_code', 'reg_no', 'booking_done_on'],
     ['vin', 'appointment_date', 'appointment_time'],
     ['vin_no', 'appointment_date', 'appointment_time'],
     ['vehicle_reg_no', 'appointment_date', 'appointment_time'],
     ['reg_no', 'appointment_date', 'appointment_time'],
     ['mobile_no', 'appointment_date', 'customer_name'],
     ['mobile_no', 'appointement_date', 'customer_name'],
-    ['dealer_code', 'customer_name', 'booking_date']
+    ['dealer_code', 'customer_name', 'booking_date'],
+    ['dealer_code', 'b_t_no', 'b_t_date_time'],
+    ['dealer_code', 'b_t_no', 'booking_done_on']
   ],
   psf_yearly: [
     ['ro_no'],

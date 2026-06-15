@@ -133,8 +133,9 @@ module.exports = {
       }
     },
     {
-      name: 'hmil-warranty-cron-job',
+      name: 'hmil-warranty-claim-list',
       script: './src/cron/hmil-warranty-scheduler.js',
+      args: '--report=hyundai-warranty-claim-list',
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
@@ -142,11 +143,32 @@ module.exports = {
       max_memory_restart: '1G',
       time: true,
       merge_logs: true,
-      out_file: './logs/pm2-hmil-warranty-out.log',
-      error_file: './logs/pm2-hmil-warranty-error.log',
+      out_file: './logs/pm2-hmil-warranty-claim-list-out.log',
+      error_file: './logs/pm2-hmil-warranty-claim-list-error.log',
       env: {
         NODE_ENV: 'production',
-        LOG_SERVICE_NAME: 'hmil-warranty-cron-job',
+        LOG_SERVICE_NAME: 'hmil-warranty-claim-list',
+        OTP_PROVIDER: 'webhook',
+        HMIL_WARRANTY_CRON_SCHEDULE: '0 15 * * *',
+        HMIL_WARRANTY_CRON_TIMEZONE: 'Asia/Kolkata'
+      }
+    },
+    {
+      name: 'hmil-warranty-claim-ytp',
+      script: './src/cron/hmil-warranty-scheduler.js',
+      args: '--report=hyundai-warranty-claim-ytp',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-hmil-warranty-claim-ytp-out.log',
+      error_file: './logs/pm2-hmil-warranty-claim-ytp-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'hmil-warranty-claim-ytp',
         OTP_PROVIDER: 'webhook',
         HMIL_WARRANTY_CRON_SCHEDULE: '0 15 * * *',
         HMIL_WARRANTY_CRON_TIMEZONE: 'Asia/Kolkata'

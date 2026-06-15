@@ -43,6 +43,7 @@ const REPORT_TABLES = [
   'rsa_report'
 ];
 
+
 const BATCH_SIZE = 500;
 
 function parseCliArgs(argv = process.argv.slice(2)) {

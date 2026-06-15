@@ -275,7 +275,13 @@ export function createHmilReportDefinitions(account = defaultAccount()) {
     sheetName: 'Hyundai EW Report',
     open: openHmilExtendedWarrantyList,
     dateFromSelector: '#sRegDateFromDate',
-    dateToSelector: '#sRegDateToDate'
+    dateToSelector: '#sRegDateToDate',
+    metadata: {
+      report_type: 'EW',
+      report_month: ({ range }) => range.startIso,
+      report_period_start: ({ range }) => range.startIso,
+      report_period_end: ({ range }) => range.endIso
+    }
   }, account),
     cloneReport({
     id: 'hyundai-mcp-report',

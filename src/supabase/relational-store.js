@@ -34,6 +34,7 @@ const IDENTITY_COLUMN_ALIASES = {
   claim_type: ['claim_type', 'warranty_claim_type'],
   claim_date: ['claim_date', 'warranty_claim_date'],
   ro_date: ['ro_date', 'r_o_date']
+}
 };
 
 function normalizeSqlName(value, fallback = 'column') {

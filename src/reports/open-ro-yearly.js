@@ -15,7 +15,8 @@ import {
 } from './paged-export.js';
 import {
   clickSearch,
-  fillDate,
+  fillDateRange,
+  getInputValue,
   selectKendoDropdownByInputId
 } from './report-actions.js';
 
@@ -58,9 +59,26 @@ async function fillOpenRoDateRange(page, chunk) {
     endDate: chunk.endPortal
   });
 
-  // Fill end date first so the portal never sees a temporary start > end range.
-  await fillDate(page, '#sRoDateToDate', chunk.endPortal);
-  await fillDate(page, '#sRoDateFromDate', chunk.startPortal);
+  // Use fillDateRange to set both dates before triggering Kendo validation events.
+  // This prevents the page from clearing fields due to intermediate range validation
+  // when moving backward in time.
+  await fillDateRange(page, '#sRoDateFromDate', '#sRoDateToDate', chunk.startPortal, chunk.endPortal);
+
+  const actualStart = await getInputValue(page, '#sRoDateFromDate');
+  const actualEnd = await getInputValue(page, '#sRoDateToDate');
+  logger.info('Open RO date fields verified before search', {
+    expectedStart: chunk.startPortal,
+    actualStart,
+    expectedEnd: chunk.endPortal,
+    actualEnd
+  });
+
+  if (actualStart.trim() !== chunk.startPortal || actualEnd.trim() !== chunk.endPortal) {
+    throw new Error(
+      `Open RO date fields did not retain expected values. ` +
+      `Expected ${chunk.startPortal} - ${chunk.endPortal}, got ${actualStart} - ${actualEnd}`
+    );
+  }
 }
 
 export async function downloadOpenRoYearlyReport(page) {
@@ -77,7 +95,7 @@ export async function downloadOpenRoYearlyReport(page) {
       : config.openRoYearlyStartDate
   );
   const endDate = overrideRange?.endDate ?? new Date();
-  const chunks = getThirtyDayChunks(startDate, endDate);
+  const chunks = getThirtyDayChunks(startDate, endDate).reverse();
   const runDate = toIsoDate(endDate);
   const chunkDir = path.join(config.reportChunksDir, 'open-ro-yearly', runDate);
   const exportFiles = [];
@@ -144,6 +162,24 @@ export async function downloadOpenRoYearlyReport(page) {
     chunkCount: chunks.length,
     fileCount: exportFiles.length
   });
+
+  if (!exportFiles.length) {
+    logger.info('No Open RO data found across any date chunks; skipping database save');
+    await cleanupReportExportDir(chunkDir).catch(() => {});
+    return {
+      name: 'Open RO Yearly',
+      sheetName: config.openRoYearlySheetName,
+      dbResult: {
+        action: 'skipped_no_data',
+        rowCount: 0,
+        headerCount: 0
+      },
+      chunkCount: chunks.length,
+      chunkDir,
+      chunkFiles: []
+    };
+  }
+
   const merged = await mergeExcelFiles(exportFiles);
 
   const dbResult = await saveReportSheetToSupabase({

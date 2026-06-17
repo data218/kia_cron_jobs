@@ -518,11 +518,17 @@ if (shouldRunFromCli && process.argv.includes('--once')) {
   });
   cron.schedule(config.demoCarListCronSchedule, () => runKiaDmsJob('demo-car-list'));
 
-  logger.info('Scheduling Service Appointment automation job', {
-    cron: config.serviceAppointmentCronSchedule,
-    mode: 'service-appointment'
+  logger.info('Scheduling RO Billing automation job', {
+    cron: config.roBillingCronSchedule,
+    mode: 'ro-billing'
   });
-  cron.schedule(config.serviceAppointmentCronSchedule, () => runKiaDmsJob('service-appointment'));
+  cron.schedule(config.roBillingCronSchedule, () => runKiaDmsJob('ro-billing'));
+
+  logger.info('Scheduling Hyundai Repair Order automation job', {
+    cron: config.hmilRepairOrderCronSchedule,
+    mode: 'hyundai-repair-order'
+  });
+  cron.schedule(config.hmilRepairOrderCronSchedule, () => runKiaDmsJob('hyundai-repair-order'));
 
   await writeHealthStatus({
     status: 'idle',

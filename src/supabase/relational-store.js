@@ -34,7 +34,6 @@ const IDENTITY_COLUMN_ALIASES = {
   claim_type: ['claim_type', 'warranty_claim_type'],
   claim_date: ['claim_date', 'warranty_claim_date'],
   ro_date: ['ro_date', 'r_o_date']
-}
 };
 
 function normalizeSqlName(value, fallback = 'column') {
@@ -84,8 +83,22 @@ function headerLooksDate(header) {
     normalized.includes('uploaded_at');
 }
 
+function isForcedTextColumn(columnName) {
+  return (
+    columnName === 'sac_hsn' ||
+    columnName === 'hsn' ||
+    columnName.endsWith('_hsn') ||
+    columnName.endsWith('_code') ||
+    columnName.endsWith('_no') ||
+    columnName.includes('invoice') ||
+    columnName.includes('irn') ||
+    columnName.includes('acknowledge')
+  );
+}
+
 function headerLooksNumeric(header) {
   const normalized = normalizeSqlName(header);
+  if (isForcedTextColumn(normalized)) return false;
   return [
     'amt',
     'amount',
@@ -200,6 +213,8 @@ function parseNumericValue(value) {
 }
 
 function inferColumnType(header, rows) {
+  const normalized = normalizeSqlName(header);
+  if (isForcedTextColumn(normalized)) return 'text';
   if (headerLooksDate(header)) return 'date';
   if (headerLooksNumeric(header)) return 'numeric';
 
@@ -327,6 +342,98 @@ function buildColumns(headers, rows) {
 
 const ensuredTableSignatures = new Set();
 
+async function getExistingColumnTypes(client, tableName) {
+  const result = await client.query(
+    `
+      select column_name, data_type
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = $1
+    `,
+    [tableName]
+  );
+
+  return new Map(result.rows.map(row => [row.column_name, row.data_type]));
+}
+
+async function reconcileExistingColumnTypes(client, tableName, columns) {
+  const existing = await getExistingColumnTypes(client, tableName);
+  if (!existing.size) return;
+
+  const table = `public.${quoteIdentifier(tableName)}`;
+  for (const column of columns) {
+    const currentType = existing.get(column.name);
+    if (!currentType || currentType === 'text') continue;
+
+    if (column.type === 'text') {
+      await client.query(`
+        alter table ${table}
+        alter column ${quoteIdentifier(column.name)} type text
+        using ${quoteIdentifier(column.name)}::text
+      `);
+      logger.info('Reconciled relational column to text', {
+        tableName,
+        column: column.name,
+        previousType: currentType
+      });
+      continue;
+    }
+
+    if (column.type === 'date' && (currentType === 'numeric' || currentType === 'double precision' || currentType === 'integer')) {
+      await client.query(`
+        alter table ${table}
+        alter column ${quoteIdentifier(column.name)} type date
+        using nullif(${quoteIdentifier(column.name)}::text, '')::date
+      `);
+      logger.info('Reconciled relational column to date', {
+        tableName,
+        column: column.name,
+        previousType: currentType
+      });
+    }
+  }
+}
+
+async function ensureIdColumnDefault(client, tableName) {
+  const table = `public.${quoteIdentifier(tableName)}`;
+  const sequenceName = `${tableName}_id_seq`;
+  const { rows } = await client.query(
+    `
+      select column_default, is_identity
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = $1
+        and column_name = 'id'
+    `,
+    [tableName]
+  );
+
+  if (!rows.length) return;
+
+  const { column_default: columnDefault, is_identity: isIdentity } = rows[0];
+  if (columnDefault || isIdentity === 'YES') return;
+
+  const sequence = quoteIdentifier(sequenceName);
+  await client.query(`create sequence if not exists ${sequence}`);
+  await client.query(`
+    alter table ${table}
+    alter column id set default nextval('public.${sequenceName}'::regclass)
+  `);
+  await client.query(`alter sequence ${sequence} owned by ${table}.id`);
+  await client.query(`
+    select setval(
+      'public.${sequenceName}'::regclass,
+      coalesce((select max(id) from ${table}), 0) + 1,
+      false
+    )
+  `);
+
+  logger.info('Repaired relational table id column default', {
+    tableName,
+    sequenceName
+  });
+}
+
 async function ensureReportTable(client, tableName, columns) {
   const signature = `${tableName}:${columns.map(column => `${column.name}:${column.type}`).join('|')}`;
   if (ensuredTableSignatures.has(signature)) {
@@ -352,6 +459,9 @@ async function ensureReportTable(client, tableName, columns) {
       add column if not exists ${quoteIdentifier(column.name)} ${columnSqlType(column.type)}
     `);
   }
+
+  await reconcileExistingColumnTypes(client, tableName, columns);
+  await ensureIdColumnDefault(client, tableName);
 
   await client.query(`
     alter table ${table}
@@ -462,11 +572,15 @@ async function upsertPreparedRows(client, tableName, columns, preparedRows, uses
     ? 'business_identity_key = excluded.business_identity_key,'
     : '';
 
+  const onConflictSql = conflictTarget === 'business_identity_key'
+    ? `on conflict (${quoteIdentifier(conflictTarget)}) where business_identity_key is not null do update set`
+    : `on conflict (${quoteIdentifier(conflictTarget)}) do update set`;
+
   const result = await client.query(
     `
       insert into ${table} (${insertColumns.map(quoteIdentifier).join(', ')})
       values ${rowGroups.join(',\n        ')}
-      on conflict (${quoteIdentifier(conflictTarget)}) do update set
+      ${onConflictSql}
         row_hash = excluded.row_hash,
         ${businessKeyUpdate}
         ${updateSql},

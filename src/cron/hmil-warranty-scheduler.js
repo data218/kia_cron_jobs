@@ -29,13 +29,33 @@ function isActiveDealerAlias(dealerCode) {
   return !dealerCode || ['active', 'current', 'default'].includes(String(dealerCode).trim().toLowerCase());
 }
 
+const RAJOURI_HISTORICAL_FETCH_CODE = 'N6824';
+
+function platinumDealersForWarrantyAccount(account) {
+  const dealers = config.amPlatinumDealerCodes.length ? config.amPlatinumDealerCodes : ['active'];
+  const isHistorical = account?.id === 'am-platinum-warranty-historical' ||
+    account?.id === 'am-platinum-historical' ||
+    String(account?.userId || '').toUpperCase() === String(config.amPlatinumHistoricalUserId || 'MIS12345').toUpperCase();
+
+  if (isHistorical) {
+    return dealers.map(code => (
+      code === config.amPlatinumPost2024DealerCode ? RAJOURI_HISTORICAL_FETCH_CODE : code
+    ));
+  }
+
+  return dealers.map(code => (
+    code === RAJOURI_HISTORICAL_FETCH_CODE ? config.amPlatinumPost2024DealerCode : code
+  ));
+}
+
 export function getWarrantyDealerCodesForAccount(account) {
-  const isPlatinum = account?.id === 'am-platinum-warranty' ||
-    account?.id === 'am-platinum' ||
-    String(account?.userId || '').toUpperCase() === String(config.amPlatinumUserId || 'MIS1988').toUpperCase();
+  const isPlatinum = account?.id?.startsWith('am-platinum') ||
+    [config.amPlatinumUserId, config.amPlatinumHistoricalUserId]
+      .filter(Boolean)
+      .some(userId => String(account?.userId || '').toUpperCase() === String(userId).toUpperCase());
 
   if (isPlatinum) {
-    return config.amPlatinumDealerCodes.length ? config.amPlatinumDealerCodes : ['active'];
+    return platinumDealersForWarrantyAccount(account);
   }
 
   const isSecondary = account?.id === 'hmil-warranty-secondary' ||
@@ -258,7 +278,7 @@ export async function runHmilWarrantyJob(mode = 'scheduled', {
   dealerCodesByAccount = null,
   dryRun = config.dryRunReports,
   skipTableClear = mode === 'scheduled',
-  resume = mode === 'scheduled' ? true : config.hmilWarrantyResume
+  resume = mode === 'scheduled' ? config.hmilWarrantyScheduledResume : config.hmilWarrantyResume
 } = {}) {
   const lockDir = path.join(config.tempDir, 'hmil-warranty-scheduler.lock');
   const effectiveAccounts = accounts.map(account => ({
@@ -353,7 +373,9 @@ if (isMainModule() && process.argv.includes('--once')) {
   logger.info('Scheduling HMIL warranty automation job', {
     report: label,
     cron: config.hmilWarrantyCronSchedule,
-    timezone: config.hmilWarrantyCronTimezone
+    timezone: config.hmilWarrantyCronTimezone,
+    startDate: config.hmilWarrantyHistoricalStartDate,
+    accounts: createWarrantyScheduledAccounts().map(account => account.userId)
   });
   cron.schedule(
     config.hmilWarrantyCronSchedule,

@@ -272,7 +272,11 @@ export function createGdmsAccountScheduler(account) {
       dealerCodes: account.dealerCodes,
       reportsToRun: account.reportsToRun
     });
-    cron.schedule(account.cronSchedule, () => run(account.defaultMode));
+    cron.schedule(
+      account.cronSchedule,
+      () => run(account.defaultMode),
+      { timezone: account.cronTimezone ?? config.kiaCronTimezone }
+    );
   }
 
   function runFromCliIfNeeded(metaUrl, argvPath) {

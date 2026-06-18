@@ -56,6 +56,8 @@ function amPlatinumProfile() {
     logPrefix: 'AM Platinum',
     defaultMode: 'am-platinum-regular',
     cronSchedule: config.amPlatinumCronSchedule,
+    cronTimezone: config.amPlatinumCronTimezone,
+    currentMonthOnly: config.amPlatinumCurrentMonthOnly,
     loginUrl: config.amPlatinumLoginUrl,
     homeUrl: config.amPlatinumHomeUrl,
     userId: config.amPlatinumUserId,

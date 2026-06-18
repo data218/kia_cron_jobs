@@ -16,6 +16,8 @@
     "hmil:warranty:historical": "node src/cron/hmil-warranty-scheduler.js --once --mode=historical",
     "hmil:warranty:test": "node src/cron/hmil-warranty-test.js",
     "hmil:warranty:check": "node scripts/check-hmil-warranty-dealer-coverage.js",
+    "hmil:warranty:coverage": "node scripts/analyze-warranty-coverage.js",
+    "hmil:warranty:gap-backfill": "node scripts/run-warranty-gap-backfill.js",
     "hmil:warranty:dealer-backfill": "node scripts/run-hmil-warranty-dealer-backfill.js",
     "hmil:warranty:n5203": "powershell -NoExit -ExecutionPolicy Bypass -File scripts/run-hmil-warranty-dealer-backfill.ps1 N5203",
     "hmil:warranty:full-all": "powershell -NoExit -ExecutionPolicy Bypass -File scripts/run-all-warranty-full.ps1",

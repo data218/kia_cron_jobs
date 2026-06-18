@@ -34,7 +34,7 @@ async function runMultiDealerReportFirst(page, { mode, reports }) {
       const reportName = report.name;
       const primaryDealerReports = [];
 
-      if (config.primaryDealerCode) {
+      if (config.primaryDealerCode && activeDealerCode !== config.primaryDealerCode) {
         logger.info('Switching to primary dealer for report-first execution', {
           mode,
           report: reportName,
@@ -42,6 +42,12 @@ async function runMultiDealerReportFirst(page, { mode, reports }) {
         });
         await changeActiveDealer(page, config.primaryDealerCode);
         activeDealerCode = config.primaryDealerCode;
+      } else if (config.primaryDealerCode) {
+        logger.info('Primary dealer already active after login; skipping dealer change', {
+          mode,
+          report: reportName,
+          dealerCode: config.primaryDealerCode
+        });
       }
 
       const primaryReports = await runConfiguredReports(page, {
@@ -63,13 +69,21 @@ async function runMultiDealerReportFirst(page, { mode, reports }) {
       }
 
       for (const dealerCode of config.additionalDealerCodes) {
-        logger.info('Switching to additional dealer for same report', {
-          mode,
-          report: reportName,
-          dealerCode
-        });
-        await changeActiveDealer(page, dealerCode);
-        activeDealerCode = dealerCode;
+        if (activeDealerCode === dealerCode) {
+          logger.info('Additional dealer already active; skipping dealer change', {
+            mode,
+            report: reportName,
+            dealerCode
+          });
+        } else {
+          logger.info('Switching to additional dealer for same report', {
+            mode,
+            report: reportName,
+            dealerCode
+          });
+          await changeActiveDealer(page, dealerCode);
+          activeDealerCode = dealerCode;
+        }
 
         const dealerReports = await runConfiguredReports(page, {
           mode,
@@ -98,7 +112,18 @@ async function runMultiDealerReportFirst(page, { mode, reports }) {
         dealerCode: config.primaryDealerCode,
         previousDealerCode: activeDealerCode
       });
-      await changeActiveDealer(page, config.primaryDealerCode);
+      try {
+        await changeActiveDealer(page, config.primaryDealerCode);
+      } catch (error) {
+        logger.warn('Failed to restore primary dealer after report-first multi-dealer run', {
+          mode,
+          dealerCode: config.primaryDealerCode,
+          err: {
+            name: error.name,
+            message: error.message
+          }
+        });
+      }
     }
   }
 }
@@ -109,11 +134,10 @@ async function runMultiDealerDealerFirst(page, { mode, reports }) {
 
   try {
     if (config.primaryDealerCode) {
-      logger.info('Ensuring primary dealer is active before report sequence', {
+      logger.info('Assuming primary dealer is active after login; skipping initial dealer change', {
         mode,
         dealerCode: config.primaryDealerCode
       });
-      await changeActiveDealer(page, config.primaryDealerCode);
     }
 
     const primaryReports = await runConfiguredReports(page, {
@@ -131,9 +155,13 @@ async function runMultiDealerDealerFirst(page, { mode, reports }) {
       });
     } else {
       for (const dealerCode of config.additionalDealerCodes) {
-        logger.info('Starting additional dealer execution', { mode, dealerCode });
-        await changeActiveDealer(page, dealerCode);
-        activeDealerCode = dealerCode;
+        if (activeDealerCode === dealerCode) {
+          logger.info('Additional dealer already active; skipping dealer change', { mode, dealerCode });
+        } else {
+          logger.info('Starting additional dealer execution', { mode, dealerCode });
+          await changeActiveDealer(page, dealerCode);
+          activeDealerCode = dealerCode;
+        }
 
         const dealerReports = await runConfiguredReports(page, {
           mode,
@@ -161,7 +189,18 @@ async function runMultiDealerDealerFirst(page, { mode, reports }) {
         dealerCode: config.primaryDealerCode,
         previousDealerCode: activeDealerCode
       });
-      await changeActiveDealer(page, config.primaryDealerCode);
+      try {
+        await changeActiveDealer(page, config.primaryDealerCode);
+      } catch (error) {
+        logger.warn('Failed to restore primary dealer after multi-dealer run', {
+          mode,
+          dealerCode: config.primaryDealerCode,
+          err: {
+            name: error.name,
+            message: error.message
+          }
+        });
+      }
     }
   }
 }
@@ -273,15 +312,6 @@ async function runReportsForDealerSequence(page, { mode, requiresKiaDms }) {
 
 async function runKiaDmsJobUnlocked(mode = 'configured') {
   if (running) {
-    if (mode === 'regular' && config.skipRegularRunWhenSchedulerBusy) {
-      logger.warn('Scheduler already running, skipping regular report execution', {
-        mode,
-        queuedModes,
-        reason: 'regular reports should not run after a special cron finishes'
-      });
-      return;
-    }
-
     if (!queuedModes.includes(mode)) {
       queuedModes.push(mode);
     }
@@ -302,7 +332,11 @@ async function runKiaDmsJobUnlocked(mode = 'configured') {
   try {
     await ensureRuntimeDirs();
     logger.info('Report automation job started', { mode });
-    await waitForConnectivity({ label: `scheduler ${mode} startup` });
+    await waitForConnectivity({
+      label: `scheduler ${mode} startup`,
+      timeoutMs: config.networkStartupWaitTimeoutMs,
+      failOpen: config.networkStartupFailOpen
+    });
     await writeHealthStatus({
       status: 'running',
       mode,
@@ -383,6 +417,16 @@ async function runKiaDmsJobUnlocked(mode = 'configured') {
     });
   } catch (error) {
     jobFailed = true;
+    if (error?.name === 'NetworkUnavailableError' && mode === 'regular') {
+      logger.warn('Scheduling delayed regular retry after startup network failure', {
+        retryInMs: config.networkStartupRetryDelayMs
+      });
+      setTimeout(() => {
+        runKiaDmsJob('regular').catch(retryError => {
+          logger.error('Delayed regular retry after network failure failed', retryError);
+        });
+      }, config.networkStartupRetryDelayMs);
+    }
     logger.error('Report automation job failed', error);
     await writeHealthStatus({
       status: 'failed',
@@ -406,13 +450,23 @@ async function runKiaDmsJobUnlocked(mode = 'configured') {
     running = false;
 
     if (jobFailed && queuedModes.length) {
-      const droppedModes = queuedModes.splice(0, queuedModes.length);
-      logger.warn('Cleared queued scheduler executions because current run failed', {
-        mode,
-        droppedModes,
-        reason: 'avoid repeated login/OTP attempts after a failed scheduler run'
-      });
-      return;
+      const preservedModes = queuedModes.filter(queuedMode => queuedMode === 'regular');
+      const droppedModes = queuedModes.filter(queuedMode => queuedMode !== 'regular');
+      queuedModes.length = 0;
+      queuedModes.push(...preservedModes);
+
+      if (droppedModes.length) {
+        logger.warn('Cleared queued scheduler executions because current run failed', {
+          mode,
+          droppedModes,
+          preservedModes,
+          reason: 'avoid repeated login/OTP attempts after a failed scheduler run'
+        });
+      }
+
+      if (!preservedModes.length) {
+        return;
+      }
     }
 
     const nextMode = queuedModes.shift();
@@ -438,9 +492,38 @@ async function runKiaDmsJobUnlocked(mode = 'configured') {
   }
 }
 
+function queueKiaDmsJob(mode, reason) {
+  if (mode === 'regular' && config.skipRegularRunWhenSchedulerBusy) {
+    logger.warn('Scheduler busy; skipping regular report execution', {
+      mode,
+      queuedModes,
+      reason
+    });
+    return false;
+  }
+
+  if (!queuedModes.includes(mode)) {
+    queuedModes.push(mode);
+  }
+
+  logger.warn('Scheduler busy; queued execution', {
+    mode,
+    queueLength: queuedModes.length,
+    queuedModes,
+    reason
+  });
+  return true;
+}
+
 export async function runKiaDmsJob(mode = 'configured') {
+  if (running) {
+    queueKiaDmsJob(mode, 'another KIA scheduler job is already running');
+    return;
+  }
+
   const lockDir = path.join(config.tempDir, 'kia-scheduler.lock');
-  const lockTimeoutMs = mode === 'regular' ? 1000 : 300000;
+  // Regular hourly runs can wait for an in-progress job (catch-up or prior cron).
+  const lockTimeoutMs = mode === 'regular' ? 2700000 : 120000;
 
   try {
     return await withDirectoryLock(
@@ -455,10 +538,7 @@ export async function runKiaDmsJob(mode = 'configured') {
     );
   } catch (error) {
     if (error.message?.includes('Timed out waiting for filesystem lock')) {
-      logger.warn('KIA scheduler lock is busy; skipping overlapping run', {
-        mode,
-        lockDir
-      });
+      queueKiaDmsJob(mode, 'filesystem lock is held by another scheduler run');
       return;
     }
 
@@ -482,53 +562,70 @@ const shouldRunFromCli = isMainModule() || process.argv.includes('--scheduler');
 if (shouldRunFromCli && process.argv.includes('--once')) {
   await runKiaDmsJob(modeFromArgs());
 } else if (shouldRunFromCli) {
+  const cronOptions = { timezone: config.kiaCronTimezone };
+
   logger.info('Scheduling regular report automation job', {
     cron: config.regularReportsCronSchedule,
-    mode: 'regular'
+    mode: 'regular',
+    timezone: config.kiaCronTimezone
   });
-  cron.schedule(config.regularReportsCronSchedule, () => runKiaDmsJob('regular'));
+  cron.schedule(config.regularReportsCronSchedule, () => runKiaDmsJob('regular'), cronOptions);
 
   logger.info('Scheduling RSA Report automation job', {
     cron: config.rsaReportCronSchedule,
-    mode: 'rsa-report'
+    mode: 'rsa-report',
+    timezone: config.kiaCronTimezone
   });
-  cron.schedule(config.rsaReportCronSchedule, () => runKiaDmsJob('rsa-report'));
+  cron.schedule(config.rsaReportCronSchedule, () => runKiaDmsJob('rsa-report'), cronOptions);
 
   logger.info('Scheduling Open RO Yearly automation job', {
     cron: config.openRoYearlyCronSchedule,
-    mode: 'open-ro-yearly'
+    mode: 'open-ro-yearly',
+    timezone: config.kiaCronTimezone
   });
-  cron.schedule(config.openRoYearlyCronSchedule, () => runKiaDmsJob('open-ro-yearly'));
+  cron.schedule(config.openRoYearlyCronSchedule, () => runKiaDmsJob('open-ro-yearly'), cronOptions);
 
   logger.info('Scheduling Kia Call Center Complaints automation job', {
     cron: config.kiaCallCenterComplaintsCronSchedule,
-    mode: 'kia-call-center-complaints'
+    mode: 'kia-call-center-complaints',
+    timezone: config.kiaCronTimezone
   });
-  cron.schedule(config.kiaCallCenterComplaintsCronSchedule, () => runKiaDmsJob('kia-call-center-complaints'));
+  cron.schedule(config.kiaCallCenterComplaintsCronSchedule, () => runKiaDmsJob('kia-call-center-complaints'), cronOptions);
 
   logger.info('Scheduling Demo Job Cards automation job', {
     cron: config.demoJobCardsCronSchedule,
-    mode: 'demo-job-cards'
+    mode: 'demo-job-cards',
+    timezone: config.kiaCronTimezone
   });
-  cron.schedule(config.demoJobCardsCronSchedule, () => runKiaDmsJob('demo-job-cards'));
+  cron.schedule(config.demoJobCardsCronSchedule, () => runKiaDmsJob('demo-job-cards'), cronOptions);
 
   logger.info('Scheduling Demo Car List automation job', {
     cron: config.demoCarListCronSchedule,
-    mode: 'demo-car-list'
+    mode: 'demo-car-list',
+    timezone: config.kiaCronTimezone
   });
-  cron.schedule(config.demoCarListCronSchedule, () => runKiaDmsJob('demo-car-list'));
+  cron.schedule(config.demoCarListCronSchedule, () => runKiaDmsJob('demo-car-list'), cronOptions);
 
   logger.info('Scheduling RO Billing automation job', {
     cron: config.roBillingCronSchedule,
-    mode: 'ro-billing'
+    mode: 'ro-billing',
+    timezone: config.kiaCronTimezone
   });
-  cron.schedule(config.roBillingCronSchedule, () => runKiaDmsJob('ro-billing'));
+  cron.schedule(config.roBillingCronSchedule, () => runKiaDmsJob('ro-billing'), cronOptions);
 
   logger.info('Scheduling Hyundai Repair Order automation job', {
     cron: config.hmilRepairOrderCronSchedule,
-    mode: 'hyundai-repair-order'
+    mode: 'hyundai-repair-order',
+    timezone: config.kiaCronTimezone
   });
-  cron.schedule(config.hmilRepairOrderCronSchedule, () => runKiaDmsJob('hyundai-repair-order'));
+  cron.schedule(config.hmilRepairOrderCronSchedule, () => runKiaDmsJob('hyundai-repair-order'), cronOptions);
+
+  logger.info('Scheduling Service Appointment automation job', {
+    cron: config.serviceAppointmentCronSchedule,
+    mode: 'service-appointment',
+    timezone: config.kiaCronTimezone
+  });
+  cron.schedule(config.serviceAppointmentCronSchedule, () => runKiaDmsJob('service-appointment'), cronOptions);
 
   await writeHealthStatus({
     status: 'idle',

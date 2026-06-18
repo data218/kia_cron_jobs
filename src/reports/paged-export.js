@@ -383,7 +383,7 @@ export async function exportAllGridPagesToFiles(page, {
   }
 
   const firstState = await getPagerState(page, pageSize, { gridSelector });
-  const totalPages = firstState.totalPages;
+  let totalPages = firstState.totalPages;
 
   logger.info('Grid export starting', {
     filenameBase,
@@ -411,6 +411,7 @@ export async function exportAllGridPagesToFiles(page, {
       break;
     }
 
+    const beforeState = await getPagerState(page, pageSize, { gridSelector });
     const moved = await clickNextPage(page, { gridSelector });
     if (!moved) {
       logger.warn('Pager next button is disabled before expected last page', {
@@ -418,6 +419,42 @@ export async function exportAllGridPagesToFiles(page, {
         totalPages
       });
       break;
+    }
+
+    const afterState = await getPagerState(page, pageSize, { gridSelector });
+    if (afterState.currentPage <= beforeState.currentPage) {
+      logger.warn('Pager page did not advance after next click; stopping export to avoid loop', {
+        filenameBase,
+        pageNumber,
+        beforePage: beforeState.currentPage,
+        afterPage: afterState.currentPage,
+        totalPages
+      });
+      break;
+    }
+
+    const visibleRowCount = await getVisibleGridDataRowCount(page, { gridSelector });
+    if (visibleRowCount === 0) {
+      logger.warn('Grid page has no visible rows after pagination; stopping export', {
+        filenameBase,
+        pageNumber: afterState.currentPage,
+        totalPages
+      });
+      break;
+    }
+
+    if (afterState.totalItems != null && afterState.pageSize) {
+      const resolvedTotalPages = Math.max(1, Math.ceil(afterState.totalItems / afterState.pageSize));
+      if (resolvedTotalPages < totalPages) {
+        logger.info('Correcting pager totalPages from live grid state', {
+          filenameBase,
+          previousTotalPages: totalPages,
+          resolvedTotalPages,
+          totalItems: afterState.totalItems,
+          pageSize: afterState.pageSize
+        });
+        totalPages = resolvedTotalPages;
+      }
     }
   }
 

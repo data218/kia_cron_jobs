@@ -128,12 +128,25 @@ export async function saveReportSheetToSupabase({
   headers,
   rows
 }) {
-  if (!Array.isArray(headers) || !headers.length) {
-    throw new Error('Cannot save report without headers');
-  }
-
   if (!Array.isArray(rows)) {
     throw new Error('Cannot save report because rows must be an array');
+  }
+
+  const headerCount = Array.isArray(headers) ? headers.length : 0;
+  if (!headerCount || !rows.length) {
+    logger.info('Skipping Supabase save because report has no exportable rows', {
+      brand,
+      sheetName,
+      headerCount,
+      rowCount: rows.length
+    });
+
+    return {
+      action: 'no_rows',
+      uploadedAt: new Date().toISOString(),
+      headerCount,
+      rowCount: 0
+    };
   }
 
   const supabase = createSupabaseClient();

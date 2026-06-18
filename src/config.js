@@ -56,7 +56,7 @@ export const config = {
   otpFreshnessGraceMs: envInt('OTP_FRESHNESS_GRACE_MS', 15000),
   cronSchedule: env('CRON_SCHEDULE', '0 9-18 * * *'),
   regularReportsCronSchedule: env('REGULAR_REPORTS_CRON_SCHEDULE', env('CRON_SCHEDULE', '0 9-18 * * *')),
-  rsaReportCronSchedule: env('RSA_REPORT_CRON_SCHEDULE', '0 10 * * *'),
+  rsaReportCronSchedule: env('RSA_REPORT_CRON_SCHEDULE', '5 10 * * *'),
   openRoYearlyCronSchedule: env('OPEN_RO_YEARLY_CRON_SCHEDULE', '10 18 * * *'),
   kiaCallCenterComplaintsCronSchedule: env('KIA_CALL_CENTER_COMPLAINTS_CRON_SCHEDULE', '25 18 * * *'),
   demoJobCardsCronSchedule: env('DEMO_JOB_CARDS_CRON_SCHEDULE', '30 10,18 * * *'),
@@ -75,8 +75,15 @@ export const config = {
   playwrightActionTimeoutMs: envInt('PLAYWRIGHT_ACTION_TIMEOUT_MS', 45000),
   playwrightNavigationTimeoutMs: envInt('PLAYWRIGHT_NAVIGATION_TIMEOUT_MS', 60000),
   networkCheckUrl: env('NETWORK_CHECK_URL', 'https://www.gstatic.com/generate_204'),
+  networkCheckUrls: envList(
+    'NETWORK_CHECK_URLS',
+    'https://www.gstatic.com/generate_204,https://dms.kiaindia.net/'
+  ),
   networkCheckTimeoutMs: envInt('NETWORK_CHECK_TIMEOUT_MS', 8000),
   networkWaitTimeoutMs: envInt('NETWORK_WAIT_TIMEOUT_MS', 1800000),
+  networkStartupWaitTimeoutMs: envInt('NETWORK_STARTUP_WAIT_TIMEOUT_MS', 60000),
+  networkStartupFailOpen: envBool('NETWORK_STARTUP_FAIL_OPEN', true),
+  networkStartupRetryDelayMs: envInt('NETWORK_STARTUP_RETRY_DELAY_MS', 900000),
   networkRetryIntervalMs: envInt('NETWORK_RETRY_INTERVAL_MS', 15000),
   reportMaxRetries: envInt('REPORT_MAX_RETRIES', 3),
   reportRetryDelayMinMs: envInt('REPORT_RETRY_DELAY_MIN_MS', 30000),
@@ -107,7 +114,8 @@ export const config = {
   dealerChangeTimeoutMs: envInt('DEALER_CHANGE_TIMEOUT_MS', 90000),
   dryRunReports: envBool('DRY_RUN_REPORTS', false),
   dryRunReportDelayMs: envInt('DRY_RUN_REPORT_DELAY_MS', 500),
-  skipRegularRunWhenSchedulerBusy: envBool('SKIP_REGULAR_RUN_WHEN_SCHEDULER_BUSY', true),
+  skipRegularRunWhenSchedulerBusy: envBool('SKIP_REGULAR_RUN_WHEN_SCHEDULER_BUSY', false),
+  kiaCronTimezone: env('KIA_CRON_TIMEZONE', 'Asia/Kolkata'),
   historicalBackfillEnabled: envBool('HISTORICAL_BACKFILL_ENABLED', false),
   historicalBackfillStartDate: env('HISTORICAL_BACKFILL_START_DATE', '2025-01-01'),
   reportDateOverrideStartDate: env('REPORT_DATE_OVERRIDE_START_DATE'),
@@ -168,7 +176,7 @@ export const config = {
   advWiseLubricantsVasPageSize: env('ADV_WISE_LUBRICANTS_VAS_PAGE_SIZE', '300'),
   advWiseLubricantsVasPostSearchDelayMs: envDelayMs('ADV_WISE_LUBRICANTS_VAS_POST_SEARCH_DELAY_MS', 5000),
   operationWiseAnalysisSheetName: env('OPERATION_WISE_ANALYSIS_SHEET_NAME', 'Operation Wise Analysis Report'),
-  operationWiseAnalysisPageSize: env('OPERATION_WISE_ANALYSIS_PAGE_SIZE', '1000'),
+  operationWiseAnalysisPageSize: env('OPERATION_WISE_ANALYSIS_PAGE_SIZE', '300'),
   operationWiseAnalysisReportTypes: env('OPERATION_WISE_ANALYSIS_REPORT_TYPES', 'Operation,Part')
     .split(',')
     .map(value => value.trim())
@@ -228,6 +236,7 @@ export const config = {
   hmilWarrantyHistoricalStartDate: env('HMIL_WARRANTY_HISTORICAL_START_DATE', '2025-01-01'),
   hmilWarrantyPageSize: env('HMIL_WARRANTY_PAGE_SIZE', '300'),
   hmilWarrantyResume: envBool('HMIL_WARRANTY_RESUME', false),
+  hmilWarrantyScheduledResume: envBool('HMIL_WARRANTY_SCHEDULED_RESUME', true),
   hmilWarrantySecondaryDealerCodes: envList(
     'HMIL_WARRANTY_SECONDARY_DEALER_CODES',
     'N5216,N6844,N6845,N6846,N6847,N6848'
@@ -250,7 +259,9 @@ export const config = {
   gdmsOtpLockEnabled: envBool('GDMS_OTP_LOCK_ENABLED', true),
   gdmsOtpLockTimeoutMs: envInt('GDMS_OTP_LOCK_TIMEOUT_MS', 300000),
   gdmsOtpLockStaleMs: envInt('GDMS_OTP_LOCK_STALE_MS', 600000),
-  amPlatinumCronSchedule: env('AM_PLATINUM_CRON_SCHEDULE', env('HMIL_CRON_SCHEDULE', '20 10-18 * * *')),
+  amPlatinumCronSchedule: env('AM_PLATINUM_CRON_SCHEDULE', '10 16 * * *'),
+  amPlatinumCronTimezone: env('AM_PLATINUM_CRON_TIMEZONE', env('KIA_CRON_TIMEZONE', 'Asia/Kolkata')),
+  amPlatinumCurrentMonthOnly: envBool('AM_PLATINUM_CURRENT_MONTH_ONLY', true),
   amPlatinumLoginUrl: env('AM_PLATINUM_DMS_URL', env('HMIL_DMS_URL', 'https://ndms.hmil.net/cmm/cmmi/selectLoginMain.dms')),
   amPlatinumHomeUrl: env('AM_PLATINUM_HOME_URL', env('HMIL_HOME_URL', 'https://ndms.hmil.net/cmm/cmmd/selectHome.dms')),
   amPlatinumUserId: env('AM_PLATINUM_USER_ID'),

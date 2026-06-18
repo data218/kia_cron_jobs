@@ -1,5 +1,17 @@
 import { logger } from '../utils/logger.js';
 
+function resolvePlaywrightPage(context) {
+  if (!context) return context;
+  if (context.keyboard) return context;
+  if (typeof context.page === 'function') return context.page();
+  return context;
+}
+
+async function dismissOpenKendoDropdown(context) {
+  const playwrightPage = resolvePlaywrightPage(context);
+  await playwrightPage.keyboard?.press('Escape').catch(() => {});
+}
+
 export async function waitForKendoGridIdle(page, { gridSelector = '#grid', timeout = 60000 } = {}) {
   await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
 
@@ -377,7 +389,7 @@ export async function selectKendoPagerSize(page, size, { timeout = 30000 } = {})
         fallbackSize: '300',
         error: error.message
       });
-      await page.keyboard.press('Escape').catch(() => {});
+      await dismissOpenKendoDropdown(page);
       return selectKendoPagerSizeByVisibleClick(page, '300', { timeout });
     }
 

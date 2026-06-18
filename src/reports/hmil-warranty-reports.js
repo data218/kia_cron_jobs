@@ -380,7 +380,7 @@ function envBool(name) {
 async function runWarrantyClaimYtpReport(page, { account, mode, report, dealerCode = 'active', resume = false }) {
   const fullRange = getHmilWarrantyRange(mode);
 
-  if (resume && !envBool('HMIL_WARRANTY_FORCE_YTP')) {
+  if (resume && mode === 'historical') {
     const alreadyLoaded = await hasWarrantyClaimYtpData(account.userId, dealerCode);
     if (alreadyLoaded) {
       logger.info('Claim YTP already loaded for dealer; skipping resume', {
@@ -656,6 +656,6 @@ export const hmilWarrantyReportDefinitions = [
 
 export async function runHmilWarrantyReport(page, options) {
   const mode = options.mode ?? 'scheduled';
-  const resume = options.resume ?? (mode === 'scheduled' ? true : config.hmilWarrantyResume);
+  const resume = options.resume ?? (mode === 'scheduled' ? config.hmilWarrantyScheduledResume : config.hmilWarrantyResume);
   return runWarrantyReport(page, { ...options, mode, resume });
 }

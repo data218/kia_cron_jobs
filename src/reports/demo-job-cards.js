@@ -18,6 +18,7 @@ import {
   exportAllGridPagesToFiles,
   mergeExcelFiles
 } from './paged-export.js';
+import { addDealerCodeToDataset } from './report-metadata.js';
 import {
   clickSearch,
   fillDate,
@@ -100,8 +101,8 @@ async function fillDemoJobCardsDateRange(page, chunk) {
   await fillDate(page, '#sRoDateFromDate', chunk.startPortal);
 }
 
-export async function downloadDemoJobCardsReport(page) {
-  logger.info('Demo Job Cards report started');
+export async function downloadDemoJobCardsReport(page, { dealerCode = 'active' } = {}) {
+  logger.info('Demo Job Cards report started', { dealerCode });
   await openOpenRoYearlyReport(page);
   const reportContext = await resolveDemoJobCardsContext(page);
 
@@ -166,7 +167,7 @@ export async function downloadDemoJobCardsReport(page) {
     chunkCount: chunks.length,
     fileCount: exportFiles.length
   });
-  const merged = await mergeExcelFiles(exportFiles);
+  const merged = addDealerCodeToDataset(await mergeExcelFiles(exportFiles), dealerCode);
 
   const dbResult = await saveReportSheetToSupabase({
     brand: 'kia',

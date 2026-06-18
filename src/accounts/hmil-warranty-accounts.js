@@ -56,22 +56,25 @@ export function createHmilWarrantyAccounts() {
   ];
 }
 
-export function createWarrantyScheduledAccounts() {
-  const platinumAccount = createAmPlatinumAccount('current');
+function wrapPlatinumWarrantyAccount(account, id) {
+  return {
+    ...account,
+    id,
+    brand: 'hyundai',
+    serviceName: 'hmil-warranty-cron-job',
+    systemLabel: 'HMIL DMS',
+    downloadDir: config.hmilWarrantyDownloadDir,
+    reportChunksDir: config.hmilWarrantyReportChunksDir,
+    headless: config.headless,
+    otpPurpose: 'hmil',
+    forceLogin: config.hmilWarrantyForceLogin
+  };
+}
 
+export function createWarrantyScheduledAccounts() {
   return [
     ...createHmilWarrantyAccounts(),
-    {
-      ...platinumAccount,
-      id: 'am-platinum-warranty',
-      brand: 'hyundai',
-      serviceName: 'hmil-warranty-cron-job',
-      systemLabel: 'HMIL DMS',
-      downloadDir: config.hmilWarrantyDownloadDir,
-      reportChunksDir: config.hmilWarrantyReportChunksDir,
-      headless: config.headless,
-      otpPurpose: 'hmil',
-      forceLogin: config.hmilWarrantyForceLogin
-    }
+    wrapPlatinumWarrantyAccount(createAmPlatinumAccount('current'), 'am-platinum-warranty'),
+    wrapPlatinumWarrantyAccount(createAmPlatinumAccount('historical'), 'am-platinum-warranty-historical')
   ];
 }

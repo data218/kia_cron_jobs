@@ -4,7 +4,13 @@ import { config } from '../config.js';
 import { createGdmsAccountProfile } from '../accounts/gdms-account-profile.js';
 import { findContextWithVisibleSelector } from '../playwright/frame-resolver.js';
 import { saveReportSheetToSupabase } from '../supabase/report-store.js';
-import { formatDateForPortal, getReportDateOverrideRange, parseIsoLocalDate, toIsoDate } from '../utils/date-range.js';
+import {
+  formatDateForPortal,
+  getCurrentMonthToDateRange,
+  getReportDateOverrideRange,
+  parseIsoLocalDate,
+  toIsoDate
+} from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
 import { openHmilRepairOrderListReport } from '../navigation/hmil-menu.js';
@@ -62,6 +68,10 @@ function configuredRange(account) {
   const overrideRange = getReportDateOverrideRange();
   if (overrideRange) {
     return overrideRange;
+  }
+
+  if (account.id === 'am-platinum' && account.currentMonthOnly) {
+    return getCurrentMonthToDateRange();
   }
 
   const startDate = parseIsoLocalDate(account.repairOrderStartDate);

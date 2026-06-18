@@ -185,6 +185,14 @@ app.get('/otp/latest', authorize, (req, res) => {
     ? recentOtps.find(candidate => candidate.purpose === purpose)
     : latestOtp;
 
+  if (!selectedOtp && purpose === 'kia') {
+    return res.status(404).json({ error: 'No Kia OTP received yet' });
+  }
+
+  if (!selectedOtp && purpose === 'hmil') {
+    return res.status(404).json({ error: 'No GDMS/Hyundai OTP received yet' });
+  }
+
   if (!selectedOtp) {
     return res.status(404).json({ error: 'No OTP received yet' });
   }

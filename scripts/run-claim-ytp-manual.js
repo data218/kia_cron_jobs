@@ -20,6 +20,7 @@ import {
 } from '../src/reports/paged-export.js';
 import { fillDate, clickSearch } from '../src/reports/report-actions.js';
 import { saveReportSheetToSupabase } from '../src/supabase/report-store.js';
+import { addSourceDealerCodeToDataset } from '../src/reports/report-metadata.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -51,7 +52,9 @@ const manualAccount = { ...account, otpProvider: 'manual', headless: false };
 const REPORT_NAME = 'Hyundai Warranty Claim YTP';
 const SHEET_NAME = 'Hyundai Warranty Claim YTP';
 const GRID_ID = 'gridClaimYtp';
-const PAGE_SIZE = '300';
+const dealerCode = String(process.env.HMIL_WARRANTY_DEALER_CODE || config.hmilDealerCodes[0] || 'active')
+  .trim()
+  .toUpperCase();
 
 async function main() {
   const session = await loginToHmilDms(manualAccount);
@@ -170,11 +173,15 @@ async function main() {
     return;
   }
 
+  merged = addSourceDealerCodeToDataset(merged, dealerCode);
   const rowsWithSource = merged.rows.map(row => ({ ...row, source_login_id: account.userId }));
+  const headersWithSource = merged.headers.includes('source_login_id')
+    ? merged.headers
+    : ['source_login_id', ...merged.headers];
   const dbResult = await saveReportSheetToSupabase({
     brand: 'hyundai',
     sheetName: SHEET_NAME,
-    headers: merged.headers,
+    headers: headersWithSource,
     rows: rowsWithSource
   });
 

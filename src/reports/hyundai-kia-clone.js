@@ -109,10 +109,14 @@ function currentMonthFullRange(today = new Date()) {
   };
 }
 
-function getRange(rangeType) {
+function getRange(rangeType, account) {
   const overrideRange = getReportDateOverrideRange();
   if (overrideRange) {
     return overrideRange;
+  }
+
+  if (account?.id === 'am-platinum' && account.currentMonthOnly) {
+    return getCurrentMonthToDateRange();
   }
 
   if (rangeType === 'current-month-full') {
@@ -238,7 +242,7 @@ export function createHyundaiKiaCloneReport(report) {
     maxPages: suppliedMaxPages
   } = {}) {
     const account = reportAccount(report);
-    const range = suppliedRange ?? getRange(report.rangeType);
+    const range = suppliedRange ?? getRange(report.rangeType, account);
 
     logger.info(`${account.logPrefix} mirrored KIA report started`, {
       reportId: report.id,

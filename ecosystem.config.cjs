@@ -53,11 +53,13 @@ module.exports = {
         NODE_ENV: 'production',
         LOG_SERVICE_NAME: 'hmil-historical-backfill',
         HMIL_HISTORICAL_START_DATE: '2021-01-01',
-        HMIL_HISTORICAL_REPORTS: 'hyundai-repair-order-list,hyundai-ro-billing-report,hyundai-call-center-complaints,hyundai-demo-car-list,hyundai-service-appointment,hyundai-trust-package-bodyshop-sot,hyundai-trust-package-sot-super,hyundai-trust-package-package-list,hyundai-psf-yearly,hyundai-ew-report,hyundai-adv-wise-lubricants-vas,hyundai-operation-wise-analysis-report',
+        HMIL_HISTORICAL_END_DATE: '2026-06-16',
+        HMIL_HISTORICAL_REPORTS: 'hyundai-repair-order-list,hyundai-ro-billing-report,hyundai-operation-wise-analysis-report',
         HMIL_HISTORICAL_DEALERS: 'N5203,N5701,N5804,N5806,N5D00,N6815,N6819,N6826',
         HMIL_HISTORICAL_FORCE_LOGIN: 'false',
         HMIL_HISTORICAL_HEADLESS: 'false',
-        HMIL_HISTORICAL_STOP_ON_FAILURE: 'true',
+        HMIL_HISTORICAL_OTP_PROVIDER: 'webhook',
+        HMIL_HISTORICAL_STOP_ON_FAILURE: 'false',
         HMIL_HISTORICAL_RESUME_FROM_STATE: 'true'
       }
     },
@@ -76,7 +78,12 @@ module.exports = {
       error_file: './logs/pm2-am-platinum-error.log',
       env: {
         NODE_ENV: 'production',
-        LOG_SERVICE_NAME: 'am-platinum-cron-job'
+        LOG_SERVICE_NAME: 'am-platinum-cron-job',
+        OTP_PROVIDER: 'webhook',
+        AM_PLATINUM_CRON_SCHEDULE: '10 16 * * *',
+        AM_PLATINUM_CRON_TIMEZONE: 'Asia/Kolkata',
+        AM_PLATINUM_CURRENT_MONTH_ONLY: 'true',
+        GDMS_OTP_LOCK_ENABLED: 'true'
       }
     },
     // Operation-wise is NOT a separate PM2 app — it runs inside am-platinum-historical-pipeline
@@ -133,9 +140,8 @@ module.exports = {
       }
     },
     {
-      name: 'hmil-warranty-claim-list',
+      name: 'hmil-warranty-cron-job',
       script: './src/cron/hmil-warranty-scheduler.js',
-      args: '--report=hyundai-warranty-claim-list',
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
@@ -143,35 +149,18 @@ module.exports = {
       max_memory_restart: '1G',
       time: true,
       merge_logs: true,
-      out_file: './logs/pm2-hmil-warranty-claim-list-out.log',
-      error_file: './logs/pm2-hmil-warranty-claim-list-error.log',
+      out_file: './logs/pm2-hmil-warranty-out.log',
+      error_file: './logs/pm2-hmil-warranty-error.log',
       env: {
         NODE_ENV: 'production',
-        LOG_SERVICE_NAME: 'hmil-warranty-claim-list',
+        LOG_SERVICE_NAME: 'hmil-warranty-cron-job',
         OTP_PROVIDER: 'webhook',
-        HMIL_WARRANTY_CRON_SCHEDULE: '0 15 * * *',
-        HMIL_WARRANTY_CRON_TIMEZONE: 'Asia/Kolkata'
-      }
-    },
-    {
-      name: 'hmil-warranty-claim-ytp',
-      script: './src/cron/hmil-warranty-scheduler.js',
-      args: '--report=hyundai-warranty-claim-ytp',
-      instances: 1,
-      exec_mode: 'fork',
-      autorestart: true,
-      watch: false,
-      max_memory_restart: '1G',
-      time: true,
-      merge_logs: true,
-      out_file: './logs/pm2-hmil-warranty-claim-ytp-out.log',
-      error_file: './logs/pm2-hmil-warranty-claim-ytp-error.log',
-      env: {
-        NODE_ENV: 'production',
-        LOG_SERVICE_NAME: 'hmil-warranty-claim-ytp',
-        OTP_PROVIDER: 'webhook',
-        HMIL_WARRANTY_CRON_SCHEDULE: '0 15 * * *',
-        HMIL_WARRANTY_CRON_TIMEZONE: 'Asia/Kolkata'
+        HMIL_WARRANTY_HISTORICAL_START_DATE: '2025-01-01',
+        HMIL_WARRANTY_CRON_SCHEDULE: '10 15 * * *',
+        HMIL_WARRANTY_CRON_TIMEZONE: 'Asia/Kolkata',
+        HMIL_WARRANTY_SCHEDULED_RESUME: 'true',
+        HMIL_WARRANTY_FORCE_LOGIN: 'true',
+        GDMS_OTP_LOCK_ENABLED: 'true'
       }
     },
     {

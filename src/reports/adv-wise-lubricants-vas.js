@@ -13,16 +13,17 @@ import {
   fillDate,
   selectKendoDropdownByInputId
 } from './report-actions.js';
+import { addDealerCodeToDataset } from './report-metadata.js';
 
 async function resolveAdvWiseLubricantsVasContext(page) {
   const context = await findContextWithVisibleSelector(page, '#startDate', {
     timeout: 90000,
-    label: 'Operation Wise Analysis Report Start Date'
+    label: 'Adv. wise lubricants & VAS Start Date'
   });
 
   await context.locator('#endDate').first().waitFor({ state: 'visible', timeout: 30000 });
   await context.locator('#dateType').first().waitFor({ state: 'attached', timeout: 30000 });
-  logger.info('Operation Wise Analysis Report page loaded');
+  logger.info('Adv. wise lubricants & VAS page loaded');
   return context;
 }
 
@@ -168,8 +169,8 @@ export async function downloadAdvWiseLubricantsVasReportOptimized(page, { dealer
   };
 }
 
-export async function downloadAdvWiseLubricantsVasReport(page) {
-  logger.info('Adv. wise lubricants & VAS started');
+export async function downloadAdvWiseLubricantsVasReport(page, { dealerCode = 'active' } = {}) {
+  logger.info('Adv. wise lubricants & VAS started', { dealerCode });
   await openAdvWiseLubricantsVasReport(page);
   const reportContext = await resolveAdvWiseLubricantsVasContext(page);
 
@@ -232,7 +233,7 @@ export async function downloadAdvWiseLubricantsVasReport(page) {
     exportFiles.push(...chunkFiles);
   }
 
-  const merged = await mergeExcelFiles(exportFiles);
+  const merged = addDealerCodeToDataset(await mergeExcelFiles(exportFiles), dealerCode);
   const dbResult = await saveReportSheetToSupabase({
     brand: 'kia',
     sheetName: config.advWiseLubricantsVasSheetName,

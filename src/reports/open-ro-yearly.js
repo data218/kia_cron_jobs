@@ -15,7 +15,7 @@ import {
 import { addDealerCodeToDataset } from './report-metadata.js';
 import {
   clickSearch,
-  fillDateRange,
+  fillDate,
   getInputValue,
   selectKendoDropdownByInputId
 } from './report-actions.js';
@@ -44,10 +44,8 @@ async function fillOpenRoDateRange(page, chunk) {
     endDate: chunk.endPortal
   });
 
-  // Use fillDateRange to set both dates before triggering Kendo validation events.
-  // This prevents the page from clearing fields due to intermediate range validation
-  // when moving backward in time.
-  await fillDateRange(page, '#sRoDateFromDate', '#sRoDateToDate', chunk.startPortal, chunk.endPortal);
+  await fillDate(page, '#sRoDateFromDate', chunk.startPortal);
+  await fillDate(page, '#sRoDateToDate', chunk.endPortal);
 
   const actualStart = await getInputValue(page, '#sRoDateFromDate');
   const actualEnd = await getInputValue(page, '#sRoDateToDate');

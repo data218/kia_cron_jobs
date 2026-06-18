@@ -88,7 +88,7 @@ const TABLE_SPECS = [
     table: 'am_platinum_adv_wise_lubricants_vas',
     reportId: 'hyundai-adv-wise-lubricants-vas',
     dateColumns: ['bill_date', 'invoice_date', 'ro_date', 'r_o_date'],
-    runner: 'optimized-historical'
+    runner: 'historical'
   },
   {
     table: 'am_platinum_operation_wise_analysis_report',

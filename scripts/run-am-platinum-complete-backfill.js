@@ -185,7 +185,7 @@ const STEPS = [
   },
   {
     title: 'Adv Wise Lubricants VAS (2024 → today)',
-    script: 'scripts/run-am-platinum-optimized-backfill.js',
+    script: 'scripts/run-am-platinum-historical-backfill.js',
     env: {
       ...sharedHistoricalEnv,
       AM_PLATINUM_HISTORICAL_REPORTS: 'hyundai-adv-wise-lubricants-vas',

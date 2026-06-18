@@ -371,10 +371,16 @@ async function exportWarrantyChunk(context, {
   };
 }
 
+function envBool(name) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return false;
+  return ['1', 'true', 'yes', 'y'].includes(String(raw).toLowerCase());
+}
+
 async function runWarrantyClaimYtpReport(page, { account, mode, report, dealerCode = 'active', resume = false }) {
   const fullRange = getHmilWarrantyRange(mode);
 
-  if (resume) {
+  if (resume && !envBool('HMIL_WARRANTY_FORCE_YTP')) {
     const alreadyLoaded = await hasWarrantyClaimYtpData(account.userId, dealerCode);
     if (alreadyLoaded) {
       logger.info('Claim YTP already loaded for dealer; skipping resume', {

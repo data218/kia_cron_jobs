@@ -371,3 +371,71 @@ export async function getKendoDropdownOptionsByInputId(page, inputId, {
     return true;
   });
 }
+
+export async function fillDateRange(page, startSelector, endSelector, startDateVal, endDateVal) {
+  const startInput = page.locator(startSelector).first();
+  const endInput = page.locator(endSelector).first();
+  
+  await startInput.waitFor({ state: 'visible', timeout: 30000 });
+  await endInput.waitFor({ state: 'visible', timeout: 30000 });
+  
+  await page.evaluate(({ startSel, endSel, startVal, endVal }) => {
+    const startEl = document.querySelector(startSel);
+    const endEl = document.querySelector(endSel);
+    if (!startEl || !endEl) return;
+
+    const setWidgetVal = (element, nextValue) => {
+      element.removeAttribute('readonly');
+      element.value = nextValue;
+      
+      const win = element.ownerDocument?.defaultView;
+      const kendo = win?.kendo;
+      const jquery = win?.jQuery ?? win?.$;
+      const [day, month, year] = String(nextValue)
+        .split(/[./-]/)
+        .map(part => Number.parseInt(part, 10));
+      const widgetDate = Number.isFinite(day) && Number.isFinite(month) && Number.isFinite(year)
+        ? new Date(year, month - 1, day)
+        : nextValue;
+      
+      if (kendo && jquery) {
+        const widget = jquery(element).data('kendoDatePicker') ??
+          jquery(element).data('kendoMaskedTextBox') ??
+          jquery(element).data('kendoExtMaskedDatePicker') ??
+          jquery(element).data('extmaskeddatepicker');
+        if (widget?.value) {
+          widget.value(widgetDate);
+        }
+        return widget;
+      }
+      return null;
+    };
+
+    const startWidget = setWidgetVal(startEl, startVal);
+    const endWidget = setWidgetVal(endEl, endVal);
+
+    startEl.dispatchEvent(new Event('input', { bubbles: true }));
+    startEl.dispatchEvent(new Event('change', { bubbles: true }));
+    startEl.dispatchEvent(new Event('blur', { bubbles: true }));
+
+    endEl.dispatchEvent(new Event('input', { bubbles: true }));
+    endEl.dispatchEvent(new Event('change', { bubbles: true }));
+    endEl.dispatchEvent(new Event('blur', { bubbles: true }));
+
+    if (startWidget?.trigger) {
+      startWidget.trigger('change');
+    }
+    if (endWidget?.trigger) {
+      endWidget.trigger('change');
+    }
+  }, {
+    startSel: startSelector,
+    endSel: endSelector,
+    startVal: startDateVal,
+    endVal: endDateVal
+  });
+
+  await startInput.press('Tab').catch(() => {});
+  await endInput.press('Tab').catch(() => {});
+}
+

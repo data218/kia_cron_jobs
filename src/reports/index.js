@@ -8,6 +8,7 @@ import { downloadPsfYearlyReport } from './psf-yearly.js';
 import { downloadEwReport } from './ew-report.js';
 import { downloadMcpReport } from './mcp-report.js';
 import { downloadRsaReport } from './rsa-report.js';
+import { downloadHyundaiRepairOrderListReport } from './hyundai-repair-order-list.js';
 import { downloadAdvWiseLubricantsVasReport } from './adv-wise-lubricants-vas.js';
 import { downloadOperationWiseAnalysisReport } from './operation-wise-analysis-report.js';
 import { downloadOperationWiseAnalysisAdvisorReport } from './operation-wise-analysis-advisor-report.js';
@@ -95,6 +96,12 @@ export const reportDefinitions = [
     name: 'RSA Report',
     requiresKiaDms: false,
     run: downloadRsaReport
+  },
+  {
+    id: 'hyundai-repair-order-list',
+    name: 'Hyundai Repair Order List',
+    requiresKiaDms: true,
+    run: downloadHyundaiRepairOrderListReport
   }
 ];
 
@@ -106,7 +113,9 @@ const regularReportDefinitions = defaultReportDefinitions.filter(report =>
     'demo-job-cards',
     'demo-car-list',
     'service-appointment',
-    'rsa-report'
+    'rsa-report',
+    'ro-billing',
+    'hyundai-repair-order-list'
   ].includes(report.id)
 );
 
@@ -150,6 +159,14 @@ export function getSelectedReports({ mode = 'configured' } = {}) {
 
   if (mode === 'rsa-report') {
     return reportDefinitions.filter(report => report.id === 'rsa-report');
+  }
+
+  if (mode === 'ro-billing') {
+    return reportDefinitions.filter(report => report.id === 'ro-billing');
+  }
+
+  if (mode === 'hyundai-repair-order') {
+    return reportDefinitions.filter(report => report.id === 'hyundai-repair-order-list');
   }
 
   const requested = config.reportsToRun

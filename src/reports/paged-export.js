@@ -474,6 +474,19 @@ export async function exportPagedGridToSupabase(page, {
     pageSize
   });
 
+  if (!pageFiles.length) {
+    logger.info('No data files exported; skipping database save', { reportId, sheetName });
+    await cleanupReportExportDir(outputDir).catch(() => {});
+    return {
+      action: 'skipped_no_data',
+      rowCount: 0,
+      headerCount: 0,
+      pageCount: 0,
+      outputDir,
+      pageFiles: []
+    };
+  }
+
   const merged = await mergeExcelFiles(pageFiles, { forcedHeaders });
   const dbResult = await saveReportSheetToSupabase({
     brand: 'kia',

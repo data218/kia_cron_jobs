@@ -86,8 +86,8 @@ function cloneReport(options, account) {
       ...options,
       sheetName: account.sheetName(options.sheetName),
       account,
-      pageSize: pageSize(account),
-      postSearchDelayMs: account.repairOrderPostSearchDelayMs
+      pageSize: options.pageSize ?? pageSize(account),
+      postSearchDelayMs: options.postSearchDelayMs ?? account.repairOrderPostSearchDelayMs
     })
   };
 }
@@ -298,6 +298,8 @@ export function createHmilReportDefinitions(account = defaultAccount()) {
     open: openAdvWiseLubricantsVasReport,
     dateFromSelector: '#startDate',
     dateToSelector: '#endDate',
+    pageSize: config.advWiseLubricantsVasPageSize,
+    postSearchDelayMs: config.advWiseLubricantsVasPostSearchDelayMs,
     preDateDropdowns: [
       { inputId: 'dateType', value: 'Billing Date', timeout: 10000 }
     ]

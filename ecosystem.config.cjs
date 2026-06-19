@@ -163,6 +163,23 @@ module.exports = {
       env: {
         NODE_ENV: 'production'
       }
+    },
+    {
+      name: 'dashboard-server',
+      script: './dashboard/server.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '512M',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-dashboard-out.log',
+      error_file: './logs/pm2-dashboard-error.log',
+      env: {
+        NODE_ENV: 'production',
+        DASHBOARD_PORT: 3456
+      }
     }
   ]
 };

@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Call Center - KIA Insurance</title>
+<style>
+:root {
+  --bg: #e8f0fe;
+  --panel: #ffffff;
+  --card: #ffffff;
+  --card-hover: #f0f5ff;
+  --border: #d0dce8;
+  --text: #000000;
+  --muted: #2a2a2a;
+  --accent: #f59e0b;
+  --green: #22c55e;
+  --red: #ef4444;
+  --blue: #3b82f6;
+  --orange: #f97316;
+  --purple: #a855f7;
+  --pink: #ec4899;
+  --teal: #14b8a6;
+  --radius: 10px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Inter','Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+
+/* TOP BAR */
+.topbar { background:var(--panel); border-bottom:1px solid var(--border); padding:0 20px; height:44px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; position:sticky; top:0; z-index:100; }
+.topbar-left { display:flex; align-items:center; gap:12px; }
+.topbar-left .back { width:32px; height:32px; border-radius:6px; border:1px solid var(--border); background:var(--card); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:16px; color:var(--muted); text-decoration:none; transition:.15s; }
+.topbar-left .back:hover { background:var(--card-hover); color:var(--text); }
+.topbar-left h1 { font-size:15px; font-weight:600; }
+.due-badge { font-size:10px; color:#fff; background:var(--blue); padding:2px 10px; border-radius:10px; font-weight:600; }
+.due-badge.hot { background:var(--red); }
+.month-label { font-size:11px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+
+/* TOOLBAR */
+.toolbar { background:var(--panel); border-bottom:1px solid var(--border); padding:8px 16px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; flex-shrink:0; position:sticky; top:44px; z-index:99; }
+.toolbar .g-label { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:0.6px; margin-right:3px; font-weight:600; }
+.toolbar select { padding:4px 8px; border:1px solid var(--border); border-radius:5px; background:var(--card); color:var(--text); font-size:11px; font-weight:500; cursor:pointer; outline:none; }
+.toolbar select:focus { border-color:var(--blue); }
+.filter-group { display:flex; gap:3px; align-items:center; }
+.filter-btn { padding:4px 10px; border:1px solid var(--border); border-radius:5px; background:var(--card); color:var(--muted); font-size:10px; font-weight:500; cursor:pointer; transition:.12s; white-space:nowrap; }
+.filter-btn:hover { background:var(--card-hover); color:var(--text); }
+.filter-btn.active { background:var(--accent); color:#000; border-color:var(--accent); font-weight:600; }
+.filter-btn.s-pending.active { background:#e5e7eb; color:#4b5563; border-color:#9ca3af; }
+.filter-btn.s-connected.active { background:#dcfce7; color:#15803d; border-color:#22c55e; }
+.filter-btn.s-not-reachable.active { background:#fef3c7; color:#b45309; border-color:#f59e0b; }
+.filter-btn.s-not-interested.active { background:#fee2e2; color:#b91c1c; border-color:#ef4444; }
+.fu-panel-btn { padding:4px 12px; border:none; border-radius:5px; background:linear-gradient(135deg,var(--blue),#1d4ed8); color:#fff; font-size:10px; font-weight:600; cursor:pointer; white-space:nowrap; display:flex; align-items:center; gap:6px; transition:.15s; }
+.fu-panel-btn:hover { opacity:.85; transform:translateY(-1px); box-shadow:0 2px 8px rgba(59,130,246,.3); }
+.fu-panel-btn span { background:rgba(255,255,255,.25); border-radius:8px; padding:1px 7px; font-size:9px; }
+.fu-panel-btn.active { background:linear-gradient(135deg,#f59e0b,#d97706); box-shadow:0 2px 8px rgba(245,158,11,.3); }
+
+/* SEARCH */
+.search-box { display:flex; align-items:center; gap:6px; margin-left:auto; }
+.search-box input { padding:5px 10px 5px 28px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--text); font-size:12px; width:180px; outline:none; }
+.search-box input:focus { border-color:var(--blue); }
+.search-wrap { position:relative; }
+.search-wrap .ico { position:absolute; left:8px; top:50%; transform:translateY(-50%); font-size:12px; color:#9ca3af; pointer-events:none; }
+.refresh-btn { padding:5px 12px; border:1px solid var(--blue); border-radius:6px; background:var(--blue); color:#fff; font-size:12px; cursor:pointer; white-space:nowrap; }
+.refresh-btn:hover { opacity:0.85; }
+
+.toolbar.hidden-tb { display:none; }
+
+/* STATS */
+.stats-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(110px,1fr)); gap:8px; padding:12px 20px 0; flex-shrink:0; position:sticky; top:86px; z-index:98; background:var(--bg); }
+.stat-box { background:var(--panel); border-radius:8px; padding:8px 12px; border:1px solid var(--border); text-align:center; transition:.15s; }
+.stat-box:hover { box-shadow:0 2px 8px rgba(0,0,0,.06); }
+.stat-box .num { font-size:17px; font-weight:700; line-height:1.2; }
+.stat-box .lbl { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:0.4px; font-weight:600; margin-top:2px; }
+
+/* TABLE */
+.table-wrap { flex:1; padding:8px 20px 0; overflow:auto; min-height:0; }
+.table-wrap::-webkit-scrollbar { width:5px; height:5px; }
+.table-wrap::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+.table-scroll { min-width:fit-content; }
+table { width:100%; border-collapse:collapse; background:var(--panel); border-radius:var(--radius); border:1px solid var(--border); font-size:11px; min-width:900px; }
+thead { background:linear-gradient(135deg,#f1f5f9,#e8f0fe); }
+th { padding:7px 8px; text-align:left; font-weight:600; font-size:9px; color:var(--text); text-transform:uppercase; letter-spacing:0.4px; border-bottom:2px solid var(--border); white-space:nowrap; position:sticky; top:0; z-index:5; background:var(--panel); }
+td { padding:5px 8px; border-bottom:1px solid var(--border); vertical-align:middle; }
+tr:hover td { background:var(--card-hover); }
+tr:last-child td { border-bottom:none; }
+
+/* STATUS BADGES */
+.status-badge { display:inline-flex; align-items:center; gap:2px; padding:1px 8px; border-radius:8px; font-size:9px; font-weight:600; }
+.s-pending { background:#f3f4f6; color:#4b5563; }
+.s-connected { background:#dcfce7; color:#15803d; }
+.s-not-reachable { background:#fef3c7; color:#b45309; }
+.s-follow-up { background:#dbeafe; color:#1d4ed8; }
+.s-not-interested { background:#fee2e2; color:#b91c1c; }
+.s-wrong-number { background:#f3f4f6; color:#6b7280; }
+
+/* ATTEMPT BADGE */
+.attempt-badge { display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px; border-radius:6px; font-size:9px; font-weight:700; padding:0 4px; }
+.attempt-0 { background:#f3f4f6; color:#9ca3af; }
+.attempt-1 { background:#dbeafe; color:#1d4ed8; }
+.attempt-2 { background:#fef3c7; color:#b45309; }
+.attempt-3p { background:#fee2e2; color:#b91c1c; }
+
+/* BUTTONS */
+.call-btn { padding:4px 10px; border:none; border-radius:5px; background:linear-gradient(135deg,var(--green),#16a34a); color:#fff; font-size:10px; font-weight:600; cursor:pointer; transition:.15s; display:inline-flex; align-items:center; gap:3px; }
+.call-btn:hover { transform:translateY(-1px); box-shadow:0 2px 8px rgba(34,197,94,.3); }
+.hist-btn { padding:4px 10px; border:none; border-radius:5px; background:linear-gradient(135deg,var(--blue),#2563eb); color:#fff; font-size:10px; font-weight:600; cursor:pointer; transition:.15s; display:inline-flex; align-items:center; gap:3px; }
+.hist-btn:hover { transform:translateY(-1px); box-shadow:0 2px 8px rgba(59,130,246,.3); }
+.call-btn.small { padding:4px 10px; font-size:10px; }
+.view-btn { padding:4px 10px; border:1px solid var(--border); border-radius:5px; background:var(--card); color:var(--muted); font-size:10px; cursor:pointer; }
+.view-btn:hover { background:var(--card-hover); }
+
+/* RENEWAL TAG */
+.renewal-tag { display:inline-block; padding:1px 8px; border-radius:8px; font-size:9px; font-weight:600; }
+.rt-new { background:#dcfce7; color:#15803d; }
+.rt-renewal { background:#dbeafe; color:#1d4ed8; }
+.rt-rollover { background:#fef3c7; color:#b45309; }
+.rt-lapsed { background:#fee2e2; color:#b91c1c; }
+
+/* MODAL */
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:1000; align-items:center; justify-content:center; }
+.modal-overlay.show { display:flex; }
+.modal { background:var(--panel); border-radius:var(--radius); width:90%; max-width:580px; max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.2); animation:modalIn .2s ease; }
+@keyframes modalIn { from{opacity:0;transform:scale(.95) translateY(10px)} to{opacity:1;transform:scale(1) translateY(0)} }
+.modal-head { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; background:var(--panel); z-index:1; border-radius:var(--radius) var(--radius) 0 0; }
+.modal-head h2 { font-size:15px; font-weight:600; display:flex; align-items:center; gap:8px; }
+.modal-head .close { width:28px; height:28px; border:none; border-radius:5px; background:var(--card); color:var(--muted); cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center; transition:.12s; }
+.modal-head .close:hover { background:var(--card-hover); }
+.modal-body { padding:16px 20px 20px; }
+
+/* CUSTOMER INFO CARD */
+.cust-card { background:linear-gradient(135deg,#f8fafc,#eef2ff); border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:16px; }
+.cust-card-row { display:grid; grid-template-columns:1fr 1fr; gap:6px 20px; }
+.cust-card .ci { font-size:12px; padding:3px 0; }
+.cust-card .ci .lbl { color:var(--muted); font-size:9px; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; }
+.cust-card .ci .val { font-weight:600; font-size:13px; word-break:break-all; }
+.cust-card .ci .val.mono { font-family:monospace; font-size:11px; }
+
+/* REMARKS BOX */
+.remarks-box { display:none; background:linear-gradient(135deg,#f0fdf4,#ecfdf5); border:1px solid #bbf7d0; border-radius:8px; padding:12px; margin-bottom:14px; }
+.remarks-box.history { display:block; background:#f8fafc; border-color:var(--border); }
+.remarks-box-title { font-size:10px; color:var(--muted); text-transform:uppercase; font-weight:600; letter-spacing:0.5px; margin-bottom:4px; display:flex; justify-content:space-between; align-items:center; }
+.remarks-box-text { font-size:13px; font-weight:500; color:var(--text); }
+.remarks-box-sub { font-size:10px; color:var(--muted); margin-top:2px; }
+
+/* HISTORY TABLE */
+.history-table { width:100%; border-collapse:collapse; font-size:11px; }
+.history-table th { padding:5px 8px; text-align:left; font-weight:600; font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:0.3px; background:#f1f5f9; border-bottom:1px solid var(--border); }
+.history-table td { padding:4px 8px; border-bottom:1px solid var(--border); font-size:11px; }
+
+/* FORM */
+.form-group { margin-bottom:12px; }
+.form-group label { display:block; font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px; }
+.form-group select,.form-group input,.form-group textarea { width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; outline:none; background:var(--card); color:var(--text); font-family:inherit; transition:.12s; }
+.form-group select:focus,.form-group input:focus,.form-group textarea:focus { border-color:var(--blue); box-shadow:0 0 0 2px rgba(59,130,246,.15); }
+.form-group textarea { resize:vertical; min-height:60px; }
+.form-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.form-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
+.form-actions button { padding:8px 24px; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; transition:.12s; display:inline-flex; align-items:center; gap:6px; }
+.btn-save { background:var(--blue); color:#fff; }
+.btn-save:hover { background:#2563eb; box-shadow:0 2px 8px rgba(59,130,246,.25); }
+.btn-save:disabled { opacity:.5; cursor:not-allowed; }
+.btn-cancel { background:var(--card); color:var(--muted); border:1px solid var(--border) !important; }
+.btn-cancel:hover { background:var(--card-hover); }
+
+/* EMPTY / LOADER */
+.empty { text-align:center; padding:40px; color:var(--muted); font-size:14px; }
+.loader { text-align:center; padding:40px; color:var(--muted); }
+.spin { display:inline-block; width:24px; height:24px; border:3px solid var(--border); border-top-color:var(--blue); border-radius:50%; animation:spin .6s linear infinite; margin-bottom:8px; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* PAGINATION */
+#paginationContainer { padding:8px 20px 12px; flex-shrink:0; }
+.pagination { display:flex; align-items:center; justify-content:space-between; font-size:11px; color:var(--muted); background:var(--bg); }
+.pagination .info { font-weight:500; }
+.pagination .pages { display:flex; gap:4px; align-items:center; }
+.pagination button { padding:4px 12px; border:1px solid var(--border); border-radius:5px; background:var(--card); color:var(--text); font-size:11px; font-weight:500; cursor:pointer; transition:.12s; }
+.pagination button:hover:not(:disabled) { background:var(--card-hover); border-color:var(--blue); }
+.pagination button:disabled { opacity:.4; cursor:default; }
+.pagination button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
+
+/* RESPONSIVE */
+@media(max-width:768px) {
+  .topbar { padding:0 12px; }
+  .toolbar { padding:8px 12px; gap:8px; }
+  .cust-card-row { grid-template-columns:1fr; }
+  .form-row { grid-template-columns:1fr; }
+  .stats-row { grid-template-columns:repeat(3,1fr); }
+  .table-wrap { padding:8px 12px 12px; }
+  .search-box input { width:120px; }
+}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-left">
+    <a class="back" href="/" title="Back to Home">&#8592;</a>
+    <h1>Call Center</h1>
+    <span class="due-badge" id="dueCount">0 Due</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:0;flex-shrink:0">
+    <button class="btn-icon" id="viewToggle" onclick="toggleToolbar()" title="Toggle Toolbar" style="font-size:16px;font-weight:700;background:none;border:none;color:var(--muted);cursor:pointer;width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">&#x2630;</button>
+    <span id="liveClock" style="font-size:14px;color:#1e40af;font-family:'Courier New',monospace;background:linear-gradient(135deg,#dbeafe,#eff6ff);padding:5px 14px;border-radius:6px;letter-spacing:1.5px;border:1px solid #bfdbfe;white-space:nowrap;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,0.1);flex-shrink:0"></span>
+  </div>
+</div>
+
+<div class="toolbar hidden-tb" id="toolbarPanel">
+  <div class="filter-group">
+    <span class="g-label">Month</span>
+    <select id="monthSelect" onchange="loadDue()"></select>
+  </div>
+  <div style="width:1px;height:20px;background:var(--border)"></div>
+  <div class="filter-group">
+    <span class="g-label">Status</span>
+    <button class="filter-btn active" data-sf="all" onclick="setStatusFilter('all')">All</button>
+    <button class="filter-btn s-pending" data-sf="pending" onclick="setStatusFilter('pending')">Pending</button>
+    <button class="filter-btn s-connected" data-sf="connected" onclick="setStatusFilter('connected')">Connected</button>
+    <button class="filter-btn s-not-reachable" data-sf="not-reachable" onclick="setStatusFilter('not-reachable')">Not Reachable</button>
+    <button class="filter-btn s-not-interested" data-sf="not-interested" onclick="setStatusFilter('not-interested')">Not Interested</button>
+  </div>
+  <button class="fu-panel-btn" id="fuPanelBtn" onclick="setStatusFilter('follow-up')">&#128197; Follow-up Panel <span id="fuCount">0</span></button>
+  <div class="search-box">
+    <div class="search-wrap">
+      <span class="ico">&#128269;</span>
+      <input type="text" id="searchInput" placeholder="Search name, VIN, policy..." oninput="renderTable()">
+    </div>
+    <button class="refresh-btn" onclick="loadDue()" title="Refresh data">&#128260; Refresh</button>
+  </div>
+</div>
+
+<div class="stats-row" id="statsRow"></div>
+
+<div class="table-wrap">
+  <div id="tableContainer"><div class="loader"><div class="spin"></div>Loading...</div></div>
+</div>
+<div id="paginationContainer"></div>
+
+<!-- CALL MODAL -->
+<div class="modal-overlay" id="callModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>&#128222; Call Details</h2>
+      <button class="close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Customer Info Card -->
+      <div class="cust-card" id="custInfo"></div>
+
+      <!-- Last Remarks -->
+      <div class="remarks-box" id="lastRemarksBox">
+        <div class="remarks-box-title">
+          <span>&#128221; Last Remarks <span id="attemptBadge" style="background:var(--blue);color:#fff;padding:1px 8px;border-radius:8px;font-size:9px;margin-left:6px"></span></span>
+          <span id="lastCallInfo" style="font-weight:400;text-transform:none;color:var(--muted);font-size:10px"></span>
+        </div>
+        <div class="remarks-box-text" id="lastRemarksText"></div>
+        <div class="remarks-box-sub" id="lastRemarksAgent"></div>
+      </div>
+
+      <!-- Call History -->
+      <div class="remarks-box history" id="historyBox">
+        <div class="remarks-box-title">&#128214; Call History</div>
+        <div id="historyList" style="max-height:140px;overflow-y:auto;"></div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Agent Name</label>
+          <input type="text" id="agentName" placeholder="Your name">
+        </div>
+        <div class="form-group">
+          <label>Mobile Number</label>
+          <input type="text" id="mobileNo" placeholder="Customer mobile number">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Call Outcome *</label>
+        <select id="callOutcome">
+          <option value="">Select outcome...</option>
+          <option value="Connected">Connected</option>
+          <option value="Not Reachable">Not Reachable</option>
+          <option value="Follow-up">Follow-up</option>
+          <option value="Not Interested">Not Interested</option>
+          <option value="Wrong Number">Wrong Number</option>
+        </select>
+      </div>
+      <div class="form-group" id="followUpGroup">
+        <label>Follow-up Date</label>
+        <input type="date" id="followUpDate">
+      </div>
+      <div class="form-group">
+        <label>Remarks</label>
+        <textarea id="remarks" placeholder="Call notes, customer response, next steps..."></textarea>
+      </div>
+      <div class="form-actions">
+        <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+        <button class="btn-save" onclick="saveCallLog()">&#128190; Save Call Log</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- HISTORY MODAL -->
+  <div class="modal-overlay" id="historyModal">
+  <div class="modal" style="max-width:700px;">
+    <div class="modal-head">
+      <h2>&#128196; Customer Call History</h2>
+      <button class="close" onclick="closeHistoryModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="cust-card" id="histCustInfo"></div>
+      <div class="remarks-box history">
+        <div class="remarks-box-title">&#128214; Complete Call History</div>
+        <div id="histList" style="max-height:300px;overflow-y:auto;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- FOLLOW-UP DATE PICKER MODAL -->
+<div class="modal-overlay" id="fuDateModal">
+  <div class="modal" style="max-width:350px;">
+    <div class="modal-head">
+      <h2>&#128197; Set Follow-up Date</h2>
+      <button class="close" onclick="closeFuDateModal()">&times;</button>
+    </div>
+    <div class="modal-body" style="text-align:center;padding:24px;">
+      <input type="date" id="fuDateInput" style="font-size:16px;padding:10px;width:100%;max-width:250px;border:2px solid var(--blue);border-radius:8px;">
+      <div class="form-actions" style="margin-top:16px;justify-content:center;">
+        <button class="btn-cancel" onclick="closeFuDateModal()">Cancel</button>
+        <button class="btn-save" onclick="saveFuDate()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let allDue = [];
+let statusFilter = 'all';
+let currentPage = 0;
+const PAGE_SIZE = 20;
+
+function fmtDate(d) {
+  if (!d) return '-';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return d;
+  return dt.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+}
+function fmtDateShort(d) {
+  if (!d) return '-';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return d;
+  return dt.toLocaleDateString('en-IN', { day:'2-digit', month:'short' });
+}
+
+function statusClass(s) {
+  const map = { 'Pending':'s-pending','Connected':'s-connected','Not Reachable':'s-not-reachable',"Follow-up":'s-follow-up','Not Interested':'s-not-interested','Wrong Number':'s-wrong-number' };
+  return map[s]||'s-pending';
+}
+
+function statusIcon(s) {
+  const map = { 'Pending':'\u23F3','Connected':'\u2705','Not Reachable':'\uD83D\uDCF1',"Follow-up":'\uD83D\uDD04','Not Interested':'\u274C','Wrong Number':'\u2753' };
+  return map[s]||'';
+}
+
+function attemptClass(n) {
+  if (n === 0) return 'attempt-0';
+  if (n === 1) return 'attempt-1';
+  if (n === 2) return 'attempt-2';
+  return 'attempt-3p';
+}
+
+function populateMonths() {
+  const sel = document.getElementById('monthSelect');
+  const now = new Date();
+  for (let i = -6; i <= 6; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const val = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const lbl = months[d.getMonth()] + ' ' + d.getFullYear();
+    const opt = document.createElement('option');
+    opt.value = val; opt.textContent = lbl;
+    if (i === 0) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
+function setStatusFilter(s) {
+  statusFilter = s;
+  document.querySelectorAll('[data-sf]').forEach(function(b){b.classList.toggle('active',b.dataset.sf===s);});
+  document.getElementById('fuPanelBtn').classList.toggle('active',s==='follow-up');
+  renderTable();
+}
+
+async function loadDue() {
+  const month = document.getElementById('monthSelect').value;
+  document.getElementById('tableContainer').innerHTML = '<div class="loader"><div class="spin"></div>Loading...</div>';
+  try {
+    const [dueRes, logsRes] = await Promise.all([
+      fetch('/api/call-center/due?month=' + month),
+      fetch('/api/call-center/logs')
+    ]);
+    const dueData = await dueRes.json();
+    allDue = dueData.due || [];
+    document.getElementById('dueCount').textContent = dueData.total + ' Due';
+    if (dueData.total > 50) document.getElementById('dueCount').classList.add('hot');
+    else document.getElementById('dueCount').classList.remove('hot');
+    renderStats();
+    renderTable();
+  } catch (e) {
+    document.getElementById('tableContainer').innerHTML = '<div class="empty">&#10060; Error: ' + e.message + '</div>';
+  }
+}
+
+function renderStats() {
+  const total = allDue.length;
+  const pending = allDue.filter(function(x){return x.call_status==='Pending';}).length;
+  const connected = allDue.filter(function(x){return x.call_status==='Connected';}).length;
+  const followup = allDue.filter(function(x){return x.call_status==='Follow-up' || x.follow_up_date;}).length;
+  document.getElementById('fuCount').textContent = followup;
+  const nr = allDue.filter(function(x){return x.call_status==='Not Reachable';}).length;
+  const ni = allDue.filter(function(x){return x.call_status==='Not Interested';}).length;
+  document.getElementById('statsRow').innerHTML =
+    '<div class="stat-box" style="border-left:3px solid #6b7280"><div class="num">' + total + '</div><div class="lbl">Total Due</div></div>' +
+    '<div class="stat-box" style="border-left:3px solid #9ca3af"><div class="num">' + pending + '</div><div class="lbl">Pending</div></div>' +
+    '<div class="stat-box" style="border-left:3px solid var(--green)"><div class="num">' + connected + '</div><div class="lbl">Connected</div></div>' +
+    '<div class="stat-box" style="border-left:3px solid var(--blue)"><div class="num">' + followup + '</div><div class="lbl">Follow-up</div></div>' +
+    '<div class="stat-box" style="border-left:3px solid var(--orange)"><div class="num">' + nr + '</div><div class="lbl">Not Reachable</div></div>' +
+    '<div class="stat-box" style="border-left:3px solid var(--red)"><div class="num">' + ni + '</div><div class="lbl">Not Interested</div></div>';
+}
+
+function renderTable() {
+  let filtered = allDue;
+  if (statusFilter !== 'all') {
+    const targetStatus = statusFilter.replace(/-/g,' ').toLowerCase();
+    if (targetStatus === 'follow up') {
+      filtered = allDue.filter(function(x){
+        const cs = (x.call_status||'Pending').toLowerCase();
+        return cs === 'follow-up' || x.follow_up_date;
+      });
+    } else {
+      filtered = allDue.filter(function(x){return (x.call_status||'Pending').toLowerCase() === targetStatus;});
+    }
+  }
+  const q = document.getElementById('searchInput').value.toLowerCase().trim();
+  if (q) {
+    filtered = filtered.filter(function(r) {
+      return (r.customer_name||'').toLowerCase().includes(q) ||
+             (r.vinno||'').toLowerCase().includes(q) ||
+             (r.policyno||'').toLowerCase().includes(q) ||
+             (r.model||'').toLowerCase().includes(q) ||
+             (r.mobile||'').includes(q);
+    });
+  }
+  if (currentPage * PAGE_SIZE >= filtered.length) currentPage = 0;
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
+  const start = currentPage * PAGE_SIZE;
+  const pageData = filtered.slice(start, start + PAGE_SIZE);
+  var h = '<div class="table-scroll"><table><thead><tr>' +
+    '<th>#</th><th>Customer</th><th>Contact</th><th>VIN</th><th>Model</th><th>Policy No</th>' +
+    '<th>Insurance</th><th>Policy Date</th><th>Last Premium</th><th>Attempts</th><th>Status</th><th>Last Call</th><th>Remarks</th><th>Action</th><th>Customer History</th>' +
+    '</tr></thead><tbody>';
+  if (!pageData.length) {
+    h += '<tr><td colspan="15" style="text-align:center;padding:30px;color:var(--muted);font-size:13px">&#128203; No due policies found' + (q ? ' matching "' + q + '"' : '') + '</td></tr>';
+    h += '</tbody></table></div>';
+    document.getElementById('tableContainer').innerHTML = h;
+    document.getElementById('paginationContainer').innerHTML = '';
+    return;
+  }
+  pageData.forEach(function(r,i){
+    var absIdx = allDue.indexOf(r);
+    var sc = r.call_status||'Pending';
+    var mob = r.mobile || '-';
+    var callDate = r.last_call_date ? fmtDateShort(r.last_call_date) : '-';
+    var fullRemarks = r.last_remarks || '-';
+    var displayRemarks = fullRemarks.length > 30 ? fullRemarks.substring(0,27)+'...' : fullRemarks;
+    h += '<tr>' +
+      '<td style="color:var(--muted);font-weight:500">' + (start + i + 1) + '</td>' +
+      '<td style="font-size:10px">' + r.customer_name + '</td>' +
+      '<td><span style="font-weight:500;color:var(--blue)">' + mob + '</span>' +
+        (r.follow_up_date ? '<br><span style="font-size:9px;color:var(--orange)">&#128197; Follow: ' + fmtDateShort(r.follow_up_date) + '</span>' : '') +
+      '</td>' +
+      '<td style="font-size:10px;font-family:monospace;color:var(--muted)">' + r.vinno + '</td>' +
+      '<td style="font-size:11px">' + r.model + '</td>' +
+      '<td style="font-size:10px;font-family:monospace;color:var(--muted)">' + r.policyno + '</td>' +
+      '<td style="font-size:10px">' + r.insurancecompany + '</td>' +
+      '<td style="font-weight:500;color:' + (isExpired(r.policy_expiry_date) ? 'var(--red)' : 'var(--text)') + '">' + fmtDate(r.policy_expiry_date) + '</td>' +
+      '<td style="text-align:right;font-weight:600">\u20B9' + Number(r.grosspremium).toLocaleString('en-IN') + '</td>' +
+      '<td style="text-align:center"><span class="attempt-badge ' + attemptClass(r.attempt_count || 0) + '">' + (r.attempt_count || 0) + '</span></td>' +
+      '<td><span class="status-badge ' + statusClass(sc) + '">' + statusIcon(sc) + ' ' + sc + '</span></td>' +
+      '<td style="color:var(--muted)">' + callDate + '</td>' +
+      '<td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)" title="' + fullRemarks.replace(/"/g,'&quot;') + '">' + displayRemarks + '</td>' +
+      '<td><button class="call-btn" onclick="openCallModal(' + absIdx + ')" title="Customer details &amp; call log">&#128222; Call</button></td>' +
+      '<td><button class="hist-btn" onclick="openHistoryModal(' + absIdx + ')" title="View calling history">&#128196; History</button></td>' +
+      '</tr>';
+  });
+  h += '</tbody></table></div>';
+  document.getElementById('tableContainer').innerHTML = h;
+  // build pagination separately
+  var ph = '<div class="pagination"><div class="info">Showing ' + (start + 1) + ' to ' + Math.min(start + PAGE_SIZE, filtered.length) + ' of ' + filtered.length + '</div><div class="pages">';
+  ph += '<button onclick="goPage(0)"' + (currentPage === 0 ? ' disabled' : '') + '>First</button>';
+  ph += '<button onclick="goPage(' + (currentPage - 1) + ')"' + (currentPage === 0 ? ' disabled' : '') + '>Prev</button>';
+  var pStart = Math.max(0, currentPage - 2);
+  var pEnd = Math.min(totalPages, currentPage + 3);
+  for (var p = pStart; p < pEnd; p++) {
+    ph += '<button onclick="goPage(' + p + ')"' + (p === currentPage ? ' class="active"' : '') + '>' + (p + 1) + '</button>';
+  }
+  ph += '<button onclick="goPage(' + (currentPage + 1) + ')"' + (currentPage >= totalPages - 1 ? ' disabled' : '') + '>Next</button>';
+  ph += '<button onclick="goPage(' + (totalPages - 1) + ')"' + (currentPage >= totalPages - 1 ? ' disabled' : '') + '>Last</button>';
+  ph += '</div></div>';
+  document.getElementById('paginationContainer').innerHTML = ph;
+}
+
+function goPage(p) {
+  currentPage = p;
+  renderTable();
+}
+
+function isExpired(d) {
+  if (!d) return false;
+  var parts = d.split('/');
+  if (parts.length === 3) {
+    var dt = new Date(parts[2], parts[1]-1, parts[0]);
+    return dt < new Date();
+  }
+  return false;
+}
+
+function openCallModal(idx) {
+  const item = allDue[idx];
+  const sc = item.call_status||'Pending';
+  document.getElementById('custInfo').innerHTML =
+    '<div class="cust-card-row">' +
+      '<div class="ci"><div class="lbl">Customer</div><div class="val">' + item.customer_name + '</div></div>' +
+      '<div class="ci"><div class="lbl">Contact</div><div class="val" style="color:var(--blue)">' + (item.mobile||'<span style="color:#9ca3af;font-weight:400">Not available</span>') + '</div></div>' +
+      '<div class="ci"><div class="lbl">Model</div><div class="val">' + item.model + '</div></div>' +
+      '<div class="ci"><div class="lbl">Insurance</div><div class="val">' + item.insurancecompany + '</div></div>' +
+      '<div class="ci"><div class="lbl">Policy No</div><div class="val mono" style="font-size:11px">' + item.policyno + '</div></div>' +
+      '<div class="ci"><div class="lbl">VIN No</div><div class="val mono" style="font-size:11px">' + item.vinno + '</div></div>' +
+      '<div class="ci"><div class="lbl">Premium</div><div class="val" style="color:var(--green)">\u20B9' + Number(item.grosspremium).toLocaleString('en-IN') + '</div></div>' +
+      '<div class="ci"><div class="lbl">Policy Date</div><div class="val" style="color:' + (isExpired(item.policy_expiry_date) ? 'var(--red)' : 'var(--text)') + '">' + fmtDate(item.policy_expiry_date) + '</div></div>' +
+      '<div class="ci"><div class="lbl">State</div><div class="val">' + (item.state||'-') + '</div></div>' +
+      '<div class="ci"><div class="lbl">Status</div><div class="val"><span class="status-badge ' + statusClass(sc) + '">' + statusIcon(sc) + ' ' + sc + '</span></div></div>' +
+    '</div>';
+
+  // Hide last remarks and history boxes in call modal - only show form
+  document.getElementById('lastRemarksBox').style.display = 'none';
+  document.getElementById('historyBox').style.display = 'none';
+
+  document.getElementById('agentName').value = item.last_agent || '';
+  document.getElementById('mobileNo').value = item.mobile || '';
+  document.getElementById('callOutcome').value = '';
+  document.getElementById('followUpDate').value = item.follow_up_date || '';
+  document.getElementById('remarks').value = '';
+  document.getElementById('followUpGroup').style.display = 'block';
+  const modal = document.getElementById('callModal');
+  modal.classList.add('show');
+  modal.dataset.idx = idx;
+}
+
+function closeModal() {
+  document.getElementById('callModal').classList.remove('show');
+}
+document.getElementById('callModal').addEventListener('click', function(e) {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+function openHistoryModal(idx) {
+  const item = allDue[idx];
+  document.getElementById('histCustInfo').innerHTML =
+    '<div class="cust-card-row">' +
+      '<div class="ci"><div class="lbl">Customer</div><div class="val">' + item.customer_name + '</div></div>' +
+      '<div class="ci"><div class="lbl">Contact</div><div class="val" style="color:var(--blue)">' + (item.mobile||'<span style="color:#9ca3af;font-weight:400">Not available</span>') + '</div></div>' +
+      '<div class="ci"><div class="lbl">Model</div><div class="val">' + item.model + '</div></div>' +
+      '<div class="ci"><div class="lbl">Policy No</div><div class="val mono" style="font-size:11px">' + item.policyno + '</div></div>' +
+      '<div class="ci"><div class="lbl">VIN No</div><div class="val mono" style="font-size:11px">' + item.vinno + '</div></div>' +
+      '<div class="ci"><div class="lbl">Current Status</div><div class="val"><span class="status-badge ' + statusClass(item.call_status||'Pending') + '">' + statusIcon(item.call_status||'Pending') + ' ' + (item.call_status||'Pending') + '</span></div></div>' +
+    '</div>';
+
+  if (item.history && item.history.length > 0) {
+    var hh = '<table class="history-table"><tr><th>Date</th><th>Outcome</th><th>Agent</th><th>Remarks</th><th>Next Follow-up</th></tr>';
+    for (var h of item.history) {
+      var fuHtml = h.follow_up 
+        ? '<span style="color:var(--blue);cursor:pointer;text-decoration:underline" onclick="openFuDateModal(\'' + h.follow_up + '\', \'' + item.policyno + '\')">' + fmtDateShort(h.follow_up) + '</span>'
+        : '<span style="color:var(--orange);cursor:pointer" onclick="openFuDateModal(\'\', \'' + item.policyno + '\')">+ Add</span>';
+      hh += '<tr><td>' + fmtDateShort(h.date) + '</td><td><span class="status-badge ' + statusClass(h.outcome) + '">' + h.outcome + '</span></td><td>' + (h.agent||'-') + '</td><td style="font-size:11px">' + (h.remarks||'-') + '</td><td>' + fuHtml + '</td></tr>';
+    }
+    hh += '</table>';
+    document.getElementById('histList').innerHTML = hh;
+  } else {
+    document.getElementById('histList').innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted)">No call history available</div>';
+  }
+
+  const modal = document.getElementById('historyModal');
+  modal.classList.add('show');
+  modal.dataset.idx = idx;
+}
+
+function closeHistoryModal() {
+  document.getElementById('historyModal').classList.remove('show');
+}
+document.getElementById('historyModal').addEventListener('click', function(e) {
+  if (e.target === e.currentTarget) closeHistoryModal();
+});
+
+// FOLLOW-UP DATE MODAL
+let fuDateTarget = { policyno: '', currentDate: '' };
+
+function openFuDateModal(currentDate, policyno) {
+  fuDateTarget.currentDate = currentDate || '';
+  fuDateTarget.policyno = policyno;
+  document.getElementById('fuDateInput').value = fuDateTarget.currentDate;
+  document.getElementById('fuDateModal').classList.add('show');
+}
+
+function closeFuDateModal() {
+  document.getElementById('fuDateModal').classList.remove('show');
+  fuDateTarget = { policyno: '', currentDate: '' };
+}
+document.getElementById('fuDateModal').addEventListener('click', function(e) {
+  if (e.target === e.currentTarget) closeFuDateModal();
+});
+
+async function saveFuDate() {
+  const newDate = document.getElementById('fuDateInput').value;
+  if (!newDate) { alert('Please select a date'); return; }
+  if (!fuDateTarget.policyno) { alert('Policy number missing'); return; }
+  const btn = document.querySelector('#fuDateModal .btn-save');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  try {
+    const res = await fetch('/api/call-center/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        policyno: fuDateTarget.policyno,
+        call_outcome: 'Follow-up',
+        follow_up_date: newDate,
+        agent_name: '',
+        remarks: '',
+        mobile_no: ''
+      })
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
+    closeFuDateModal();
+    await loadDue();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
+}
+
+
+
+async function saveCallLog() {
+  const idx = Number(document.getElementById('callModal').dataset.idx);
+  const item = allDue[idx];
+  const outcome = document.getElementById('callOutcome').value;
+  if (!outcome) { alert('Please select a call outcome'); return; }
+  const payload = {
+    policyno: item.policyno,
+    vinno: item.vinno,
+    customer_name: item.customer_name,
+    model: item.model,
+    insurancecompany: item.insurancecompany,
+    grosspremium: item.grosspremium,
+    policy_expiry_date: item.policy_expiry_date,
+    call_outcome: outcome,
+    remarks: document.getElementById('remarks').value,
+    follow_up_date: document.getElementById('followUpDate').value || null,
+    agent_name: document.getElementById('agentName').value,
+    mobile_no: document.getElementById('mobileNo').value
+  };
+  const btn = document.querySelector('.btn-save');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  try {
+    const res = await fetch('/api/call-center/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
+    closeModal();
+    await loadDue();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '\uD83D\uDCBE Save Call Log';
+  }
+}
+
+function toggleToolbar() {
+  const tb = document.getElementById('toolbarPanel');
+  const isHidden = tb.classList.toggle('hidden-tb');
+  const sr = document.getElementById('statsRow');
+  if (sr) sr.style.top = isHidden ? '44px' : '86px';
+}
+
+function startClock() {
+  function tick() {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2,'0');
+    const m = String(now.getMinutes()).padStart(2,'0');
+    const s = String(now.getSeconds()).padStart(2,'0');
+    const d = now.getDate();
+    const suffix = d > 3 && d < 21 ? 'th' : ['st','nd','rd'][(d % 10) - 1] || 'th';
+    const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const mo = months[now.getMonth()];
+    const y = now.getFullYear();
+    document.getElementById('liveClock').textContent = d + suffix + ' ' + mo + ' ' + y + '  ' + h + ':' + m + ':' + s;
+  }
+  tick();
+  setInterval(tick, 1000);
+}
+
+// Initial toolbar state: hidden, adjust stats row
+(function() {
+  const sr = document.getElementById('statsRow');
+  if (sr) sr.style.top = '44px';
+})();
+
+populateMonths();
+loadDue();
+startClock();
+</script>
+</body>
+</html>

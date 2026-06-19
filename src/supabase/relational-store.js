@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { logger } from '../utils/logger.js';
 import { quoteIdentifier, withPostgresClient } from './postgres.js';
+import { createSupabaseClient } from './client.js';
 
 const IMPORTANT_INDEX_COLUMNS = new Set([
   'bill_date',
@@ -694,4 +695,134 @@ export async function saveReportSheetToRelationalTable({
       invalidNumerics: stats.invalidNumerics
     };
   });
+}
+
+export async function saveReportSheetToSupabaseRest({
+  sheetName,
+  headers,
+  rows,
+  batchSize = 500
+}) {
+  if (!Array.isArray(headers) || !headers.length || !Array.isArray(rows)) {
+    throw new Error('Supabase REST save requires non-empty headers and rows array');
+  }
+
+  const tableName = normalizeTableName(sheetName);
+  const columns = buildColumns(headers, rows);
+  const uploadedAt = new Date().toISOString();
+  const startedAt = Date.now();
+  
+  const seenIncomingRows = new Set();
+  const uniqueRows = [];
+  const stats = {
+    invalidDates: 0,
+    invalidNumerics: 0,
+    invalidDateColumns: {},
+    invalidNumericColumns: {}
+  };
+  
+  for (const row of rows) {
+    const normalizedValues = columns.map(column => normalizeValue(row[column.header], column, stats));
+    const signature = rowSignatureFromNormalizedValues(columns, normalizedValues, tableName);
+    if (seenIncomingRows.has(signature)) {
+      continue;
+    }
+    seenIncomingRows.add(signature);
+    uniqueRows.push(row);
+  }
+  
+  const supabase = createSupabaseClient();
+  let insertedRowCount = 0;
+  let batchCount = 0;
+  
+  for (let index = 0; index < uniqueRows.length; index += batchSize) {
+    const batch = uniqueRows.slice(index, index + batchSize);
+    batchCount += 1;
+    
+    try {
+      const insertData = batch.map(row => {
+        const normalizedValues = columns.map(column => normalizeValue(row[column.header], column, stats));
+        const rowValues = {
+          row_hash: rowSignatureFromNormalizedValues(columns, normalizedValues, tableName),
+          uploaded_at: uploadedAt
+        };
+        columns.forEach((column, colIndex) => {
+          rowValues[column.name] = normalizedValues[colIndex];
+        });
+        return rowValues;
+      });
+      
+      const { data, error } = await supabase
+        .from(tableName)
+        .upsert(insertData, { onConflict: 'row_hash', ignoreDuplicates: false })
+        .select('row_hash');
+      
+      if (error) {
+        if (error.code === '42P01') {
+          logger.warn('Table does not exist, will try to create via first insert', { tableName });
+        } else {
+          logger.error('Supabase REST batch insert failed', {
+            sheetName,
+            tableName,
+            batch: batchCount,
+            batchSize: batch.length,
+            err: { name: 'SupabaseError', message: error.message, code: error.code }
+          });
+        }
+        throw error;
+      }
+      
+      const batchInserted = data?.length || 0;
+      insertedRowCount += batchInserted;
+      logger.info('Supabase REST batch inserted', {
+        sheetName,
+        tableName,
+        batch: batchCount,
+        batchSize: batch.length,
+        inserted: batchInserted
+      });
+    } catch (error) {
+      logger.error('Supabase REST batch insert failed', {
+        sheetName,
+        tableName,
+        batch: batchCount,
+        batchSize: batch.length,
+        err: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        }
+      });
+      throw error;
+    }
+  }
+
+  const duplicateRowCount = rows.length - insertedRowCount;
+  logger.info('Supabase REST report rows inserted', {
+    sheetName,
+    tableName,
+    incomingRowCount: rows.length,
+    uniqueIncomingRowCount: uniqueRows.length,
+    insertedRowCount,
+    duplicateRowCount,
+    batchCount,
+    batchSize,
+    durationMs: Date.now() - startedAt,
+    invalidDates: stats.invalidDates,
+    invalidNumerics: stats.invalidNumerics,
+    invalidDateColumns: stats.invalidDateColumns,
+    invalidNumericColumns: stats.invalidNumericColumns
+  });
+
+  return {
+    tableName,
+    incomingRowCount: rows.length,
+    insertedRowCount,
+    duplicateRowCount,
+    batchCount,
+    batchSize,
+    durationMs: Date.now() - startedAt,
+    invalidDates: stats.invalidDates,
+    invalidNumerics: stats.invalidNumerics
+  };
 }

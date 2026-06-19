@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Performance Table - KIA Insurance</title>
+<style>
+:root {
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Inter','Segoe UI',system-ui,sans-serif; background:#e8f0fe; color:#000; height:100vh; display:flex; flex-direction:column; overflow:hidden; min-width:1100px; }
+.topbar { background:linear-gradient(135deg,#1e40af,#3b82f6); border-bottom:1px solid #000; padding:0 10px; height:40px; display:flex; align-items:center; flex-shrink:0; gap:4px; position:relative; }
+.topbar h1 { font-size:13px; font-weight:600; color:#fff; }
+.topbar .sub { font-size:10px; color:rgba(255,255,255,0.7); }
+.topbar .g-label { font-size:8px; color:#fff; text-transform:uppercase; letter-spacing:0.5px; margin-right:2px; font-weight:600; }
+.toolbar { background:#fff; border-bottom:1px solid #000; padding:5px 10px; display:flex; gap:4px; flex-wrap:wrap; align-items:center; flex-shrink:0; }
+.toolbar .g-label { font-size:8px; color:#1e40af; text-transform:uppercase; letter-spacing:0.5px; margin-right:2px; font-weight:600; }
+.toolbar select { padding:3px 5px; border:1px solid #000; border-radius:4px; background:#fff; color:#000; font-size:9px; font-weight:500; cursor:pointer; outline:none; max-width:130px; }
+.toolbar.collapsed { display:none; }
+.hamburger { background:none; border:none; color:#fff; font-size:20px; cursor:pointer; padding:0 4px; line-height:1; margin-left:auto; display:flex; align-items:center; }
+.multi-select { position:relative; display:inline-flex; }
+.multi-select-trigger { padding:3px 5px; border:1px solid #000; border-radius:4px; background:#fff; color:#000; font-size:9px; font-weight:500; cursor:pointer; outline:none; min-width:40px; text-align:center; white-space:nowrap; }
+.multi-select-dropdown { display:none; position:absolute; top:100%; left:0; background:#fff; border:1px solid #000; border-radius:4px; padding:4px; z-index:500; max-height:150px; overflow-y:auto; min-width:100px; box-shadow:0 2px 8px rgba(0,0,0,0.15); }
+.multi-select-dropdown.open { display:block; }
+.multi-select-dropdown label { display:flex; align-items:center; gap:4px; padding:2px 4px; font-size:10px; cursor:pointer; white-space:nowrap; }
+.multi-select-dropdown label:hover { background:#e8f0fe; }
+.multi-select-dropdown input[type=checkbox] { margin:0; }
+.date-group { display:flex; gap:3px; align-items:center; }
+.date-group input[type=date] { padding:2px 4px; border:1px solid #000; border-radius:4px; background:#fff; color:#000; font-size:9px; outline:none; width:85px; }
+.main { flex:1; padding:8px 20px 12px; overflow:hidden; display:flex; flex-direction:column; }
+.main-split { display:flex; gap:10px; flex:1; min-height:0; }
+.main-left { flex:1; overflow:auto; display:flex; flex-direction:column; }
+.main-right { flex:1; overflow:auto; display:flex; flex-direction:column; }
+.table-container { flex:1; min-height:0; overflow:auto; }
+.daily-container { flex:1; min-height:0; overflow:auto; }
+.info-bar { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; flex-shrink:0; }
+.info-box { background:#fff; border-radius:8px; padding:6px 10px; border:1px solid #000; display:flex; align-items:center; gap:6px; flex:1; min-width:100px; transition:.15s; }
+.info-box:hover { box-shadow:0 2px 8px rgba(0,0,0,.06); }
+.info-box .num { font-size:14px; font-weight:700; white-space:nowrap; color:#000; }
+.info-box .lbl { font-size:9px; font-weight:600; color:#1e40af; }
+.info-box .sub { font-size:8px; color:#000; }
+
+/* VALUE BOXES */
+.val-box { display:inline-flex; align-items:center; justify-content:center; min-width:36px; padding:2px 8px; border-radius:5px; font-size:11px; font-weight:700; text-align:center; }
+.val-ly { background:#fff; color:#1e40af; border:1px solid #000; }
+.val-cy { background:#fff; color:#1e40af; border:1px solid #000; }
+
+/* GROWTH BOX */
+.growth-box { display:inline-flex; align-items:center; justify-content:center; min-width:48px; padding:2px 8px; border-radius:5px; font-size:10px; font-weight:700; text-align:center; border:1px solid #000; }
+.growth-up { background:#dcfce7; color:#166534; }
+.growth-down { background:#fee2e2; color:#dc2626; }
+.growth-flat { background:#fef3c7; color:#854d0e; }
+
+/* TABLE */
+.table-wrap { overflow-x:auto; }
+.table-wrap::-webkit-scrollbar { height:4px; }
+.table-wrap::-webkit-scrollbar-thumb { background:#d0dce8; border-radius:4px; }
+table { width:100%; border-collapse:collapse; background:#fff; border:2px solid #000; font-size:11px; }
+thead { background:#1e40af; }
+th { padding:5px 8px; text-align:center; font-weight:600; font-size:9px; color:#fff; text-transform:uppercase; letter-spacing:0.4px; border:2px solid #000; white-space:nowrap; }
+td { padding:5px 8px; text-align:center; border:2px solid #000; }
+tr:hover td { background:#eff6ff; }
+tr:last-child td { border-bottom:1px solid #000; }
+th.month-col { text-align:left; min-width:40px; color:#fff; }
+td.month-cell { text-align:left; font-weight:600; font-size:10px; }
+tr.total td { font-weight:700; background:#e8f0fe; border-top:3px solid #000; }
+.num-val { font-weight:600; }
+.empty { text-align:center; padding:40px 16px; color:#000; font-size:13px; }
+.loader { text-align:center; padding:40px; color:#000; }
+.spin { display:inline-block; width:20px; height:20px; border:2px solid #d0dce8; border-top-color:#3b82f6; border-radius:50%; animation:spin .6s linear infinite; margin-bottom:6px; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.btn-refresh { padding:3px 12px; border:1px solid rgba(255,255,255,0.4); border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; font-weight:600; cursor:pointer; outline:none; transition:.15s; display:inline-flex; align-items:center; gap:4px; }
+.btn-refresh:hover { background:rgba(255,255,255,0.25); }
+.btn-refresh:active { background:rgba(255,255,255,0.08); }
+.btn-refresh.loading { pointer-events:none; opacity:.6; }
+.btn-refresh .spin-sm { display:inline-block; width:10px; height:10px; border:1.5px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin .6s linear infinite; }
+.btn-calc { padding:3px 12px; border:1px solid rgba(255,255,255,0.4); border-radius:4px; background:#1e40af; color:#fff; font-size:10px; font-weight:600; cursor:pointer; outline:none; transition:.15s; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
+.btn-calc:hover { background:#2563eb; }
+.btn-dup { padding:3px 12px; border:1px solid rgba(255,255,255,0.4); border-radius:4px; background:#1e3a5f; color:#fff; font-size:10px; font-weight:600; cursor:pointer; outline:none; transition:.15s; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
+.btn-dup:hover { background:#2d4a7a; }
+.modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#fff; border:2px solid #000; border-radius:8px; max-width:700px; width:90%; max-height:80vh; overflow:auto; padding:20px; position:relative; }
+.modal-box h2 { font-size:14px; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+.modal-box .close-btn { position:absolute; top:10px; right:14px; background:none; border:none; font-size:18px; cursor:pointer; color:#000; }
+.modal-box table { width:100%; border-collapse:collapse; font-size:11px; }
+.modal-box th { background:#1e40af; color:#fff; padding:6px 10px; text-align:left; border:1px solid #000; font-size:10px; text-transform:uppercase; }
+.modal-box td { padding:5px 10px; border:1px solid #000; vertical-align:top; }
+.modal-box tr:nth-child(even) td { background:#f8f9fa; }
+
+</style>
+</head>
+<body>
+<div class="topbar">
+  <a class="back" href="/" title="Back to Home" style="color:#fff;text-decoration:none;font-size:18px;position:absolute;left:10px;">&#8592;</a>
+  <div style="flex:1;text-align:center">
+    <h1 style="color:#fff;font-size:13px;font-weight:600;display:inline">Performance Dashboard</h1>
+    <span id="liveClock" style="font-size:11px;color:#fff;margin-left:8px;font-family:'Courier New',monospace;background:rgba(0,0,0,0.2);padding:1px 6px;border-radius:3px;letter-spacing:1px"></span>
+  </div>
+  <button class="btn-refresh" id="refreshBtn" onclick="onRefresh()">&#x21BA; Refresh</button>
+  <button class="hamburger" id="hamburgerBtn" onclick="toggleToolbar()">&#x2630;</button>
+</div>
+<div class="toolbar collapsed" id="toolbarPanel">
+  <div style="width:1px;height:20px;background:#d0dce8"></div>
+  <div class="multi-select" id="periodContainer">
+    <span class="g-label">Period</span>
+    <div class="multi-select-trigger" id="periodTrigger" onclick="togglePeriodDropdown()" style="min-width:60px">YTD</div>
+    <div class="multi-select-dropdown" id="periodDropdown" style="min-width:140px">
+      <div style="padding:2px 4px;border-bottom:1px solid #ddd;margin-bottom:2px">
+        <div onclick="selectPeriod('ytd')" style="cursor:pointer;padding:2px 4px;font-size:10px;border-radius:3px">YTD (All Months)</div>
+        <div onclick="selectPeriod('mtd')" style="cursor:pointer;padding:2px 4px;font-size:10px;border-radius:3px">MTD (Month Till Date)</div>
+        <div onclick="selectPeriod('custom')" style="cursor:pointer;padding:2px 4px;font-size:10px;border-radius:3px">Custom</div>
+      </div>
+      <label style="display:flex;align-items:center;gap:4px;padding:2px 4px;font-size:10px;cursor:pointer"><input type="checkbox" id="pcb1" value="q1" onchange="onPeriodCheckbox()" style="margin:0"> Q1 (Jan-Mar)</label>
+      <label style="display:flex;align-items:center;gap:4px;padding:2px 4px;font-size:10px;cursor:pointer"><input type="checkbox" id="pcb2" value="q2" onchange="onPeriodCheckbox()" style="margin:0"> Q2 (Apr-Jun)</label>
+      <label style="display:flex;align-items:center;gap:4px;padding:2px 4px;font-size:10px;cursor:pointer"><input type="checkbox" id="pcb3" value="q3" onchange="onPeriodCheckbox()" style="margin:0"> Q3 (Jul-Sep)</label>
+      <label style="display:flex;align-items:center;gap:4px;padding:2px 4px;font-size:10px;cursor:pointer"><input type="checkbox" id="pcb4" value="q4" onchange="onPeriodCheckbox()" style="margin:0"> Q4 (Oct-Dec)</label>
+    </div>
+  </div>
+  <div style="width:1px;height:20px;background:#d0dce8"></div>
+  <div class="date-group" id="dateRangeGroup">
+    <span class="g-label">From</span>
+    <input type="date" id="fromDate" onchange="onDateChange()">
+    <span class="g-label">to</span>
+    <input type="date" id="toDate" onchange="onDateChange()">
+  </div>
+  <div style="width:1px;height:20px;background:#d0dce8"></div>
+  <div class="date-group">
+    <span class="g-label">Type</span>
+    <select id="typeFilter" onchange="render()">
+      <option value="all">All</option>
+      <option value="new">New</option>
+      <option value="renewal">Renewal</option>
+      <option value="rollover">Rollover</option>
+      <option value="notVisited">Not Visited</option>
+    </select>
+  </div>
+  <div style="width:1px;height:20px;background:#d0dce8"></div>
+  <div class="date-group">
+    <span class="g-label">Comp</span>
+    <select id="companyFilter" onchange="render()" style="max-width:100px">
+      <option value="all">All</option>
+    </select>
+  </div>
+  <div style="width:1px;height:20px;background:#d0dce8"></div>
+  <div class="date-group">
+    <span class="g-label">Model</span>
+    <select id="modelFilter" onchange="render()" style="max-width:90px">
+      <option value="all">All</option>
+    </select>
+  </div>
+  <div style="width:1px;height:20px;background:#d0dce8"></div>
+  <div class="multi-select" id="mfgContainer">
+    <span class="g-label">MFG</span>
+    <div class="multi-select-trigger" id="mfgTrigger" onclick="toggleMfgDropdown()">All</div>
+    <div class="multi-select-dropdown" id="mfgDropdown"></div>
+  </div>
+  <div style="width:1px;height:20px;background:#d0dce8"></div>
+  <button class="btn-calc" onclick="showCalculations()">&#x1F9EE; Dashboard Calculation</button>
+  <button class="btn-dup" onclick="showDuplicates()">&#x26A0; Duplicate VINs</button>
+</div>
+
+<div class="main">
+  <div class="info-bar" id="infoBar"></div>
+  <div class="main-split">
+    <div class="main-left">
+      <div class="table-container" id="tableContainer"><div class="loader"><div class="spin"></div>Loading...</div></div>
+    </div>
+    <div class="main-right">
+      <div class="daily-container" id="dailyContainer"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Duplicate VINs Modal -->
+<div class="modal-overlay" id="dupModal" onclick="if(event.target===this)closeDuplicates()">
+  <div class="modal-box" style="max-width:900px">
+    <button class="close-btn" onclick="closeDuplicates()">&#x2715;</button>
+    <h2>&#x26A0; Duplicate Policies &mdash; Same Policy + Same Year</h2>
+    <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+      <span style="font-size:11px;color:#000" id="dupCount">Loading...</span>
+      <button onclick="downloadDupCSV()" style="margin-left:auto;padding:4px 12px;border:1px solid #000;border-radius:4px;background:#1e40af;color:#fff;font-size:10px;font-weight:600;cursor:pointer">&#x2913; Download CSV</button>
+    </div>
+    <div style="max-height:55vh;overflow:auto">
+      <table>
+        <thead><tr><th>Policy No</th><th>Year</th><th>Count</th><th>Customer</th><th>VINs</th><th>Companies</th><th>Dates</th></tr></thead>
+        <tbody id="dupBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Calculations Modal -->
+<div class="modal-overlay" id="calcModal" onclick="if(event.target===this)closeCalculations()">
+  <div class="modal-box">
+    <button class="close-btn" onclick="closeCalculations()">&#x2715;</button>
+    <h2>&#x1F9EE; Dashboard Calculations &amp; Logic</h2>
+    <table>
+      <thead><tr><th>Metric</th><th>Logic</th></tr></thead>
+      <tbody>
+        <tr><td>Renewal</td><td>A VIN is classified as <b>Renewal</b> if it appeared in <b>both</b> CY and LY — the customer had a policy last year and renewed this year.</td></tr>
+        <tr><td>New</td><td>A VIN is classified as <b>New</b> if it appears in CY, has policy type "New", and was <b>not</b> present in LY (first-time customer).</td></tr>
+        <tr><td>Rollover</td><td>A VIN is classified as <b>Rollover</b> if it appears in CY but was not in LY and does not have a "New" policy type (e.g., transferred from another insurer).</td></tr>
+        <tr><td>Not Visited</td><td>VINs that were present in LY (any month) but have NOT appeared in CY (any month in the selected date range).</td></tr>
+        <tr><td>LY #</td><td>Count of VINs in the same month of the <b>Previous Year (LY = CY - 1)</b>, categorized using the same logic (Renewal if also in LY-1, else New/Rollover).</td></tr>
+        <tr><td>CY #</td><td>Count of VINs in the given month of the <b>Current Year</b>, categorized as Renewal (in LY), New (policy type "New", not in LY), or Rollover (neither).</td></tr>
+        <tr><td>Growth %</td><td>Calculated as <code>((CY - LY) / LY) &times; 100</code>. Colored green if positive, red if negative, yellow if flat. Shows blank for months beyond the current date.</td></tr>
+        <tr><td>Total Row</td><td>Sums up the monthly counts for each category across all visible months. Growth is computed from the aggregated totals.</td></tr>
+        <tr><td>Period: YTD</td><td>Shows all 12 months (Jan&ndash;Dec) with growth only for months up to the current date.</td></tr>
+        <tr><td>Period: Q1&ndash;Q4</td><td>Shows only the 3 months in the selected quarter. Growth visible for months up to current date.</td></tr>
+        <tr><td>Period: MTD</td><td>Shows only the current month. Growth visible if current date is past the current month start.</td></tr>
+        <tr><td>Daily Performance</td><td>Shows a breakdown of New, Renewal, Rollover, and Not Visited figures for each day within the currently selected date range.</td></tr>
+        <tr><td>Unique VINs (Annual)</td><td>Each VIN is counted <b>only once per year</b>, regardless of how many months it appears. This is what the info bar (LY Total / CY Total) shows — the true unique count.</td></tr>
+        <tr><td>Sum of Months vs Unique</td><td>Monthly columns count unique VINs <b>per month</b>. A VIN appearing in Jan AND Feb gets counted in both months, inflating the sum. E.g., CY sum of months = 607 vs true unique = 603 (4 VINs visited in 2 different months). This is expected — the total row reflects the correct unique count.</td></tr>
+        <tr><td>VIN in Multiple Months</td><td>Same VIN + different dates + different policies across months = <b>legitimate repeat business</b>. Not a duplicate. Duplicates are defined as same policy number + same year.</td></tr>
+        <tr><td>Duplicate Policy Check</td><td>Detects rows where the <b>same policy number</b> appears more than once in the <b>same year</b> — indicating duplicate data entry.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let allData = [];
+let dupData = [];
+
+function fmt(n) { return (n||0).toLocaleString('en-IN'); }
+
+function pct(a,b) {
+  if (!b) return '0%';
+  return (a/b*100).toFixed(1)+'%';
+}
+
+function setDefaults() {
+  const now = new Date();
+  const cy = now.getFullYear();
+  document.getElementById('toDate').value = now.toISOString().split('T')[0];
+  document.getElementById('fromDate').value = cy + '-01-01';
+  document.getElementById('periodTrigger').textContent = 'YTD';
+  document.getElementById('dateRangeGroup').style.display = 'none';
+}
+
+function selectPeriod(val) {
+  document.getElementById('periodTrigger').textContent = val === 'ytd' ? 'YTD' : val === 'mtd' ? 'MTD' : 'Custom';
+  ['pcb1','pcb2','pcb3','pcb4'].forEach(id => document.getElementById(id).checked = false);
+  document.getElementById('periodDropdown').classList.remove('open');
+  const now = new Date();
+  const y = now.getFullYear();
+  const ms = String(now.getMonth() + 1).padStart(2,'0');
+  const todayStr = now.toISOString().split('T')[0];
+  let fromStr, toStr2;
+  if (val === 'mtd') {
+    fromStr = y + '-' + ms + '-01';
+    toStr2 = todayStr;
+  } else if (val === 'ytd') {
+    fromStr = y + '-01-01';
+    toStr2 = todayStr;
+  } else { fromStr=''; toStr2=''; }
+  document.getElementById('fromDate').value = fromStr;
+  document.getElementById('toDate').value = toStr2;
+  document.getElementById('dateRangeGroup').style.display = val === 'custom' ? 'flex' : 'none';
+  loadData();
+}
+
+function togglePeriodDropdown() {
+  document.getElementById('periodDropdown').classList.toggle('open');
+}
+
+function onPeriodCheckbox() {
+  const checked = ['pcb1','pcb2','pcb3','pcb4'].filter(id => document.getElementById(id).checked).map(id => ({pcb1:'q1',pcb2:'q2',pcb3:'q3',pcb4:'q4'}[id]));
+  if (!checked.length) { document.getElementById('periodTrigger').textContent = 'YTD'; selectPeriod('ytd'); return; }
+  document.getElementById('periodTrigger').textContent = checked.join('+');
+  document.getElementById('dateRangeGroup').style.display = 'none';
+  const now = new Date();
+  const y = now.getFullYear();
+  const qMonths = { q1:[1,3], q2:[4,6], q3:[7,9], q4:[10,12] };
+  let minM = 12, maxM = 1;
+  checked.forEach(q => { const [s,e] = qMonths[q]; if (s < minM) minM = s; if (e > maxM) maxM = e; });
+  document.getElementById('fromDate').value = y + '-' + String(minM).padStart(2,'0') + '-01';
+  document.getElementById('toDate').value = y + '-' + String(maxM).padStart(2,'0') + '-' + String(new Date(y, maxM, 0).getDate()).padStart(2,'0');
+  loadData();
+}
+
+function onDateChange() {
+  document.getElementById('periodTrigger').textContent = 'Custom';
+  ['pcb1','pcb2','pcb3','pcb4'].forEach(id => document.getElementById(id).checked = false);
+  loadData();
+}
+
+async function onRefresh() {
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin-sm"></span> Refreshing...';
+  btn.classList.add('loading');
+  try {
+    await fetch('/api/refresh', { method: 'POST' });
+  } catch (e) {
+    // Proceed even if view refresh fails
+  }
+  await loadData();
+  btn.disabled = false;
+  btn.innerHTML = '&olarr; Refresh';
+  btn.classList.remove('loading');
+}
+
+async function loadData() {
+  document.getElementById('tableContainer').innerHTML = '<div class="loader"><div class="spin"></div>Loading...</div>';
+  try {
+    const res = await fetch('/api/data');
+    const d = await res.json();
+    if (d.error) throw Error(d.error);
+    allData = d.rows || [];
+    if (!allData.length) {
+      document.getElementById('tableContainer').innerHTML = '<div class="empty">No data found</div>';
+      return;
+    }
+    const companies = [...new Set(allData.map(r=>r.insurancecompany).filter(Boolean))].sort();
+    const cSel = document.getElementById('companyFilter');
+    const prevComp = cSel.value;
+    cSel.innerHTML = '<option value="all">All</option>' + companies.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
+    if (companies.includes(prevComp)) cSel.value = prevComp;
+
+    const models = [...new Set(allData.map(r=>r.model).filter(Boolean))].sort();
+    const mSel = document.getElementById('modelFilter');
+    const prevModel = mSel.value;
+    mSel.innerHTML = '<option value="all">All</option>' + models.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
+    if (models.includes(prevModel)) mSel.value = prevModel;
+
+    const mfgYears = [...new Set(allData.map(r=>String(r.mfg_year)).filter(Boolean))].sort();
+    const mfgDropdown = document.getElementById('mfgDropdown');
+    mfgDropdown.innerHTML = mfgYears.map(y => '<label><input type="checkbox" value="'+y+'" onchange="onMfgChange()"> '+y+'</label>').join('');
+
+    render();
+  } catch (e) {
+    document.getElementById('tableContainer').innerHTML = `<div class="empty">&#10060; ${e.message}</div>`;
+  }
+}
+
+function render() {
+  const fromVal = document.getElementById('fromDate').value;
+  const toVal = document.getElementById('toDate').value;
+  if (!fromVal || !toVal) {
+    document.getElementById('tableContainer').innerHTML = '<div class="empty">Select date range to view performance</div>';
+    return;
+  }
+  const fromDate = new Date(fromVal + 'T00:00:00');
+  const toDate = new Date(toVal + 'T23:59:59');
+  const cy = toDate.getFullYear();
+  const ly = cy - 1;
+  const typeFilter = document.getElementById('typeFilter').value;
+
+  // Filter by company, model, and MFG year
+  const compF = document.getElementById('companyFilter').value;
+  const modelF = document.getElementById('modelFilter').value;
+  const mfgChecked = [...document.querySelectorAll('#mfgDropdown input:checked')].map(cb => cb.value);
+  let companyFiltered = compF === 'all' ? allData : allData.filter(r => r.insurancecompany === compF);
+  if (modelF !== 'all') companyFiltered = companyFiltered.filter(r => r.model === modelF);
+  if (mfgChecked.length) companyFiltered = companyFiltered.filter(r => mfgChecked.includes(String(r.mfg_year)));
+
+  // Build complete VIN history across ALL years from all data
+  const vinYears = {}; // vin -> Set of years
+  const vinFirstYear = {}; // vin -> first year seen
+  const vinPolicyTypes = {}; // vin -> Set of policy types
+  companyFiltered.forEach(r => {
+    if (!r.vinno || !r.create_date) return;
+    const year = parseInt(r.create_date.substring(0,4));
+    if (isNaN(year)) return;
+    if (!vinYears[r.vinno]) { vinYears[r.vinno] = new Set(); vinFirstYear[r.vinno] = year; }
+    vinYears[r.vinno].add(year);
+    if (year < vinFirstYear[r.vinno]) vinFirstYear[r.vinno] = year;
+    if (!vinPolicyTypes[r.vinno]) vinPolicyTypes[r.vinno] = new Set();
+    if (r.policytype) vinPolicyTypes[r.vinno].add(r.policytype);
+  });
+
+  // Filter data by date range for display (CY months only)
+  const minMonth = fromDate.getMonth() + 1;
+  const maxMonth = toDate.getMonth() + 1;
+
+  // Build VIN sets per CY year-month (only for months in range)
+  const cyVm = {}; // cyYm -> Set of VINs
+  companyFiltered.forEach(r => {
+    if (!r.vinno || !r.create_date) return;
+    const year = parseInt(r.create_date.substring(0,4));
+    const month = parseInt(r.create_date.substring(5,7));
+    if (year !== cy || month < minMonth || month > maxMonth) return;
+    const ym = r.create_date.substring(0,7);
+    if (!cyVm[ym]) cyVm[ym] = new Set();
+    cyVm[ym].add(r.vinno);
+  });
+
+  // Build VIN sets per LY year-month (for full year Jan-Dec)
+  const lyVm = {}; // lyYm -> Set of VINs
+  companyFiltered.forEach(r => {
+    if (!r.vinno || !r.create_date) return;
+    const year = parseInt(r.create_date.substring(0,4));
+    const month = parseInt(r.create_date.substring(5,7));
+    if (year !== ly) return;
+    const ym = r.create_date.substring(0,7);
+    if (!lyVm[ym]) lyVm[ym] = new Set();
+    lyVm[ym].add(r.vinno);
+  });
+
+  // Also get ALL LY VINs (any month) for Not Visited
+  const allLyVins = new Set();
+  companyFiltered.forEach(r => {
+    if (!r.vinno || !r.create_date) return;
+    const year = parseInt(r.create_date.substring(0,4));
+    if (year === ly) allLyVins.add(r.vinno);
+  });
+
+  // All CY VINs (any month in range)
+  const allCyVins = new Set();
+  Object.values(cyVm).forEach(s => s.forEach(v => allCyVins.add(v)));
+
+  // Build unique VIN sets for each category across ALL months
+  const allCyNew = new Set(), allCyRenewal = new Set(), allCyRollover = new Set();
+  const allLyNew = new Set(), allLyRenewal = new Set(), allLyRollover = new Set();
+  const stats = [];
+
+  for (let m = 1; m <= 12; m++) {
+    const ms = String(m).padStart(2,'0');
+    const cyYm = cy + '-' + ms;
+    const cyVins = cyVm[cyYm] || new Set();
+    const lyVins = lyVm[ly + '-' + ms] || new Set();
+
+    const cyNew = new Set(), cyRenewal = new Set(), cyRollover = new Set();
+
+    cyVins.forEach(v => {
+      const years = vinYears[v] || new Set();
+      const policyTypes = vinPolicyTypes[v] || new Set();
+      
+      // Renewal: VIN appeared in LY (any month)
+      if (years.has(ly)) {
+        cyRenewal.add(v);
+      }
+      // New: policy type is New and VIN not in LY
+      else if (policyTypes.has('New')) {
+        cyNew.add(v);
+      }
+      // Rollover: everything else in CY
+      else {
+        cyRollover.add(v);
+      }
+    });
+
+    // Not Visited: VINs in LY (any month) but NOT in CY (any month in range)
+    const notVisitedVins = new Set();
+    lyVins.forEach(v => {
+      if (!allCyVins.has(v)) notVisitedVins.add(v);
+    });
+
+    // Categorize LY VINs for this month (same logic: renewal if in LY-1)
+    const lyNew = new Set(), lyRenewal = new Set(), lyRollover = new Set();
+    lyVins.forEach(v => {
+      const years = vinYears[v] || new Set();
+      const policyTypes = vinPolicyTypes[v] || new Set();
+      if (years.has(ly - 1)) {
+        lyRenewal.add(v);
+      } else if (policyTypes.has('New')) {
+        lyNew.add(v);
+      } else {
+        lyRollover.add(v);
+      }
+    });
+
+    // Add to global unique sets
+    cyNew.forEach(v => allCyNew.add(v));
+    cyRenewal.forEach(v => allCyRenewal.add(v));
+    cyRollover.forEach(v => allCyRollover.add(v));
+    lyNew.forEach(v => allLyNew.add(v));
+    lyRenewal.forEach(v => allLyRenewal.add(v));
+    lyRollover.forEach(v => allLyRollover.add(v));
+
+    const inRange = m >= minMonth && m <= maxMonth;
+    
+    const row = {
+      month: m,
+      cy: { new: cyNew.size, renewal: cyRenewal.size, rollover: cyRollover.size, notVisited: notVisitedVins.size },
+      ly: { new: lyNew.size, renewal: lyRenewal.size, rollover: lyRollover.size },
+      cyTotal: cyVins.size
+    };
+    stats.push(row);
+  }
+
+  // Totals from unique VIN sets (no double counting)
+  const totals = { cy: { new: 0, renewal: 0, rollover: 0, notVisited: 0 }, ly: { new: 0, renewal: 0, rollover: 0 } };
+  totals.cy.new = allCyNew.size;
+  totals.cy.renewal = allCyRenewal.size;
+  totals.cy.rollover = allCyRollover.size;
+  totals.ly.new = allLyNew.size;
+  totals.ly.renewal = allLyRenewal.size;
+  totals.ly.rollover = allLyRollover.size;
+  
+  // Calculate total Not Visited (unique VINs in LY but not in CY)
+  const totalNotVisited = [...allLyVins].filter(v => !allCyVins.has(v)).length;
+  totals.cy.notVisited = totalNotVisited;
+
+  renderInfo(stats, totals, ly, cy, allCyVins, allLyVins);
+  renderTable(stats, totals, ly, cy, typeFilter, minMonth, maxMonth);
+  renderDailyPerformance(allData);
+}
+
+function growthClass(v) {
+  if (v > 0) return 'growth-up';
+  if (v < 0) return 'growth-down';
+  return 'growth-flat';
+}
+
+function growthArrow(v) {
+  if (v > 0) return '\u25B2';
+  if (v < 0) return '\u25BC';
+  return '\u25C6';
+}
+
+function growthBox(a,b) {
+  if (!b) return '<span class="growth-box">&nbsp;</span>';
+  const v = ((a - b) / b * 100);
+  const pct = v.toFixed(1);
+  return `<span class="growth-box ${growthClass(v)}">${growthArrow(v)} ${pct}%</span>`;
+}
+
+function renderInfo(stats, totals, ly, cy, allCyVins, allLyVins) {
+  const totalCy = allCyVins.size;
+  const totalLy = allLyVins.size;
+  const periodTrigger = document.getElementById('periodTrigger');
+  const checkedPeriod = ['pcb1','pcb2','pcb3','pcb4'].filter(id => document.getElementById(id).checked).map(id => ({pcb1:'q1',pcb2:'q2',pcb3:'q3',pcb4:'q4'}[id]));
+  const periodLabels = { ytd:'YTD (All Months)', q1:'Q1 (Jan-Mar)', q2:'Q2 (Apr-Jun)', q3:'Q3 (Jul-Sep)', q4:'Q4 (Oct-Dec)', mtd:'MTD (Month Till Date)', custom:'Custom' };
+  const periodLabel = checkedPeriod.length ? checkedPeriod.map(q => ({q1:'Q1',q2:'Q2',q3:'Q3',q4:'Q4'}[q])).join('+') : (periodLabels[periodTrigger.textContent === 'Custom' ? 'custom' : periodTrigger.textContent === 'MTD' ? 'mtd' : 'ytd'] || 'Custom');
+  let growthHtml = '';
+  if (totalLy) {
+    const g = ((totalCy - totalLy) / totalLy * 100);
+    growthHtml = `<span class="growth-box ${growthClass(g)}">${growthArrow(g)} ${g.toFixed(1)}%</span>`;
+  }
+  document.getElementById('infoBar').innerHTML = `
+    <div class="info-box" style="border-left:3px solid #1e40af"><div class="num">${fmt(totalLy)}</div><div><div class="lbl">${ly} Total VINs</div><div class="sub">LY policies</div></div></div>
+    <div class="info-box" style="border-left:3px solid #2563eb"><div class="num">${fmt(totalCy)}</div><div><div class="lbl">${cy} Total VINs</div><div class="sub">CY policies</div></div></div>
+    <div class="info-box" style="border-left:3px solid #3b82f6"><div class="num">${growthHtml}</div><div><div class="lbl">Growth</div><div class="sub">CY vs LY</div></div></div>
+    <div class="info-box" style="border-left:3px solid #60a5fa"><div class="num">${fmt(totals.cy.notVisited)}</div><div><div class="lbl">Not Visited</div><div class="sub">In LY not in CY</div></div></div>
+    <div class="info-box" style="border-left:3px solid #60a5fa"><div class="num">${periodLabel}</div><div><div class="lbl">Period</div><div class="sub">${cy} vs ${ly}</div></div></div>
+  `;
+}
+
+function renderTable(stats, totals, ly, cy, typeFilter, minMonth, maxMonth) {
+  const currentMonth = new Date().getMonth() + 1;
+  const periodTrigger = document.getElementById('periodTrigger');
+  const checkedPeriod = ['pcb1','pcb2','pcb3','pcb4'].filter(id => document.getElementById(id).checked);
+  const isYtd = periodTrigger.textContent === 'YTD' && !checkedPeriod.length;
+  const filteredStats = isYtd ? stats : stats.filter(r => r.month >= minMonth && r.month <= maxMonth);
+  const types = typeFilter === 'all' ? ['new','renewal','rollover','notVisited'] : [typeFilter];
+  const typeLabels = { new:'New', renewal:'Renewal', rollover:'Rollover', notVisited:'Not Visited' };
+  const typeColors = { new:'#1e40af', renewal:'#2563eb', rollover:'#3b82f6', notVisited:'#dc2626' };
+
+  if (filteredStats.length === 0) {
+    document.getElementById('tableContainer').innerHTML = '<div class="empty">No data for selected date range</div>';
+    return;
+  }
+
+  let html = '<div class="table-wrap"><table><thead><tr>';
+  html += '<th class="month-col" style="min-width:50px">Month</th>';
+  types.forEach((t, idx) => {
+    const color = typeColors[t];
+    const isLast = idx === types.length - 1;
+    html += `<th colspan="3" style="color:#fff;background:${color};border-bottom:2px solid ${color};${!isLast ? 'border-right:3px solid #000;' : ''}padding:4px 6px;font-size:9px;white-space:nowrap;min-width:90px">${typeLabels[t]}</th>`;
+  });
+  html += '</tr><tr>';
+  html += '<th class="month-col" style="background:transparent"></th>';
+  types.forEach((t) => {
+    if (t === 'notVisited') {
+      html += `<th style="color:#fff;padding:3px 4px;font-size:8px;min-width:60px" colspan="3">Count</th>`;
+    } else {
+      html += `<th style="color:#fff;padding:3px 4px;font-size:8px;min-width:35px">LY #</th><th style="color:#fff;padding:3px 4px;font-size:8px;min-width:35px">CY #</th><th style="color:#fff;padding:3px 4px;font-size:8px;min-width:50px">Growth</th>`;
+    }
+  });
+  html += '</tr></thead><tbody>';
+
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  filteredStats.forEach((r,i) => {
+    html += `<tr>`;
+    html += `<td class="month-cell" style="padding:4px 6px;font-size:10px">${months[r.month - 1]}</td>`;
+    types.forEach((t, ti) => {
+      const cyVal = r.cy[t] || 0;
+      const isLastType = ti === types.length - 1;
+      const growthBorder = isLastType ? '' : 'border-right:2px solid #000;';
+      if (t === 'notVisited') {
+html += `<td style="padding:3px 4px;${growthBorder}" colspan="3"><span class="val-box" style="font-size:9px;min-width:50px;padding:1px 4px;background:#fee2e2;color:#dc2626;border:1px solid #000">${fmt(cyVal)}</span></td>`;
+      } else {
+        const lyVal = r.ly ? r.ly[t] || 0 : 0;
+        html += `<td style="padding:3px 4px;${growthBorder}"><span class="val-box val-ly" style="font-size:9px;min-width:30px;padding:1px 4px">${fmt(lyVal)}</span></td>`;
+        html += `<td style="padding:3px 4px;${growthBorder}"><span class="val-box val-cy" style="font-size:9px;min-width:30px;padding:1px 4px">${fmt(cyVal)}</span></td>`;
+        html += `<td style="padding:3px 4px;${growthBorder}">${r.month > currentMonth ? '<span class="growth-box">&nbsp;</span>' : growthBox(cyVal, lyVal)}</td>`;
+      }
+    });
+    html += '</tr>';
+  });
+
+  // Totals row (use unique VIN totals for YTD, summed from visible months for filtered)
+  const ttl = isYtd ? totals : { cy: { new: 0, renewal: 0, rollover: 0, notVisited: 0 }, ly: { new: 0, renewal: 0, rollover: 0 } };
+  if (!isYtd) filteredStats.forEach(r => { Object.keys(r.cy).forEach(k => ttl.cy[k] += r.cy[k]); if (r.ly) Object.keys(r.ly).forEach(k => ttl.ly[k] += r.ly[k]); });
+  html += '<tr class="total">';
+  html += '<td class="month-cell" style="padding:4px 6px;font-size:12px;font-weight:800">Total</td>';
+  types.forEach((t, ti) => {
+    const cyVal = ttl.cy[t] || 0;
+    const isLastType = ti === types.length - 1;
+    const growthBorder = isLastType ? '' : 'border-right:2px solid #000;';
+    if (t === 'notVisited') {
+      html += `<td style="padding:3px 4px;${growthBorder}" colspan="3"><span class="val-box" style="font-size:10px;font-weight:700;min-width:50px;padding:1px 4px;background:#fee2e2;color:#dc2626;border:1px solid #000">${fmt(cyVal)}</span></td>`;
+    } else {
+      const lyVal = ttl.ly[t] || 0;
+      html += `<td style="padding:3px 4px;${growthBorder}"><span class="val-box val-ly" style="font-size:10px;font-weight:700;min-width:30px;padding:1px 4px">${fmt(lyVal)}</span></td>`;
+      html += `<td style="padding:3px 4px;${growthBorder}"><span class="val-box val-cy" style="font-size:10px;font-weight:700;min-width:30px;padding:1px 4px">${fmt(cyVal)}</span></td>`;
+      html += `<td style="padding:3px 4px;${growthBorder}">${growthBox(cyVal, lyVal)}</td>`;
+    }
+  });
+  html += '</tr>';
+
+  html += '</tbody></table></div>';
+  document.getElementById('tableContainer').innerHTML = html;
+}
+
+function renderDailyPerformance(sourceData) {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
+  const ms = String(m).padStart(2,'0');
+
+  // Yesterday
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const ys = String(yesterday.getDate()).padStart(2,'0');
+  const yms = String(yesterday.getMonth() + 1).padStart(2,'0');
+  const yyy = yesterday.getFullYear();
+  const ymsPad = String(yyy) + '-' + String(yesterday.getMonth() + 1).padStart(2,'0');
+
+  // Use same filtered data as main table, only take current month
+  const data = sourceData || allData;
+  const mtdData = data.filter(r => {
+    if (!r.create_date) return false;
+    const ym = r.create_date.substring(0,7);
+    return ym === (y + '-' + ms);
+  });
+
+  // Group by insurance company (unique VINs to match main table)
+  const compMap = {};
+  const compVins = {};
+  mtdData.forEach(r => {
+    if (!r.vinno) return;
+    const comp = r.insurancecompany || 'Unknown';
+    if (!compMap[comp]) { compMap[comp] = { mtd: 0, yesterday: 0, premium: 0 }; compVins[comp] = new Set(); }
+    const vkey = r.vinno;
+    if (!compVins[comp].has(vkey)) {
+      compVins[comp].add(vkey);
+      compMap[comp].mtd++;
+      compMap[comp].premium += Number(r.grosspremium) || 0;
+    }
+  });
+
+  // Count yesterday unique VINs
+  const compMap2 = {};
+  mtdData.forEach(r => {
+    if (!r.vinno || !r.create_date) return;
+    const comp = r.insurancecompany || 'Unknown';
+    if (!compMap2[comp]) compMap2[comp] = new Set();
+    if (r.create_date.startsWith(ymsPad) && r.create_date.substring(8,10) === ys) {
+      compMap2[comp].add(r.vinno);
+    }
+  });
+  Object.keys(compMap2).forEach(comp => {
+    if (compMap[comp]) compMap[comp].yesterday = compMap2[comp].size;
+  });
+
+  const sorted = Object.entries(compMap).sort((a,b) => b[1].mtd - a[1].mtd);
+  if (!sorted.length) {
+    document.getElementById('dailyContainer').innerHTML = '';
+    return;
+  }
+
+  const maxMtd = sorted.length ? sorted[0][1].mtd : 1;
+  const uniqueMtdSum = sorted.reduce((s,[_,v]) => s + v.mtd, 0);
+
+  const yesterdayLabel = `${yesterday.getDate()}/${yesterday.getMonth()+1}/${yesterday.getFullYear()}`;
+  const monthLabel = new Date().toLocaleString('en',{month:'long',year:'numeric'});
+  let html = `<div style="background:#fff;border:1px solid #000;overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #000;background:linear-gradient(135deg,#1e40af,#3b82f6)">
+      <h3 style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;color:#fff">&#128202; Daily Performance</h3>
+      <span style="font-size:9px;color:#fff;background:rgba(255,255,255,0.15);padding:2px 8px;border-radius:10px;border:1px solid rgba(255,255,255,0.3)">${monthLabel}</span>
+    </div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px;border:2px solid #000">
+      <thead><tr style="background:#1e40af">
+        <th style="padding:6px 10px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:0.4px;color:#fff;border:2px solid #000">Insurance Company</th>
+        <th style="padding:6px 10px;text-align:center;font-size:9px;text-transform:uppercase;letter-spacing:0.4px;color:#fff;border:2px solid #000;white-space:nowrap">Yesterday<div style="font-weight:400;font-size:8px;color:rgba(255,255,255,0.7);text-transform:none">${yesterdayLabel}</div></th>
+        <th style="padding:6px 10px;text-align:center;font-size:9px;text-transform:uppercase;letter-spacing:0.4px;color:#fff;border:2px solid #000">MTD</th>
+        <th style="padding:6px 10px;text-align:center;font-size:9px;text-transform:uppercase;letter-spacing:0.4px;color:#fff;border:2px solid #000;white-space:nowrap">Premium (₹L)</th>
+        <th style="padding:6px 10px;text-align:center;font-size:9px;text-transform:uppercase;letter-spacing:0.4px;color:#fff;border:2px solid #000">Share %</th>
+      </tr></thead><tbody>`;
+
+  sorted.forEach(([comp, vals], i) => {
+    const pct = (vals.mtd / maxMtd * 100);
+    const share = uniqueMtdSum ? (vals.mtd / uniqueMtdSum * 100).toFixed(1) : 0;
+    const premL = (vals.premium / 100000).toFixed(1);
+    const blueShades = ['#1e40af','#2563eb','#3b82f6','#60a5fa'];
+    const dotColor = blueShades[i % 4];
+    html += `<tr style="border-bottom:1px solid #000">
+      <td style="padding:5px 10px;font-weight:600;color:#000;font-size:10px;border:2px solid #000">${comp}</td>
+      <td style="padding:5px 10px;text-align:center;border:2px solid #000"><span style="background:#dbeafe;color:#1e40af;padding:1px 10px;border-radius:8px;font-weight:700;font-size:12px">${fmt(vals.yesterday)}</span></td>
+      <td style="padding:5px 10px;text-align:center;border:2px solid #000">
+        <div style="display:flex;align-items:center;gap:4px;justify-content:center">
+          <span style="font-weight:700;font-size:12px;color:#000">${fmt(vals.mtd)}</span>
+          <div style="width:40px;height:3px;background:#e5e7eb;border-radius:2px;overflow:hidden;display:inline-block">
+            <div style="height:100%;width:${Math.max(pct,3)}%;background:linear-gradient(90deg,#3b82f6,#1e40af);border-radius:2px"></div>
+          </div>
+        </div>
+      </td>
+      <td style="padding:5px 10px;text-align:center;border:2px solid #000;font-weight:600;color:#000;font-size:11px">₹${premL}</td>
+      <td style="padding:5px 10px;text-align:center;border:2px solid #000"><span style="color:#000;font-size:10px">${share}%</span></td>
+    </tr>`;
+  });
+
+  // Totals row
+  const totalYesterday = sorted.reduce((s,[_,v]) => s + v.yesterday, 0);
+  const totalMtd = sorted.reduce((s,[_,v]) => s + v.mtd, 0);
+  const totalPremium = sorted.reduce((s,[_,v]) => s + v.premium, 0);
+  html += `<tr style="background:#e8f0fe;font-weight:700;border-top:2px solid #000">
+    <td style="padding:5px 10px;color:#1e40af;font-size:10px;border:1px solid #000">Total</td>
+    <td style="padding:5px 10px;text-align:center;border:1px solid #000"><span style="background:#1e40af;color:#fff;padding:1px 10px;border-radius:8px;font-size:12px">${fmt(totalYesterday)}</span></td>
+    <td style="padding:5px 10px;text-align:center;border:1px solid #000;font-size:12px;color:#000">${fmt(totalMtd)}</td>
+    <td style="padding:5px 10px;text-align:center;border:1px solid #000;font-size:11px;color:#000">₹${(totalPremium/100000).toFixed(1)}L</td>
+    <td style="padding:5px 10px;text-align:center;border:1px solid #000;font-size:10px;color:#000">100%</td>
+  </tr>`;
+
+  html += '</tbody></table></div></div>';
+  document.getElementById('dailyContainer').innerHTML = html;
+}
+
+function showDuplicates() {
+  // Find duplicates: same policy number AND same year
+  const keyMap = {};
+  allData.forEach(r => {
+    if (!r.policyno || !r.create_date) return;
+    const year = r.create_date.substring(0,4);
+    const key = r.policyno + '|' + year;
+    if (!keyMap[key]) keyMap[key] = [];
+    keyMap[key].push(r);
+  });
+  const dupGroups = Object.values(keyMap).filter(group => group.length > 1);
+  
+  if (!dupGroups.length) {
+    document.getElementById('dupCount').textContent = 'No duplicates found (same policy + same year).';
+    document.getElementById('dupBody').innerHTML = '';
+    document.getElementById('dupModal').classList.add('open');
+    return;
+  }
+  
+  dupData = [];
+  let html = '';
+  dupGroups.sort((a,b) => a[0].policyno.localeCompare(b[0].policyno)).forEach(group => {
+    const vins = [...new Set(group.map(r => r.vinno).filter(Boolean))];
+    const companies = [...new Set(group.map(r => r.insurancecompany).filter(Boolean))];
+    const dates = group.map(r => r.create_date).filter(Boolean).sort();
+    const customer = group.find(r => r.customer_name)?.customer_name || '-';
+    const policy = group[0].policyno;
+    const year = group[0].create_date.substring(0,4);
+    dupData.push({ policy, year, vins: vins.join(', '), customer, companies: companies.join(' | '), dates: dates.join(', '), count: group.length });
+    html += `<tr>
+      <td style="font-size:9px;font-weight:600">${policy}</td>
+      <td style="font-size:9px">${year}</td>
+      <td style="font-size:9px">${group.length}</td>
+      <td style="font-size:10px">${customer}</td>
+      <td style="font-size:10px">${vins.join(', ')}</td>
+      <td style="font-size:10px">${companies.map(c => '<span style="background:#fee2e2;color:#dc2626;padding:0 5px;border-radius:3px;font-size:9px;margin:1px;display:inline-block">'+c+'</span>').join(' ')}</td>
+      <td style="font-size:9px">${dates.join('<br>')}</td>
+    </tr>`;
+  });
+  
+  document.getElementById('dupCount').textContent = dupGroups.length + ' duplicate group(s) found (same policy + same year).';
+  document.getElementById('dupBody').innerHTML = html;
+  document.getElementById('dupModal').classList.add('open');
+}
+
+function closeDuplicates() {
+  document.getElementById('dupModal').classList.remove('open');
+}
+
+function downloadDupCSV() {
+  if (!dupData.length) return;
+  const header = 'Policy No,Year,Count,Customer,VINs,Companies,Dates\n';
+  const rows = dupData.map(d => 
+    '"' + d.policy + '","' + d.year + '","' + d.count + '","' + d.customer + '","' + d.vins + '","' + d.companies + '","' + d.dates + '"'
+  ).join('\n');
+  const blob = new Blob([header + rows], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'duplicate-policies.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function showCalculations() {
+  document.getElementById('calcModal').classList.add('open');
+}
+function closeCalculations() {
+  document.getElementById('calcModal').classList.remove('open');
+}
+
+function toggleMfgDropdown() {
+  document.getElementById('mfgDropdown').classList.toggle('open');
+}
+function onMfgChange() {
+  const checked = document.querySelectorAll('#mfgDropdown input:checked');
+  document.getElementById('mfgTrigger').textContent = checked.length ? checked.length + ' selected' : 'All';
+  render();
+}
+document.addEventListener('click', function(e) {
+  const mfg = document.getElementById('mfgContainer');
+  if (mfg && !mfg.contains(e.target)) document.getElementById('mfgDropdown').classList.remove('open');
+  const period = document.getElementById('periodContainer');
+  if (period && !period.contains(e.target)) document.getElementById('periodDropdown').classList.remove('open');
+});
+
+function toggleToolbar() {
+  const panel = document.getElementById('toolbarPanel');
+  const btn = document.getElementById('hamburgerBtn');
+  panel.classList.toggle('collapsed');
+  btn.textContent = panel.classList.contains('collapsed') ? '\u2630' : '\u2715';
+}
+
+function startClock() {
+  function tick() {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2,'0');
+    const m = String(now.getMinutes()).padStart(2,'0');
+    const s = String(now.getSeconds()).padStart(2,'0');
+    document.getElementById('liveClock').textContent = h + ':' + m + ':' + s;
+  }
+  tick();
+  setInterval(tick, 1000);
+}
+
+setDefaults();
+loadData();
+startClock();
+</script>
+</body>
+</html>

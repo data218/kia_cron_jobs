@@ -11,6 +11,7 @@ import { downloadRsaReport } from './rsa-report.js';
 import { downloadAdvWiseLubricantsVasReport } from './adv-wise-lubricants-vas.js';
 import { downloadOperationWiseAnalysisReport } from './operation-wise-analysis-report.js';
 import { downloadOperationWiseAnalysisAdvisorReport } from './operation-wise-analysis-advisor-report.js';
+import { downloadKiaSafetyReport } from './kia-safety.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { executeWithRetry } from '../utils/execute-with-retry.js';
@@ -85,29 +86,46 @@ export const reportDefinitions = [
     run: downloadOperationWiseAnalysisReport
   },
   {
-    id: 'operation-wise-analysis-advisor-report',
-    name: 'Operation Wise Analysis Advisor Report',
-    requiresKiaDms: true,
-    run: downloadOperationWiseAnalysisAdvisorReport
-  },
-  {
     id: 'rsa-report',
     name: 'RSA Report',
     requiresKiaDms: false,
     run: downloadRsaReport
+  },
+  {
+    id: 'kia-safety',
+    name: 'Kia Safety VISOF',
+    requiresKiaDms: false,
+    run: downloadKiaSafetyReport
+  },
+  {
+    id: 'demo-job-cards',
+    name: 'Demo Job Cards',
+    requiresKiaDms: true,
+    run: downloadDemoJobCardsReport
+  },
+  {
+    id: 'demo-car-list',
+    name: 'Demo Car List',
+    requiresKiaDms: true,
+    run: downloadDemoCarListReport
+  },
+  {
+    id: 'service-appointment',
+    name: 'Service Appointment',
+    requiresKiaDms: true,
+    run: downloadServiceAppointmentReport
+  },
+  {
+    id: 'operation-wise-analysis-advisor',
+    name: 'Operation Wise Analysis Advisor Report',
+    requiresKiaDms: true,
+    run: downloadOperationWiseAnalysisAdvisorReport
   }
 ];
 
 const defaultReportDefinitions = reportDefinitions.filter(report => report.includeInAll !== false);
 const regularReportDefinitions = defaultReportDefinitions.filter(report =>
-  ![
-    'open-ro-yearly',
-    'kia-call-center-complaints',
-    'demo-job-cards',
-    'demo-car-list',
-    'service-appointment',
-    'rsa-report'
-  ].includes(report.id)
+  !['open-ro-yearly', 'kia-call-center-complaints', 'demo-job-cards', 'demo-car-list', 'service-appointment', 'operation-wise-analysis-advisor'].includes(report.id)
 );
 
 export function getSelectedReports({ mode = 'configured' } = {}) {
@@ -146,6 +164,22 @@ export function getSelectedReports({ mode = 'configured' } = {}) {
 
   if (mode === 'service-appointment') {
     return reportDefinitions.filter(report => report.id === 'service-appointment');
+  }
+
+  if (mode === 'service-appointment') {
+    return reportDefinitions.filter(report => report.id === 'service-appointment');
+  }
+
+  if (mode === 'operation-wise-analysis-advisor') {
+    return reportDefinitions.filter(report => report.id === 'operation-wise-analysis-advisor');
+  }
+
+  if (mode === 'kia-safety') {
+    return reportDefinitions.filter(report => report.id === 'kia-safety');
+  }
+
+  if (mode === 'kia-safety-daily') {
+    return reportDefinitions.filter(report => report.id === 'kia-safety');
   }
 
   if (mode === 'rsa-report') {

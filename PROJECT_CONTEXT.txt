@@ -2227,3 +2227,22 @@ Start OTP webhook server:
 - Likely reason: These are "snapshot" reports that don't store historical periods; they only show current month data in the DMS system itself.
 - Started new historical backfill (am-platinum-backfill-visible, headless=false) for all dealers (N5211, N6824, N6828) to see if historical runs fetch any dated data for VAS tables.
 - Backfill in progress; will monitor completion to verify if VAS tables get historical dates or remain current-month-only.
+
+2026-06-12 Kia Safety VISOF Insurance Kia historical backfill completed:
+- New report module: src/reports/kia-safety.js for Kia Safety VISOF portal (https://www.kiasafety.com/VISOF)
+- Authentication: JK40202 / Singh@4327 via webhook OTP (configured in .env)
+- Report: Policy Summary Report (VSPolicy_SummaryReport.aspx)
+- Navigation: Login → Policy Summary → date range → Search → Export to CSV button (btnExport)
+- Date range: Monthly chunks from 2025-01-01 to 2026-05-31 (17 months)
+- Export method: Clicks #btnExport on VSPolicy_SummaryReportList.aspx page (opened in new tab after Search), downloads CSV via Playwright download event
+- Table created in Supabase: public.kia_insurance (46 columns matching provided headers)
+- Data saved via Supabase REST API (saveReportSheetToSupabaseRest) because PostgreSQL direct connection DNS fails
+- Historical backfill results (2026-06-12):
+  - 17 months processed successfully
+  - 1,144 rows inserted into kia_insurance
+  - 0 duplicates (row_hash unique constraint)
+  - All 46 headers matched correctly
+- Daily cron configured: KIA_SAFETY_DAILY_CRON_SCHEDULE=0 10 * * * (runs at 10:00 AM for previous day data)
+- Mode: kia-safety-daily (fetches yesterday's data)
+- Table identity: Uses full row hash for deduplication (no stable business key identified in VISOF data)
+- Sample data: Policies from Jammu & Kashmir (JK402 Platinum Automobiles), models Seltos, Sonet, Carens, insurance companies ICICI Lombard, New India Assurance, Bajaj General Insurance

@@ -15,6 +15,18 @@ await runKiaDmsJob('regular');
 logger.info('Starting Open RO Yearly lane dry-run after regular lane completed');
 await runKiaDmsJob('open-ro-yearly');
 
+logger.info('Starting Demo Job Cards lane dry-run');
+await runKiaDmsJob('demo-job-cards');
+
+logger.info('Starting Demo Car List lane dry-run');
+await runKiaDmsJob('demo-car-list');
+
+logger.info('Starting Service Appointment lane dry-run');
+await runKiaDmsJob('service-appointment');
+
+logger.info('Starting Operation Wise Analysis Advisor lane dry-run');
+await runKiaDmsJob('operation-wise-analysis-advisor');
+
 logger.info('Testing overlap lock: starting regular lane and immediately requesting Open RO lane');
 const runningJob = runKiaDmsJob('regular');
 await sleep(50);

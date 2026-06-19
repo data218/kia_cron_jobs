@@ -494,6 +494,20 @@ if (shouldRunFromCli && process.argv.includes('--once')) {
   });
   cron.schedule(config.rsaReportCronSchedule, () => runKiaDmsJob('rsa-report'));
 
+  logger.info('Scheduling Kia Safety VISOF automation job', {
+    cron: config.kiaSafetyCronSchedule,
+    mode: 'kia-safety'
+  });
+  cron.schedule(config.kiaSafetyCronSchedule, () => runKiaDmsJob('kia-safety'));
+
+  if (config.kiaSafetyDailyModeEnabled) {
+    logger.info('Scheduling Kia Safety VISOF daily automation job (previous day)', {
+      cron: config.kiaSafetyDailyCronSchedule,
+      mode: 'kia-safety-daily'
+    });
+    cron.schedule(config.kiaSafetyDailyCronSchedule, () => runKiaDmsJob('kia-safety-daily'));
+  }
+
   logger.info('Scheduling Open RO Yearly automation job', {
     cron: config.openRoYearlyCronSchedule,
     mode: 'open-ro-yearly'
@@ -524,9 +538,9 @@ if (shouldRunFromCli && process.argv.includes('--once')) {
   });
   cron.schedule(config.serviceAppointmentCronSchedule, () => runKiaDmsJob('service-appointment'));
 
-  await writeHealthStatus({
-    status: 'idle',
-    mode: 'scheduler',
-    startedAt: new Date().toISOString()
+  logger.info('Scheduling Operation Wise Analysis Advisor automation job', {
+    cron: config.operationWiseAnalysisAdvisorCronSchedule,
+    mode: 'operation-wise-analysis-advisor'
   });
+  cron.schedule(config.operationWiseAnalysisAdvisorCronSchedule, () => runKiaDmsJob('operation-wise-analysis-advisor'));
 }

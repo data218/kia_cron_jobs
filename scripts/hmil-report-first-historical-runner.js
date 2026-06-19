@@ -113,6 +113,33 @@ function getMonthlySafeRanges(startDate, endDate) {
   return ranges;
 }
 
+function getMultiMonthlySafeRanges(startDate, endDate, monthsCount) {
+  const ranges = [];
+  const finalEnd = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  let cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+
+  while (cursor <= finalEnd) {
+    const chunkStart = maxDate(cursor, startDate);
+    const chunkEndTemp = new Date(cursor.getFullYear(), cursor.getMonth() + monthsCount, 0);
+    const chunkEnd = minDate(chunkEndTemp, finalEnd);
+    ranges.push(rangeFromDates(chunkStart, chunkEnd, `${monthKey(chunkStart)}-${monthsCount}`));
+
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + monthsCount, 1);
+  }
+
+  return ranges;
+}
+
+function getSafeRangesForReport(reportId, startDate, endDate) {
+  if (reportId === 'hyundai-ro-billing-report') {
+    return getMultiMonthlySafeRanges(startDate, endDate, 12);
+  } else if (reportId === 'hyundai-repair-order-list') {
+    return getMultiMonthlySafeRanges(startDate, endDate, 3);
+  } else {
+    return getMonthlySafeRanges(startDate, endDate);
+  }
+}
+
 function selectedDealers({ account, envPrefix, accountId = 'hmil' }) {
   const dealers = env(`${envPrefix}_HISTORICAL_DEALERS`, account.dealerCodes.join(','))
     .split(',')
@@ -782,9 +809,12 @@ export async function runGdmsReportFirstHistoricalBackfill({
           const reportRangeOffset = dealerIndex === startDealerIndex && reportIndex === startReportIndex
             ? startRangeIndex
             : 0;
+          const reportRanges = optimizedFullRangeNoSearch
+            ? [rangeFromDates(parseIsoLocalDate(startIso), parseIsoLocalDate(endIso), 'full-range')]
+            : getSafeRangesForReport(report.id, parseIsoLocalDate(startIso), parseIsoLocalDate(endIso));
           const selectedRanges = Number.isFinite(maxRanges)
-            ? ranges.slice(reportRangeOffset, reportRangeOffset + maxRanges)
-            : ranges.slice(reportRangeOffset);
+            ? reportRanges.slice(reportRangeOffset, reportRangeOffset + maxRanges)
+            : reportRanges.slice(reportRangeOffset);
 
           writeLogLine(logStream, {
             event: 'report_started',
@@ -796,7 +826,7 @@ export async function runGdmsReportFirstHistoricalBackfill({
           });
 
           for (const range of selectedRanges) {
-            const rangeIndex = ranges.indexOf(range);
+            const rangeIndex = reportRanges.indexOf(range);
 
             if (accountId === 'am-platinum' && shouldSkipAmPlatinumRangeForDealer(dealerCode, range)) {
               const summary = summarizeResult({
@@ -868,11 +898,11 @@ export async function runGdmsReportFirstHistoricalBackfill({
                 currentRangeIndex: rangeIndex,
                 lastCompletedReportId: report.id,
                 lastCompletedRangeIndex: rangeIndex,
-                nextDealerIndex: rangeIndex + 1 >= ranges.length && reportIndex + 1 >= reports.length
+                nextDealerIndex: rangeIndex + 1 >= reportRanges.length && reportIndex + 1 >= reports.length
                   ? dealerIndex + 1
                   : dealerIndex,
-                nextReportIndex: rangeIndex + 1 >= ranges.length ? reportIndex + 1 : reportIndex,
-                nextRangeIndex: rangeIndex + 1 >= ranges.length ? 0 : rangeIndex + 1,
+                nextReportIndex: rangeIndex + 1 >= reportRanges.length ? reportIndex + 1 : reportIndex,
+                nextRangeIndex: rangeIndex + 1 >= reportRanges.length ? 0 : rangeIndex + 1,
                 completedWorkItemCount: results.length,
                 latestResult: summary
               });
@@ -986,7 +1016,7 @@ export async function runGdmsReportFirstHistoricalBackfill({
             results.push(summary);
 
             const failed = result.status === 'failed';
-            const completedReportRanges = rangeIndex + 1 >= ranges.length;
+            const completedReportRanges = rangeIndex + 1 >= reportRanges.length;
             const nextReportIndex = failed
               ? reportIndex
               : completedReportRanges ? reportIndex + 1 : reportIndex;

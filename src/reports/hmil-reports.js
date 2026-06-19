@@ -15,6 +15,7 @@ import {
   openHmilOperationWiseAnalysisReport,
   openHmilPurchaseReport,
   openHmilRepairOrderListReport,
+  openHmilServiceRepairOrderListReport,
   openHmilServiceBookingListReport,
   openHmilTrustPackageSection
 } from '../navigation/hmil-menu.js';
@@ -180,7 +181,9 @@ export function createHmilReportDefinitions(account = defaultAccount()) {
     sheetName: 'Hyundai RO Billing Report',
     open: openRoBillingReport,
     dateFromSelector: '#sBillDateFromDate',
-    dateToSelector: '#sBillDateToDate'
+    dateToSelector: '#sBillDateToDate',
+    skipSearchButtonClick: true,
+    pageSize: '1000'
   }, account),
     cloneReport({
     id: 'hyundai-call-center-complaints',
@@ -211,7 +214,7 @@ export function createHmilReportDefinitions(account = defaultAccount()) {
     id: 'hyundai-open-ro-yearly',
     name: 'Hyundai Open RO Yearly',
     sheetName: 'Hyundai Open RO Yearly',
-    open: openHmilRepairOrderListReport,
+    open: openHmilServiceRepairOrderListReport,
     dateFromSelector: '#sRoStrtDate',
     dateToSelector: '#sRoFnshDate',
     preSearchDropdowns: [
@@ -222,7 +225,7 @@ export function createHmilReportDefinitions(account = defaultAccount()) {
     id: 'hyundai-demo-job-cards',
     name: 'Hyundai Demo Job Cards',
     sheetName: 'Hyundai Demo Job Cards',
-    open: openHmilRepairOrderListReport,
+    open: openHmilServiceRepairOrderListReport,
     dateFromSelector: '#sRoStrtDate',
     dateToSelector: '#sRoFnshDate',
     preSearchDropdowns: [

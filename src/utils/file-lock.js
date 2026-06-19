@@ -33,6 +33,10 @@ async function removeStaleLock(lockDir, staleMs, label) {
       await fs.rm(lockDir, { recursive: true, force: true });
       return true;
     }
+
+    if (lockProcessAlive) {
+      return false;
+    }
   }
 
   const ageMs = Date.now() - stat.mtimeMs;

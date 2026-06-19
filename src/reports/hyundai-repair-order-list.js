@@ -15,7 +15,7 @@ import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
 import { openHmilRepairOrderListReport } from '../navigation/hmil-menu.js';
 import { selectKendoPagerSizeWithPreferredFallback, waitForKendoGridIdle } from './grid.js';
-import { exportAllGridPagesToFiles, mergeExcelFiles } from './paged-export.js';
+import { exportAllGridPagesToFiles, gridHasNoExportableData, mergeExcelFiles } from './paged-export.js';
 import { addSourceDealerCodeToDataset } from './report-metadata.js';
 import { clickSearch, fillDate } from './report-actions.js';
 
@@ -54,12 +54,12 @@ async function cleanupHmilExportDir(exportDir, account) {
 }
 
 async function resolveRepairOrderContext(page) {
-  const context = await findContextWithVisibleSelector(page, '#sRoStrtDate', {
+  const context = await findContextWithVisibleSelector(page, '#sRoDateFromDate', {
     timeout: 90000,
     label: 'Hyundai Repair Order RO Date From'
   });
 
-  await context.locator('#sRoFnshDate').first().waitFor({ state: 'visible', timeout: 30000 });
+  await context.locator('#sRoDateToDate').first().waitFor({ state: 'visible', timeout: 30000 });
   logger.info('Hyundai Repair Order List page loaded');
   return context;
 }
@@ -94,8 +94,8 @@ async function fillRepairOrderDateRange(context, range) {
   });
 
   // Fill end first so DMS never sees a temporary start date after the end date.
-  await fillDate(context, '#sRoFnshDate', range.endPortal);
-  await fillDate(context, '#sRoStrtDate', range.startPortal);
+  await fillDate(context, '#sRoDateToDate', range.endPortal);
+  await fillDate(context, '#sRoDateFromDate', range.startPortal);
 }
 
 async function fillRepairOrderStartDateOnly(context, range) {
@@ -103,7 +103,7 @@ async function fillRepairOrderStartDateOnly(context, range) {
     startDate: range.startPortal
   });
 
-  await fillDate(context, '#sRoStrtDate', range.startPortal);
+  await fillDate(context, '#sRoDateFromDate', range.startPortal);
 }
 
 export async function downloadHyundaiRepairOrderListReport(
@@ -127,45 +127,82 @@ export async function downloadHyundaiRepairOrderListReport(
   const outputDir = buildRunDir(account, range, dealerCode);
   const baseName = filenameBase(account, range, dealerCode);
 
-  if (optimizedNoSearch) {
-    await fillRepairOrderStartDateOnly(reportContext, range);
-  } else {
-    await fillRepairOrderDateRange(reportContext, range);
-  }
+  await fillRepairOrderDateRange(reportContext, range);
 
-  if (optimizedNoSearch) {
-    logger.info(`${account.logPrefix} optimized historical Repair Order export: skipping Search and selecting pager size`, {
-      dealerCode,
-      startDate: range.startPortal,
-      requestedPageSize: suppliedPageSize ?? account.repairOrderPageSize ?? '1000'
-    });
-  } else {
-    await clickSearch(reportContext);
-    await waitForKendoGridIdle(reportContext, { timeout: 120000 });
+  logger.info(`${account.logPrefix} Repair Order List: toggling pager size (first selecting 50/100, then 1000/300) to trigger load`, {
+    dealerCode,
+    range: `${range.startIso} to ${range.endIso}`
+  });
 
-    if (account.repairOrderPostSearchDelayMs > 0) {
-      logger.info('Waiting briefly after Hyundai Repair Order search before changing page size', {
-        delayMs: account.repairOrderPostSearchDelayMs
-      });
-      await sleep(account.repairOrderPostSearchDelayMs);
-    }
+  try {
+    logger.info('Toggling intermediate pager size to 50/100...');
+    await selectKendoPagerSizeWithPreferredFallback(
+      reportContext,
+      ['50', '100'],
+      {
+        visibleClick: true,
+        timeout: 15000
+      }
+    );
+    await sleep(1500);
+  } catch (err) {
+    logger.warn('Failed to select intermediate pager size; continuing directly to target size', { error: err.message });
   }
 
   const selectedPageSize = await selectKendoPagerSizeWithPreferredFallback(
     reportContext,
-    ['1000', '500', '300'],
+    ['1000', '300'],
     {
-      visibleClick: optimizedNoSearch,
-      timeout: optimizedNoSearch ? 300000 : 45000
+      visibleClick: true,
+      timeout: 120000
     }
   );
-  await waitForKendoGridIdle(reportContext, { timeout: optimizedNoSearch ? 300000 : 120000 });
+  await sleep(3000);
+  await waitForKendoGridIdle(reportContext, { timeout: 120000 });
+
+  const emptyCheck = await gridHasNoExportableData(reportContext, selectedPageSize);
+  if (emptyCheck.noData) {
+    logger.info(`${account.logPrefix} Repair Order List report has no data; skipping export`, {
+      dealerCode,
+      range: `${range.startIso} to ${range.endIso}`
+    });
+
+    const dbResult = {
+      action: 'no_rows',
+      rowCount: 0,
+      headerCount: 0,
+      addedRowCount: 0,
+      duplicateRowCount: 0,
+      relationalInsertedRowCount: 0,
+      relationalDuplicateRowCount: 0
+    };
+
+    await cleanupHmilExportDir(outputDir, account);
+
+    logger.info(`${account.logPrefix} Repair Order List report finished (No Data)`, {
+      sheetName: account.repairOrderSheetName,
+      dbAction: dbResult.action,
+      rowCount: 0,
+      range: `${range.startIso} to ${range.endIso}`,
+      dealerCode
+    });
+
+    return {
+      name: 'Hyundai Repair Order List',
+      sheetName: account.repairOrderSheetName,
+      dbResult,
+      dealerCode,
+      range,
+      outputDir,
+      pageFiles: []
+    };
+  }
 
   const pageFiles = await exportAllGridPagesToFiles(reportContext, {
     outputDir,
     filenameBase: baseName,
     pageSize: selectedPageSize,
-    maxPages: suppliedMaxPages ?? (optimizedNoSearch ? 30000 : 500)
+    maxPages: suppliedMaxPages ?? 500
   });
   const merged = addSourceDealerCodeToDataset(await mergeExcelFiles(pageFiles), dealerCode);
 

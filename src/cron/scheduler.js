@@ -557,7 +557,7 @@ function isMainModule() {
   return path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
 }
 
-const shouldRunFromCli = isMainModule() || process.argv.includes('--scheduler');
+const shouldRunFromCli = isMainModule();
 
 if (shouldRunFromCli && process.argv.includes('--once')) {
   await runKiaDmsJob(modeFromArgs());

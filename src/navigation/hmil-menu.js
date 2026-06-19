@@ -1,3 +1,4 @@
+import { sleep } from '../utils/sleep.js';
 import { logger } from '../utils/logger.js';
 
 async function dismissBlockingMessages(page) {
@@ -85,6 +86,42 @@ async function openAuthenticatedReportUrl(page, reportLink, fallbackPath, label)
 }
 
 export async function openHmilRepairOrderListReport(page) {
+  logger.info('Navigating to Hyundai MIS > Repair Order > Repair Order List');
+  await sleep(2000);
+  await dismissBlockingMessages(page);
+
+  const reportLinkSelectors = [
+    'li.nav_ser_mis a.menuItem[data-viewid="VIEW-D-00608"]',
+    'li.nav_ser_mis a.menuItem[data-url*="selectRepairOrderListMain.dms"]',
+    'li.nav_ser_mis a.menuItem[data-title="Repair Order List"]',
+    'li.nav_ser_mis a.menuItem:text-is("Repair Order List")'
+  ].join(',');
+  const reportLink = page.locator(reportLinkSelectors).first();
+
+  const reportVisible = await reportLink.isVisible({ timeout: 1500 }).catch(() => false);
+  if (!reportVisible) {
+    logger.info('Opening Hyundai MIS sidebar menu');
+    await openRootMenu(page, [
+      'li.nav_ser_mis > a[title="MIS"]',
+      'li.nav_ser_mis > a[title="Service"]',
+      'li.nav_ser_mis > a:has-text("MIS")',
+      'li.nav_ser_mis > a',
+      'a[title="MIS"]'
+    ], 'Hyundai MIS menu');
+
+    const repairOrderParent = page.locator(
+      'li.nav_ser_mis li:has(a.menuItem[data-url*="selectRepairOrderListMain.dms"]) > a:not(.menuItem), li.nav_ser_mis a:has-text("Repair Order")'
+    ).first();
+    logger.info('Expanding Hyundai Repair Order menu group');
+    await clickLocator(page, repairOrderParent, 'Hyundai Repair Order menu group');
+  }
+
+  await clickLocator(page, reportLink, 'Hyundai Repair Order List page', 30000);
+  await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
+  logger.info('Hyundai Repair Order List menu item clicked');
+}
+
+export async function openHmilServiceRepairOrderListReport(page) {
   logger.info('Navigating to Hyundai Service > Repair Order > Repair Order List');
   await dismissBlockingMessages(page);
 
@@ -92,10 +129,7 @@ export async function openHmilRepairOrderListReport(page) {
     'li.nav_ser a.menuItem[data-viewid="VIEW-D-00608"]',
     'li.nav_ser a.menuItem[data-url*="selectRepairOrderListMain.dms"]',
     'li.nav_ser a.menuItem[data-title="Repair Order List"]',
-    'li.nav_ser a.menuItem:text-is("Repair Order List")',
-    'a.menuItem[data-url*="selectRepairOrderListMain.dms"]',
-    'a.menuItem[data-title="Repair Order List"]',
-    'a.menuItem:text-is("Repair Order List")'
+    'li.nav_ser a.menuItem:text-is("Repair Order List")'
   ].join(',');
   const reportLink = page.locator(reportLinkSelectors).first();
 
@@ -116,9 +150,9 @@ export async function openHmilRepairOrderListReport(page) {
     await clickLocator(page, repairOrderParent, 'Hyundai Repair Order menu group');
   }
 
-  await clickLocator(page, reportLink, 'Hyundai Repair Order List page', 30000);
+  await clickLocator(page, reportLink, 'Hyundai Service Repair Order List page', 30000);
   await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
-  logger.info('Hyundai Repair Order List menu item clicked');
+  logger.info('Hyundai Service Repair Order List menu item clicked');
 }
 
 export async function openHmilCallCenterComplaintServiceList(page) {

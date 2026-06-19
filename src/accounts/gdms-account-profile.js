@@ -86,6 +86,41 @@ function amPlatinumProfile() {
   };
 }
 
+function hmilSecondaryProfile() {
+  return {
+    id: 'hmil-secondary',
+    brand: 'hyundai',
+    displayName: 'HMIL Secondary',
+    serviceName: 'hmil-cron-job',
+    systemLabel: 'HMIL DMS',
+    logPrefix: 'HMIL Secondary',
+    defaultMode: 'hyundai-regular',
+    cronSchedule: config.hmilCronSchedule,
+    loginUrl: config.hmilLoginUrl,
+    homeUrl: config.hmilHomeUrl,
+    userId: config.hmilSecondaryUserId || 'MIS5216',
+    password: config.hmilSecondaryPassword,
+    userIdEnvName: 'HMIL_SECONDARY_USER_ID',
+    passwordEnvName: 'HMIL_SECONDARY_PASSWORD',
+    forceLogin: config.hmilForceLogin,
+    sessionCheckTimeoutMs: config.hmilSessionCheckTimeoutMs,
+    sessionStatePath: path.resolve(config.rootDir, './storage/hmil-secondary-dms-state.json'),
+    downloadDir: path.resolve(config.rootDir, './downloads/hmil-secondary'),
+    reportChunksDir: path.resolve(config.rootDir, './downloads/report-chunks/hmil-secondary'),
+    dealerCodes: config.hmilWarrantySecondaryDealerCodes || ['N5216', 'N6844', 'N6845', 'N6846', 'N6847', 'N6848'],
+    reportsToRun: config.hmilReportsToRun,
+    headless: config.headless,
+    repairOrderSheetName: config.hmilRepairOrderSheetName,
+    repairOrderPageSize: config.hmilRepairOrderPageSize,
+    repairOrderStartDate: config.hmilRepairOrderStartDate,
+    repairOrderEndDate: config.hmilRepairOrderEndDate,
+    repairOrderPostSearchDelayMs: config.hmilRepairOrderPostSearchDelayMs,
+    healthFileName: 'hmil-secondary-health.json',
+    otpPurpose: 'hmil',
+    sheetName: sheetName => prefixSheetName({ sheetPrefix: '' }, sheetName)
+  };
+}
+
 export function createGdmsAccountProfile(accountId = 'hmil') {
   if (accountId === 'am-platinum') {
     return amPlatinumProfile();
@@ -93,6 +128,10 @@ export function createGdmsAccountProfile(accountId = 'hmil') {
 
   if (accountId === 'hmil') {
     return hmilProfile();
+  }
+
+  if (accountId === 'hmil-secondary') {
+    return hmilSecondaryProfile();
   }
 
   throw new Error(`Unknown GDMS account profile: ${accountId}`);

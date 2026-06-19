@@ -7,4 +7,5 @@ temp/
 otp-inbox.json
 playwright-report/
 test-results/
+apps/*/runtime/
 *.log

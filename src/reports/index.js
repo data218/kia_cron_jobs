@@ -95,6 +95,7 @@ export const reportDefinitions = [
     id: 'rsa-report',
     name: 'RSA Report',
     requiresKiaDms: false,
+    includeInAll: false,
     run: downloadRsaReport
   },
   {

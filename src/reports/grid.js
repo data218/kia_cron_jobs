@@ -17,11 +17,11 @@ export async function waitForKendoGridIdle(page, { gridSelector = '#grid', timeo
 
   await page.locator('.k-loading-mask, .k-loading-image, .k-loading-color')
     .first()
-    .waitFor({ state: 'hidden', timeout: Math.min(timeout, 5000) })
+    .waitFor({ state: 'hidden', timeout: Math.min(timeout, 30000) })
     .catch(() => {});
 
   const grid = page.locator(gridSelector).first();
-  await grid.waitFor({ state: 'visible', timeout: Math.min(timeout, 5000) }).catch(() => {});
+  await grid.waitFor({ state: 'visible', timeout: Math.min(timeout, 10000) }).catch(() => {});
 
   await page.waitForFunction(
     ({ gridSelector: selector }) => {
@@ -37,7 +37,7 @@ export async function waitForKendoGridIdle(page, { gridSelector = '#grid', timeo
       return true;
     },
     { gridSelector },
-    { timeout: Math.min(timeout, 5000) }
+    { timeout: Math.min(timeout, 30000) }
   ).catch(() => {});
 
   logger.info('Kendo grid appears idle', { gridSelector });

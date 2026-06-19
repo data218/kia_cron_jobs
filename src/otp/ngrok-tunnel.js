@@ -17,7 +17,8 @@ if (ngrokPath !== 'ngrok' && !fs.existsSync(ngrokPath)) {
 function startTunnel(useReservedUrl = true) {
   const args = ['http', port, '--log', 'stdout', '--log-format', 'logfmt'];
   if (useReservedUrl && publicUrl) {
-    args.push('--url', publicUrl);
+    const domain = publicUrl.replace(/^https?:\/\//, '').split('/')[0];
+    args.push('--domain', domain);
   }
 
   const child = spawn(ngrokPath, args, {

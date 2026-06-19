@@ -1,9 +1,8 @@
 module.exports = {
   apps: [
     {
-      name: 'kia-cron-job',
-      script: './src/cron/scheduler.js',
-      args: '--scheduler',
+      name: 'kia-worker',
+      script: './apps/kia/runner/worker.js',
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
@@ -11,10 +10,48 @@ module.exports = {
       max_memory_restart: '1G',
       time: true,
       merge_logs: true,
-      out_file: './logs/pm2-out.log',
-      error_file: './logs/pm2-error.log',
+      out_file: './apps/kia/runtime/pm2-out.log',
+      error_file: './apps/kia/runtime/pm2-error.log',
       env: {
-        NODE_ENV: 'production'
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'kia-worker',
+        KIA_WORKER_ENABLED: 'true'
+      }
+    },
+    {
+      name: 'platinum-worker',
+      script: './apps/platinum/runner/worker.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './apps/platinum/runtime/pm2-out.log',
+      error_file: './apps/platinum/runtime/pm2-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'platinum-worker',
+        PLATINUM_WORKER_ENABLED: 'false'
+      }
+    },
+    {
+      name: 'hmil-worker',
+      script: './apps/hmil/runner/worker.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './apps/hmil/runtime/pm2-out.log',
+      error_file: './apps/hmil/runtime/pm2-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'hmil-worker',
+        HMIL_WORKER_ENABLED: 'false'
       }
     },
     {
@@ -161,6 +198,26 @@ module.exports = {
         HMIL_WARRANTY_SCHEDULED_RESUME: 'true',
         HMIL_WARRANTY_FORCE_LOGIN: 'true',
         GDMS_OTP_LOCK_ENABLED: 'true'
+      }
+    },
+    {
+      name: 'kia-rsa-cron-job',
+      script: './src/cron/kia-rsa-scheduler.js',
+      args: '--scheduler',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-kia-rsa-out.log',
+      error_file: './logs/pm2-kia-rsa-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'kia-rsa-cron-job',
+        HEADLESS: 'false',
+        RSA_HEADLESS: 'false'
       }
     },
     {

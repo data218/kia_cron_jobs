@@ -132,6 +132,7 @@ async function waitForCaptchaIfPresent(page, label) {
 
 async function waitForRsaDashboardOrReport(page) {
   logger.info('Waiting for RSA dashboard or report interface');
+  const timeout = config.rsaHeadless ? 60000 : 300000;
   await page.locator([
     '.nx-dropdown__container',
     'a[href="/report"]:has-text("Report")',
@@ -140,7 +141,7 @@ async function waitForRsaDashboardOrReport(page) {
     'a:has-text("Report")',
     'button:has-text("Report")',
     '[role="button"]:has-text("Report")'
-  ].join(',')).first().waitFor({ state: 'visible', timeout: 60000 });
+  ].join(',')).first().waitFor({ state: 'visible', timeout });
 }
 
 async function loginToRsaPortal(page) {

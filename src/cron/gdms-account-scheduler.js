@@ -281,7 +281,7 @@ export function createGdmsAccountScheduler(account) {
 
   function runFromCliIfNeeded(metaUrl, argvPath) {
     const isMain = argvPath && metaUrl.endsWith(path.basename(argvPath));
-    const shouldRunFromCli = isMain || process.argv.includes('--scheduler');
+    const shouldRunFromCli = isMain;
 
     if (shouldRunFromCli && process.argv.includes('--once')) {
       return run(getCliMode(account.defaultMode));

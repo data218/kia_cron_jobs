@@ -35,8 +35,8 @@ function startTunnel(useReservedUrl = true) {
   child.stdout.on('data', chunk => process.stdout.write(chunk));
 
   child.on('exit', (code, signal) => {
-    if (code !== 0 && useReservedUrl && /ERR_NGROK_334|already online/i.test(stderr)) {
-      console.warn('Reserved ngrok URL is already in use elsewhere; starting dynamic tunnel instead.');
+    if (code !== 0 && useReservedUrl && /ERR_NGROK_334|ERR_NGROK_320|already online|reserved/i.test(stderr)) {
+      console.warn('Reserved ngrok URL is unavailable (already in use or reserved for another account); starting dynamic tunnel instead.');
       startTunnel(false);
       return;
     }

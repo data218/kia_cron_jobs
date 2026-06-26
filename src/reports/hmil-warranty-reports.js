@@ -30,6 +30,83 @@ import {
 } from './hmil-warranty-resume.js';
 
 export const HMIL_WARRANTY_CLAIM_LIST_SHEET = 'Hyundai Warranty Claim List';
+
+function getClaimNo(row) {
+  const possibleKeys = ['claim_no', 'claim_number', 'warranty_claim_no', 'Claim No.', 'Claim Number', 'Claim No'];
+  for (const key of possibleKeys) {
+    if (row[key] !== undefined && row[key] !== null) {
+      return String(row[key]).trim();
+    }
+  }
+  // Try case-insensitive matching
+  for (const key of Object.keys(row)) {
+    const cleanKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (cleanKey === 'claimno' || cleanKey === 'claimnumber' || cleanKey === 'warrantyclaimno') {
+      return String(row[key]).trim();
+    }
+  }
+  return null;
+}
+
+export function mapWarrantyClaimListDealerCodes(merged, userId, fallbackDealerCode = 'active') {
+  const normalizedUser = String(userId || '').trim().toLowerCase();
+  
+  const headers = [...merged.headers];
+  for (const header of ['source_dealer_code', 'dealer_code']) {
+    if (!headers.includes(header)) {
+      headers.unshift(header);
+    }
+  }
+
+  const rows = merged.rows.map(row => {
+    const claimNo = getClaimNo(row);
+    let dealerCode = fallbackDealerCode; // Default fallback
+
+    if (claimNo) {
+      const prefix = claimNo.slice(0, 3).toUpperCase();
+      if (normalizedUser === 'sahiltech') {
+        const mapping = {
+          'W00': 'N5216',
+          'W01': 'N6846',
+          'W02': 'N6847',
+          'W03': 'N6844',
+          'W04': 'N6845',
+          'W05': 'N6848'
+        };
+        dealerCode = mapping[prefix] || dealerCode;
+      } else if (normalizedUser === 'mis5216') {
+        const mapping = {
+          'W00': 'N5216',
+          'W01': 'N6845',
+          'W02': 'N6846',
+          'W03': 'N6844',
+          'W04': 'N6847',
+          'W05': 'N6848'
+        };
+        dealerCode = mapping[prefix] || dealerCode;
+      } else if (normalizedUser === 'mis12345') {
+        const mapping = {
+          'W00': 'N5211',
+          'W02': 'N6828'
+        };
+        dealerCode = mapping[prefix] || dealerCode;
+      } else if (normalizedUser === 'mis1988') {
+        const mapping = {
+          'W00': 'N6250'
+        };
+        dealerCode = mapping[prefix] || dealerCode;
+      }
+    }
+
+    return {
+      ...row,
+      source_dealer_code: dealerCode,
+      dealer_code: dealerCode
+    };
+  });
+
+  return { headers, rows };
+}
 export const HMIL_WARRANTY_CLAIM_YTP_SHEET = 'Hyundai Warranty Claim YTP';
 export const HMIL_WARRANTY_CLAIM_YTP_REPORT_ID = 'hyundai-warranty-claim-ytp';
 
@@ -80,6 +157,16 @@ export async function clearHmilWarrantyTables() {
     }))
   });
   return results;
+}
+
+export async function clearHmilWarrantyClaimListTable() {
+  const result = await clearRelationalTable(HMIL_WARRANTY_CLAIM_LIST_SHEET);
+  logger.info('HMIL warranty claim list relational table cleared', {
+    tableName: result.tableName,
+    cleared: result.cleared,
+    previousRowCount: result.previousRowCount
+  });
+  return result;
 }
 
 async function activateClaimYtpTab(context) {
@@ -350,7 +437,11 @@ async function exportWarrantyChunk(context, {
   }
 
   merged = addSourceLogin(merged, account.userId);
-  merged = addSourceDealerCodeToDataset(merged, dealerCode);
+  if (report.id === 'hyundai-warranty-claim-list') {
+    merged = mapWarrantyClaimListDealerCodes(merged, account.userId, dealerCode);
+  } else {
+    merged = addSourceDealerCodeToDataset(merged, dealerCode);
+  }
   const dbResult = await saveReportSheetToSupabase({
     brand: 'hyundai',
     sheetName: report.sheetName,

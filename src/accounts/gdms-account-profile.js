@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import path from 'path';
 
 function prefixSheetName(account, sheetName) {
   if (!account.sheetPrefix) return sheetName;
@@ -21,6 +22,7 @@ function hmilProfile() {
     logPrefix: 'HMIL',
     defaultMode: 'hyundai-regular',
     cronSchedule: config.hmilCronSchedule,
+    currentMonthOnly: config.hmilCurrentMonthOnly,
     loginUrl: config.hmilLoginUrl,
     homeUrl: config.hmilHomeUrl,
     userId: config.hmilUserId,
@@ -96,6 +98,7 @@ function hmilSecondaryProfile() {
     logPrefix: 'HMIL Secondary',
     defaultMode: 'hyundai-regular',
     cronSchedule: config.hmilCronSchedule,
+    currentMonthOnly: config.hmilCurrentMonthOnly,
     loginUrl: config.hmilLoginUrl,
     homeUrl: config.hmilHomeUrl,
     userId: config.hmilSecondaryUserId || 'MIS5216',

@@ -12,7 +12,127 @@ async function dismissOpenKendoDropdown(context) {
   await playwrightPage.keyboard?.press('Escape').catch(() => {});
 }
 
-export async function waitForKendoGridIdle(page, { gridSelector = '#grid', timeout = 60000 } = {}) {
+async function checkGridEmptyFast(page) {
+  return page.evaluate(() => {
+    const isVisible = element => Boolean(element && (
+      element.offsetWidth ||
+      element.offsetHeight ||
+      element.getClientRects().length
+    ));
+
+    // Detect warning/error notifications (like "Date is not correct")
+    const alerts = Array.from(document.querySelectorAll('.k-window, .k-notification, .k-tooltip, .k-ext-dialog, [role="alert"], div:has(> .warning), .k-window-titlebar, .notification_title'));
+    const hasWarning = alerts.some(el => {
+      const vis = el.offsetWidth || el.offsetHeight || el.getClientRects().length;
+      if (!vis) return false;
+      const txt = (el.innerText || el.textContent || '').toLowerCase();
+      return txt.includes('warning') || txt.includes('error') || txt.includes('not correct') || txt.includes('incorrect') || txt.includes('date is') || txt.includes('no data');
+    });
+    if (hasWarning) return { empty: true, reason: 'warning-or-error-dialog' };
+
+    // Check if loading mask is visible
+    const loading = document.querySelector('.k-loading-mask, .k-loading-image, .k-loading-color');
+    if (loading) {
+      const style = window.getComputedStyle(loading);
+      if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+        return { empty: false, reason: 'grid-is-loading' };
+      }
+    }
+
+    const gridElement = document.querySelector('#grid, .k-grid');
+    if (!gridElement) return { empty: false, reason: 'grid-not-found' };
+
+    // Try Kendo widget check using both jQuery and Kendo API
+    const jquery = window.jQuery || window.$;
+    let kendoGrid = null;
+    if (jquery) {
+      kendoGrid = jquery(gridElement).data('kendoGrid') || jquery('.k-grid').first().data('kendoGrid');
+    }
+    if (!kendoGrid && window.kendo) {
+      kendoGrid = window.kendo.widgetInstance(gridElement) || window.kendo.widgetInstance(document.querySelector('.k-grid'));
+    }
+
+    if (kendoGrid?.dataSource && typeof kendoGrid.dataSource.total === 'function') {
+      if (kendoGrid.dataSource.total() === 0) {
+        return { empty: true, reason: 'datasource-total-zero' };
+      }
+    }
+
+    // Check for Kendo's no records container or class in the grid
+    const noRecordsEl = gridElement.querySelector('.k-grid-norecords, .k-norecords');
+    if (noRecordsEl && isVisible(noRecordsEl)) {
+      return { empty: true, reason: 'k-grid-norecords-element-visible' };
+    }
+
+    // Check tbody contents
+    const tbody = gridElement.querySelector('.k-grid-content tbody, tbody');
+    if (tbody) {
+      if (tbody.children.length === 0) {
+        return { empty: true, reason: 'tbody-has-no-children' };
+      }
+      if (tbody.children.length === 1) {
+        const child = tbody.children[0];
+        if (child.classList.contains('k-no-data') || child.classList.contains('k-grid-norecords') || child.querySelector('.k-grid-norecords, .k-norecords')) {
+          return { empty: true, reason: 'tbody-single-child-no-data-class' };
+        }
+        const text = (child.innerText || child.textContent || '').toLowerCase();
+        if (text.includes('no records') || text.includes('no data') || text.includes('no items') || text.includes('no rows')) {
+          return { empty: true, reason: 'tbody-single-child-no-data-text' };
+        }
+      }
+    }
+
+    // Check pager text
+    const pagerElement = document.querySelector('.k-pager-wrap, .k-grid-pager');
+    if (pagerElement && isVisible(pagerElement)) {
+      const pagerText = (pagerElement.innerText || pagerElement.textContent || '').toLowerCase();
+      if (pagerText.includes('no items') || pagerText.includes('no data') || pagerText.includes('no records') || /0\s*-\s*0\s+of\s+0/i.test(pagerText)) {
+        return { empty: true, reason: 'pager-text-indicates-empty' };
+      }
+    }
+
+    const gridText = (gridElement.innerText || '').toLowerCase();
+    if (/no\s+records|no\s+data|no\s+items/i.test(gridText)) {
+      return { empty: true, reason: 'grid-no-data-text' };
+    }
+
+    return { empty: false, reason: 'has-data-or-loading' };
+  }).catch(() => ({ empty: false, reason: 'evaluate-failed' }));
+}
+
+async function trySetKendoPagerSizeViaJsApi(page, requestedSize, { gridSelector } = {}) {
+  return page.evaluate(({ requested, selector }) => {
+    const requestedNumber = Number.parseInt(requested, 10);
+    if (!Number.isFinite(requestedNumber)) return false;
+
+    const jquery = window.jQuery || window.$;
+    const gridElement = selector
+      ? document.querySelector(selector)
+      : document.querySelector('#grid, .k-grid');
+    const grid = jquery?.(gridElement).data('kendoGrid');
+    if (!grid?.dataSource?.pageSize) return false;
+
+    // Set page size and trigger read/page
+    grid.dataSource.pageSize(requestedNumber);
+    if (typeof grid.dataSource.page === 'function') {
+      grid.dataSource.page(1);
+    } else if (typeof grid.dataSource.read === 'function') {
+      grid.dataSource.read();
+    }
+
+    // Try to update the visible dropdown widget if present
+    const select = gridElement.querySelector('.k-pager-sizes select');
+    const dropdown = jquery?.(select).data('kendoDropDownList');
+    if (dropdown && typeof dropdown.value === 'function') {
+      dropdown.value(requested);
+      dropdown.trigger('change');
+    }
+
+    return true;
+  }, { requested: String(requestedSize), selector: gridSelector }).catch(() => false);
+}
+
+export async function waitForKendoGridIdle(page, { gridSelector = '#grid, .k-grid', timeout = 60000 } = {}) {
   await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
 
   await page.locator('.k-loading-mask, .k-loading-image, .k-loading-color')
@@ -34,11 +154,50 @@ export async function waitForKendoGridIdle(page, { gridSelector = '#grid', timeo
           return false;
         }
       }
+
+      // Detect warning/error notification windows
+      const alerts = Array.from(document.querySelectorAll('.k-window, .k-notification, .k-tooltip, .k-ext-dialog, [role="alert"], div:has(> .warning), .k-window-titlebar, .notification_title'));
+      const hasWarning = alerts.some(el => {
+        const vis = el.offsetWidth || el.offsetHeight || el.getClientRects().length;
+        if (!vis) return false;
+        const txt = (el.innerText || el.textContent || '').toLowerCase();
+        return txt.includes('warning') || txt.includes('error') || txt.includes('not correct') || txt.includes('incorrect') || txt.includes('date is');
+      });
+      if (hasWarning) return true;
+
+      // Check datasource total
+      const jquery = window.jQuery || window.$;
+      let kendoGrid = null;
+      if (jquery) {
+        kendoGrid = jquery(gridElement).data('kendoGrid') || jquery('.k-grid').first().data('kendoGrid');
+      }
+      if (!kendoGrid && window.kendo) {
+        kendoGrid = window.kendo.widgetInstance(gridElement) || window.kendo.widgetInstance(document.querySelector('.k-grid'));
+      }
+
+      if (kendoGrid?.dataSource && typeof kendoGrid.dataSource.total === 'function') {
+        if (kendoGrid.dataSource.total() === 0) {
+          return true;
+        }
+      }
+
       return true;
     },
     { gridSelector },
     { timeout: Math.min(timeout, 30000) }
   ).catch(() => {});
+
+  // Dismiss any warning/error notification windows or alert dialogs
+  await page.evaluate(() => {
+    const closeButtons = Array.from(document.querySelectorAll('.k-window:visible .k-i-close, .k-window:visible .k-window-action, .k-notification:visible .k-i-close, button:visible, a.k-button:visible'));
+    const okClose = closeButtons.filter(btn => {
+      const txt = (btn.innerText || btn.textContent || '').toLowerCase();
+      return txt.includes('ok') || txt.includes('close') || btn.classList.contains('k-i-close');
+    });
+    okClose.forEach(btn => {
+      try { btn.click(); } catch(e) {}
+    });
+  }).catch(() => {});
 
   logger.info('Kendo grid appears idle', { gridSelector });
 }
@@ -270,8 +429,43 @@ export async function selectKendoPagerSize(page, size, { timeout = 30000 } = {})
   let effectiveSize = String(size);
   logger.info('Selecting Kendo pager size', { size: effectiveSize });
 
+  const currentPager = await getEffectiveKendoPagerSize(page, effectiveSize);
+  if (currentPager.effectiveSize === effectiveSize) {
+    logger.info('Kendo pager size is already at target size; skipping selection', { size: effectiveSize });
+    return effectiveSize;
+  }
+
   const pagerSize = page.locator('.k-pager-sizes:visible').first();
-  await pagerSize.waitFor({ state: 'visible', timeout });
+
+  let isPagerVisible = false;
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeout) {
+    isPagerVisible = await pagerSize.isVisible().catch(() => false);
+    if (isPagerVisible) {
+      break;
+    }
+
+    const emptyResult = await checkGridEmptyFast(page);
+    if (emptyResult.empty) {
+      logger.warn('Kendo pager size container is not visible and grid has no data, skipping pager selection', {
+        reason: emptyResult.reason
+      });
+      return effectiveSize;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  if (!isPagerVisible) {
+    const emptyResult = await checkGridEmptyFast(page);
+    if (emptyResult.empty) {
+      logger.warn('Kendo pager size container is not visible and grid has no data after timeout, skipping pager selection', {
+        reason: emptyResult.reason
+      });
+      return effectiveSize;
+    }
+    throw new Error(`Timeout waiting for Kendo pager sizes to be visible (${timeout}ms)`);
+  }
 
   const availableSizes = await page.evaluate(() => {
     const select = Array.from(document.querySelectorAll('.k-pager-sizes select'))
@@ -431,10 +625,45 @@ export async function selectKendoPagerSizeByVisibleClick(page, size, {
   let effectiveSize = String(size);
   logger.info('Selecting Kendo pager size by visible click', { size: effectiveSize });
 
+  const currentPager = await getEffectiveKendoPagerSize(page, effectiveSize);
+  if (currentPager.effectiveSize === effectiveSize) {
+    logger.info('Kendo pager size is already at target size (visible click); skipping selection', { size: effectiveSize });
+    return effectiveSize;
+  }
+
   const pagerSize = gridSelector
     ? page.locator(`${gridSelector} .k-pager-sizes`).first()
     : page.locator('.k-pager-sizes:visible').first();
-  await pagerSize.waitFor({ state: 'visible', timeout });
+
+  let isPagerVisible = false;
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeout) {
+    isPagerVisible = await pagerSize.isVisible().catch(() => false);
+    if (isPagerVisible) {
+      break;
+    }
+
+    const emptyResult = await checkGridEmptyFast(page);
+    if (emptyResult.empty) {
+      logger.warn('Kendo pager size container is not visible and grid has no data (visible click), skipping pager selection', {
+        reason: emptyResult.reason
+      });
+      return effectiveSize;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  if (!isPagerVisible) {
+    const emptyResult = await checkGridEmptyFast(page);
+    if (emptyResult.empty) {
+      logger.warn('Kendo pager size container is not visible and grid has no data after timeout (visible click), skipping pager selection', {
+        reason: emptyResult.reason
+      });
+      return effectiveSize;
+    }
+    throw new Error(`Timeout waiting for Kendo pager sizes to be visible by visible click (${timeout}ms)`);
+  }
 
   const availableSizes = await page.evaluate((selector) => {
     const root = selector ? document.querySelector(selector) : document;
@@ -507,8 +736,64 @@ export async function selectKendoPagerSizeByVisibleClick(page, size, {
     const loadingVisible = loading && window.getComputedStyle(loading).display !== 'none'
       && window.getComputedStyle(loading).visibility !== 'hidden'
       && window.getComputedStyle(loading).opacity !== '0';
-
     if (loadingVisible) return false;
+
+    // Detect warning/error notification windows
+    const alerts = Array.from(document.querySelectorAll('.k-window, .k-notification, .k-tooltip, .k-ext-dialog, [role="alert"], div:has(> .warning), .k-window-titlebar, .notification_title'));
+    const hasWarning = alerts.some(el => {
+      const vis = el.offsetWidth || el.offsetHeight || el.getClientRects().length;
+      if (!vis) return false;
+      const txt = (el.innerText || el.textContent || '').toLowerCase();
+      return txt.includes('warning') || txt.includes('error') || txt.includes('not correct') || txt.includes('incorrect') || txt.includes('date is');
+    });
+    if (hasWarning) return true;
+
+    // Check datasource total
+    const jquery = window.jQuery || window.$;
+    let kendoGrid = null;
+    if (jquery) {
+      kendoGrid = jquery(gridElement).data('kendoGrid') || jquery('.k-grid').first().data('kendoGrid');
+    }
+    if (!kendoGrid && window.kendo) {
+      kendoGrid = window.kendo.widgetInstance(gridElement) || window.kendo.widgetInstance(document.querySelector('.k-grid'));
+    }
+    if (kendoGrid?.dataSource && typeof kendoGrid.dataSource.total === 'function') {
+      if (kendoGrid.dataSource.total() === 0) {
+        return true;
+      }
+    }
+
+    // Check for Kendo's no records container or class in the grid
+    if (gridElement) {
+      const noRecordsEl = gridElement.querySelector('.k-grid-norecords, .k-norecords');
+      if (noRecordsEl && isVisible(noRecordsEl)) {
+        return true;
+      }
+
+      // Check tbody contents
+      const tbody = gridElement.querySelector('.k-grid-content tbody, tbody');
+      if (tbody) {
+        if (tbody.children.length === 0) {
+          return true;
+        }
+        if (tbody.children.length === 1) {
+          const child = tbody.children[0];
+          if (child.classList.contains('k-no-data') || child.classList.contains('k-grid-norecords') || child.querySelector('.k-grid-norecords, .k-norecords')) {
+            return true;
+          }
+          const text = (child.innerText || child.textContent || '').toLowerCase();
+          if (text.includes('no records') || text.includes('no data') || text.includes('no items')) {
+            return true;
+          }
+        }
+      }
+    }
+
+    // Check pager text for no data
+    if (pagerText.toLowerCase().includes('no items') || pagerText.toLowerCase().includes('no data') || pagerText.toLowerCase().includes('no records') || /0\s*-\s*0\s+of\s+0/i.test(pagerText)) {
+      return true;
+    }
+
     return /\bof\s+[\d,]+/i.test(pagerText) || /no\s+records|no\s+data|no\s+items/i.test(gridText);
   }, null, { timeout: resultSettleTimeoutMs }).catch(() => {});
 
@@ -543,6 +828,29 @@ export async function selectKendoPagerSizeWithPreferredFallback(page, preferredS
   resultSettleTimeoutMs,
   gridSelector
 } = {}) {
+  const emptyResult = await checkGridEmptyFast(page);
+  if (emptyResult.empty) {
+    logger.info('Grid is empty/no data; skipping pager size fallbacks', { reason: emptyResult.reason });
+    return String(preferredSizes[0]);
+  }
+
+  // Next, try the JS API fast path for the first preferred size
+  const targetSize = String(preferredSizes[0]);
+  logger.info('Attempting Kendo JS API pager size selection fast-path', { size: targetSize });
+  const jsApiSuccess = await trySetKendoPagerSizeViaJsApi(page, targetSize, { gridSelector });
+  if (jsApiSuccess) {
+    await waitForKendoGridIdle(page, { gridSelector: gridSelector || '#grid', timeout: 15000 }).catch(() => {});
+    const pager = await getEffectiveKendoPagerSize(page, targetSize);
+    if (pager.effectiveSize === targetSize) {
+      logger.info('Successfully set Kendo pager size via JS API fast-path', { size: targetSize });
+      return targetSize;
+    }
+    logger.warn('JS API page size verification did not match requested size, falling back to standard methods', {
+      requested: targetSize,
+      actual: pager.effectiveSize
+    });
+  }
+
   const selectFn = visibleClick ? selectKendoPagerSizeByVisibleClick : selectKendoPagerSize;
   const options = { timeout, resultSettleTimeoutMs, gridSelector };
   let lastError;

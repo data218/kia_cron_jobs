@@ -18,6 +18,8 @@ $env:HMIL_HISTORICAL_OTP_PROVIDER = 'manual'
 $env:HMIL_HISTORICAL_REPORTS = 'hyundai-repair-order-list,hyundai-ro-billing-report,hyundai-operation-wise-analysis-report'
 $env:HMIL_HISTORICAL_HEADLESS = 'false'
 $env:HMIL_HISTORICAL_START_DATE = '2021-01-01'
+$env:HMIL_HISTORICAL_SKIP_EXISTING = 'true'
+$env:HMIL_HISTORICAL_DEALERS = 'ALL'
 
 node scripts/recover-hmil-historical-custom.js
 

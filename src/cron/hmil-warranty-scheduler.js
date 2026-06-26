@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import { changeActiveDealerForDms } from '../navigation/dealer-change.js';
 import {
   clearHmilWarrantyTables,
+  clearHmilWarrantyClaimListTable,
   hmilWarrantyReportDefinitions,
   runHmilWarrantyReport
 } from '../reports/hmil-warranty-reports.js';
@@ -32,20 +33,17 @@ function isActiveDealerAlias(dealerCode) {
 const RAJOURI_HISTORICAL_FETCH_CODE = 'N6824';
 
 function platinumDealersForWarrantyAccount(account) {
-  const dealers = config.amPlatinumDealerCodes.length ? config.amPlatinumDealerCodes : ['active'];
   const isHistorical = account?.id === 'am-platinum-warranty-historical' ||
     account?.id === 'am-platinum-historical' ||
     String(account?.userId || '').toUpperCase() === String(config.amPlatinumHistoricalUserId || 'MIS12345').toUpperCase();
 
   if (isHistorical) {
-    return dealers.map(code => (
-      code === config.amPlatinumPost2024DealerCode ? RAJOURI_HISTORICAL_FETCH_CODE : code
-    ));
+    // Only return the historical dealers for MIS12345
+    return ['N5211', 'N6828'];
   }
 
-  return dealers.map(code => (
-    code === RAJOURI_HISTORICAL_FETCH_CODE ? config.amPlatinumPost2024DealerCode : code
-  ));
+  // Only return the current dealer (N6250) for MIS1988
+  return [config.amPlatinumPost2024DealerCode || 'N6250'];
 }
 
 export function getWarrantyDealerCodesForAccount(account) {
@@ -166,7 +164,66 @@ export async function executeHmilWarrantySequence({
         );
       }
 
+      // Run Hyundai Warranty Claim List once per account immediately after login
+      const claimListReport = reports.find(r => r.id === 'hyundai-warranty-claim-list');
+      if (claimListReport) {
+        const itemStartedAt = Date.now();
+        const label = `${claimListReport.name} [${account.userId}] [default-dealer]`;
+        try {
+          const result = dryRun
+            ? {
+                name: claimListReport.name,
+                id: claimListReport.id,
+                sheetName: claimListReport.sheetName,
+                sourceLoginId: account.userId,
+                dealerCode: 'default',
+                dbResult: { action: 'dry-run', rowCount: 0 }
+              }
+            : await executeWithRetry({
+                name: label,
+                page: session.page,
+                fn: () => runReport(session.page, { account, mode, report: claimListReport, dealerCode: 'default', resume })
+              });
+
+          results.push({
+            status: 'success',
+            accountId: account.id,
+            sourceLoginId: account.userId,
+            dealerCode: 'default',
+            reportId: claimListReport.id,
+            durationMs: Date.now() - itemStartedAt,
+            ...result
+          });
+        } catch (error) {
+          logger.error('HMIL warranty claim list report failed', {
+            sourceLoginId: account.userId,
+            err: serializeError(error)
+          });
+          results.push({
+            status: 'failed',
+            accountId: account.id,
+            sourceLoginId: account.userId,
+            dealerCode: 'default',
+            reportId: claimListReport.id,
+            report: claimListReport.name,
+            durationMs: Date.now() - itemStartedAt,
+            error: serializeError(error)
+          });
+        }
+      }
+
       for (const dealerCode of dealerCodes) {
+        const effectiveReports = reports.filter(r => {
+          if (r.id === 'hyundai-warranty-claim-list') {
+            return false;
+          }
+          return true;
+        });
+
+        if (effectiveReports.length === 0) {
+          continue;
+        }
+
         if (!dryRun) {
           try {
             activeDealerCode = await switchDealerIfNeeded(session.page, dealerCode, activeDealerCode);
@@ -196,7 +253,7 @@ export async function executeHmilWarrantySequence({
           }
         }
 
-        for (const report of reports) {
+        for (const report of effectiveReports) {
           const itemStartedAt = Date.now();
           const label = `${report.name} [${account.userId}] [${dealerCode}]`;
 
@@ -280,8 +337,16 @@ export async function runHmilWarrantyJob(mode = 'scheduled', {
   skipTableClear = mode === 'scheduled',
   resume = mode === 'scheduled' ? config.hmilWarrantyScheduledResume : config.hmilWarrantyResume
 } = {}) {
+  const brandFilter = brandFromArgs();
+  const filteredAccounts = brandFilter
+    ? accounts.filter(account => {
+        const isPlatinum = account.id.startsWith('am-platinum');
+        return brandFilter === 'platinum' ? isPlatinum : !isPlatinum;
+      })
+    : accounts;
+
   const lockDir = path.join(config.tempDir, 'hmil-warranty-scheduler.lock');
-  const effectiveAccounts = accounts.map(account => ({
+  const effectiveAccounts = filteredAccounts.map(account => ({
     ...account,
     headless: mode === 'historical' ? false : account.headless,
     otpProvider: mode === 'historical'
@@ -311,6 +376,10 @@ export async function runHmilWarrantyJob(mode = 'scheduled', {
       await clearHmilWarrantyTables();
     } else if ((resume || skipTableClear) && !dryRun) {
       logger.info('HMIL warranty append mode enabled; keeping existing relational tables', { mode });
+    }
+
+    if (!dryRun && reports.some(r => r.id === 'hyundai-warranty-claim-list')) {
+      await clearHmilWarrantyClaimListTable();
     }
 
     const results = await executeHmilWarrantySequence({
@@ -357,37 +426,51 @@ function reportFromArgs() {
   return reportArg ? reportArg.slice('--report='.length) : null;
 }
 
-function isMainModule() {
-  if (!process.argv[1]) return false;
-  return path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
+function brandFromArgs() {
+  const brandArg = process.argv.find(arg => arg.startsWith('--brand='));
+  return brandArg ? brandArg.slice('--brand='.length) : null;
 }
 
-if (isMainModule() && process.argv.includes('--once')) {
-  await runHmilWarrantyJob(modeFromArgs());
-} else if (isMainModule()) {
+function isMainModule() {
+  const argvPath = process.env.pm_exec_path || process.argv[1];
+  if (!argvPath) return false;
+  return path.resolve(fileURLToPath(import.meta.url)) === path.resolve(argvPath);
+}
+
+const shouldRun = isMainModule() || process.argv.includes('--scheduler');
+
+if (shouldRun) {
   const reportFilter = reportFromArgs();
   const reports = reportFilter
     ? hmilWarrantyReportDefinitions.filter(r => r.id === reportFilter)
     : hmilWarrantyReportDefinitions;
-  const label = reportFilter ? reportFilter : 'all';
-  logger.info('Scheduling HMIL warranty automation job', {
-    report: label,
-    cron: config.hmilWarrantyCronSchedule,
-    timezone: config.hmilWarrantyCronTimezone,
-    startDate: config.hmilWarrantyHistoricalStartDate,
-    accounts: createWarrantyScheduledAccounts().map(account => account.userId)
-  });
-  cron.schedule(
-    config.hmilWarrantyCronSchedule,
-    () => runHmilWarrantyJob('scheduled', { reports }).catch(error => {
-      logger.error('Scheduled HMIL warranty job failed', error);
-    }),
-    { timezone: config.hmilWarrantyCronTimezone }
-  );
-  await writeWarrantyHealth({
-    status: 'idle',
-    mode: 'scheduler',
-    report: label,
-    startedAt: new Date().toISOString()
-  });
+
+  if (process.argv.includes('--once')) {
+    await runHmilWarrantyJob(modeFromArgs(), { reports });
+  } else {
+    const label = reportFilter ? reportFilter : 'all';
+    const schedules = (config.hmilWarrantyCronSchedule || '').split(',').map(s => s.trim()).filter(Boolean);
+    for (const schedulePattern of schedules) {
+      logger.info('Scheduling HMIL warranty automation job', {
+        report: label,
+        cron: schedulePattern,
+        timezone: config.hmilWarrantyCronTimezone,
+        startDate: config.hmilWarrantyHistoricalStartDate,
+        accounts: createWarrantyScheduledAccounts().map(account => account.userId)
+      });
+      cron.schedule(
+        schedulePattern,
+        () => runHmilWarrantyJob('scheduled', { reports }).catch(error => {
+          logger.error('Scheduled HMIL warranty job failed', error);
+        }),
+        { timezone: config.hmilWarrantyCronTimezone }
+      );
+    }
+    await writeWarrantyHealth({
+      status: 'idle',
+      mode: 'scheduler',
+      report: label,
+      startedAt: new Date().toISOString()
+    });
+  }
 }

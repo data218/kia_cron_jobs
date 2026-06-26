@@ -149,15 +149,36 @@ export async function saveReportSheetToSupabase({
     };
   }
 
-  const supabase = createSupabaseClient();
-  const table = config.supabaseReportsTable;
-  const uploadedAt = new Date().toISOString();
-
   const relationalResult = await saveRelationalReport({
     sheetName,
     headers,
     rows
   });
+
+  if (!config.supabaseJsonBackupEnabled) {
+    logger.info('Supabase JSON backup is disabled; skipping JSON backup save', {
+      brand,
+      sheetName,
+      relationalTable: relationalResult.tableName,
+      relationalInsertedRowCount: relationalResult.insertedRowCount,
+      relationalDuplicateRowCount: relationalResult.duplicateRowCount
+    });
+
+    return {
+      action: 'relational_saved_only',
+      uploadedAt: new Date().toISOString(),
+      headerCount: headers.length,
+      rowCount: rows.length,
+      addedRowCount: relationalResult.insertedRowCount,
+      duplicateRowCount: relationalResult.duplicateRowCount,
+      relationalResult,
+      jsonBackupSkipped: true
+    };
+  }
+
+  const supabase = createSupabaseClient();
+  const table = config.supabaseReportsTable;
+  const uploadedAt = new Date().toISOString();
 
   const { data: existingRows, error: selectError } = await supabase
     .from(table)

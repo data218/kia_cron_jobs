@@ -7,11 +7,12 @@ import { logger } from '../utils/logger.js';
 import { writeHealthStatus } from '../utils/health.js';
 
 function isMainModule() {
-  if (!process.argv[1]) return false;
-  return path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
+  const argvPath = process.env.pm_exec_path || process.argv[1];
+  if (!argvPath) return false;
+  return path.resolve(fileURLToPath(import.meta.url)).toLowerCase() === path.resolve(argvPath).toLowerCase();
 }
 
-const shouldRunFromCli = isMainModule() || process.argv.includes('--scheduler');
+const shouldRunFromCli = isMainModule();
 
 if (shouldRunFromCli && process.argv.includes('--once')) {
   logger.info('Running standalone RSA Report job once from CLI');
@@ -20,18 +21,21 @@ if (shouldRunFromCli && process.argv.includes('--once')) {
   const cronOptions = { timezone: config.kiaCronTimezone };
   const cronSchedule = config.rsaReportCronSchedule;
 
-  logger.info('Scheduling standalone PM2 RSA Report automation job', {
-    cron: cronSchedule,
-    mode: 'rsa-report',
-    timezone: config.kiaCronTimezone
-  });
-
-  cron.schedule(cronSchedule, () => {
-    logger.info('Triggering scheduled standalone RSA Report job');
-    runKiaDmsJob('rsa-report').catch(err => {
-      logger.error('Scheduled standalone RSA Report job failed', err);
+  const schedules = (cronSchedule || '').split(',').map(s => s.trim()).filter(Boolean);
+  for (const schedulePattern of schedules) {
+    logger.info('Scheduling standalone PM2 RSA Report automation job', {
+      cron: schedulePattern,
+      mode: 'rsa-report',
+      timezone: config.kiaCronTimezone
     });
-  }, cronOptions);
+
+    cron.schedule(schedulePattern, () => {
+      logger.info('Triggering scheduled standalone RSA Report job', { cron: schedulePattern });
+      runKiaDmsJob('rsa-report').catch(err => {
+        logger.error('Scheduled standalone RSA Report job failed', err);
+      });
+    }, cronOptions);
+  }
 
   await writeHealthStatus({
     status: 'idle',

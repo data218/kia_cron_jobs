@@ -8,6 +8,7 @@ import {
   formatDateForPortal,
   getCurrentMonthToDateRange,
   getReportDateOverrideRange,
+  parseIsoLocalDate,
   toIsoDate
 } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
@@ -115,7 +116,20 @@ function getRange(rangeType, account) {
     return overrideRange;
   }
 
-  if (account?.id === 'am-platinum' && account.currentMonthOnly) {
+  if (rangeType === 'open-ro-yearly') {
+    const startDate = parseIsoLocalDate(config.openRoYearlyStartDate || '2025-03-01');
+    const endDate = new Date();
+    return {
+      startDate,
+      endDate,
+      startPortal: formatDateForPortal(startDate),
+      endPortal: formatDateForPortal(endDate),
+      startIso: toIsoDate(startDate),
+      endIso: toIsoDate(endDate)
+    };
+  }
+
+  if (account?.currentMonthOnly) {
     return getCurrentMonthToDateRange();
   }
 
@@ -182,7 +196,7 @@ async function fillStartDateOnly(context, report, range) {
 async function selectPagerSizeWithFallback(context, size, reportId, { visibleClick = false } = {}) {
   return selectKendoPagerSizeWithPreferredFallback(
     context,
-    ['1000', '300'],
+    ['300'],
     {
       visibleClick,
       timeout: visibleClick ? 300000 : 45000
@@ -390,7 +404,7 @@ export function createHyundaiKiaCloneReport(report) {
 
         await waitForKendoGridIdle(reportContext, { timeout: (optimizedNoSearch || report.skipSearchButtonClick) ? 300000 : 120000 });
 
-        if (report.skipSearchButtonClick) {
+        if (report.skipSearchButtonClick || optimizedNoSearch) {
           const postLoadCheck = await gridHasNoExportableData(reportContext, selectedPageSize);
           if (postLoadCheck.noData) {
             logger.info(`${account.logPrefix} mirrored report has no data after pager change; skipping export`, {

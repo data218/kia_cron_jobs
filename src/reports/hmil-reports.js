@@ -105,7 +105,8 @@ const DEFAULT_HMIL_REPORT_IDS = new Set([
   'hyundai-psf-yearly',
   'hyundai-ew-report',
   'hyundai-adv-wise-lubricants-vas',
-  'hyundai-operation-wise-analysis-report'
+  'hyundai-operation-wise-analysis-report',
+  'hyundai-open-ro-yearly'
 ]);
 
 function trustPackageReport({ id, name, sectionTitle }, account) {
@@ -217,6 +218,7 @@ export function createHmilReportDefinitions(account = defaultAccount()) {
     open: openHmilServiceRepairOrderListReport,
     dateFromSelector: '#sRoStrtDate',
     dateToSelector: '#sRoFnshDate',
+    rangeType: 'open-ro-yearly',
     preSearchDropdowns: [
       { inputId: 'sRoStat', value: 'Open', timeout: 10000 }
     ]

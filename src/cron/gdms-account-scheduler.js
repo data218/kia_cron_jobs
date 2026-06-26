@@ -266,22 +266,26 @@ export function createGdmsAccountScheduler(account) {
   }
 
   function schedule() {
-    logger.info(`Scheduling ${account.logPrefix} report automation job`, {
-      cron: account.cronSchedule,
-      mode: account.defaultMode,
-      dealerCodes: account.dealerCodes,
-      reportsToRun: account.reportsToRun
-    });
-    cron.schedule(
-      account.cronSchedule,
-      () => run(account.defaultMode),
-      { timezone: account.cronTimezone ?? config.kiaCronTimezone }
-    );
+    const schedules = (account.cronSchedule || '').split(',').map(s => s.trim()).filter(Boolean);
+    for (const schedulePattern of schedules) {
+      logger.info(`Scheduling ${account.logPrefix} report automation job`, {
+        cron: schedulePattern,
+        mode: account.defaultMode,
+        dealerCodes: account.dealerCodes,
+        reportsToRun: account.reportsToRun
+      });
+      cron.schedule(
+        schedulePattern,
+        () => run(account.defaultMode),
+        { timezone: account.cronTimezone ?? config.kiaCronTimezone }
+      );
+    }
   }
 
   function runFromCliIfNeeded(metaUrl, argvPath) {
-    const isMain = argvPath && metaUrl.endsWith(path.basename(argvPath));
-    const shouldRunFromCli = isMain;
+    const resolvedPath = process.env.pm_exec_path || argvPath;
+    const isMain = resolvedPath && metaUrl.endsWith(path.basename(resolvedPath));
+    const shouldRunFromCli = isMain || process.argv.includes('--scheduler');
 
     if (shouldRunFromCli && process.argv.includes('--once')) {
       return run(getCliMode(account.defaultMode));

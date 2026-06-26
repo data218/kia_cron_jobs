@@ -337,20 +337,17 @@ async function runKiaDmsJobUnlocked(mode = 'configured') {
       timeoutMs: config.networkStartupWaitTimeoutMs,
       failOpen: config.networkStartupFailOpen
     });
-    await writeHealthStatus({
-      status: 'running',
-      mode,
-      startedAt: new Date(startedAt).toISOString()
-    });
-    const requiresKiaDms = selectedReportsRequireKiaDmsForMode(mode);
+
+    let currentMode = mode;
+    let currentModeRequiresKiaDms = selectedReportsRequireKiaDmsForMode(currentMode);
 
     if (config.dryRunReports) {
-      logger.warn('DRY_RUN_REPORTS enabled; skipping browser login/session creation', { mode });
+      logger.warn('DRY_RUN_REPORTS enabled; skipping browser login/session creation', { mode: currentMode });
       session = {
         page: null,
         close: async () => {}
       };
-    } else if (requiresKiaDms) {
+    } else if (currentModeRequiresKiaDms) {
       session = await retry(
         async () => loginToKiaDms(),
         {
@@ -374,47 +371,108 @@ async function runKiaDmsJobUnlocked(mode = 'configured') {
       }
     }
 
-    const reports = await runReportsForDealerSequence(session.page, {
-      mode,
-      requiresKiaDms
-    });
-    logger.info('Configured reports completed', {
-      count: reports.length,
-      reports: reports.map(report => ({
-        name: report.name,
-        dealerCode: report.dealerCode,
-        sheetName: report.sheetName,
-        dbAction: report.dbResult?.action,
-        rowCount: report.dbResult?.rowCount
-      }))
-    });
+    while (currentMode) {
+      const modeStartedAt = Date.now();
+      await writeHealthStatus({
+        status: 'running',
+        mode: currentMode,
+        startedAt: new Date(modeStartedAt).toISOString()
+      });
+      const requiresKiaDms = selectedReportsRequireKiaDmsForMode(currentMode);
 
-    const failedReports = reports.filter(report => report.failed);
-    if (!failedReports.length && !config.dryRunReports) {
-      logger.info('All imports completed successfully; refreshing dashboard materialized views');
-      await refreshDashboardMaterializedViews();
-      logger.info('Dashboard materialized views refreshed after successful imports');
-    } else if (failedReports.length) {
-      logger.warn('Skipping dashboard materialized view refresh because one or more imports failed', {
-        failedReportCount: failedReports.length,
+      if (requiresKiaDms !== currentModeRequiresKiaDms && !config.dryRunReports) {
+        logger.info('Session requirement changed; recreating session', {
+          oldMode: currentMode,
+          requiresKiaDms
+        });
+        if (session?.close) {
+          await session.close().catch(() => {});
+        } else {
+          await session?.browser?.close().catch(() => {});
+        }
+
+        currentModeRequiresKiaDms = requiresKiaDms;
+        if (currentModeRequiresKiaDms) {
+          session = await retry(
+            async () => loginToKiaDms(),
+            {
+              attempts: config.loginRetries + 1,
+              delayMs: config.retryDelayMs,
+              label: 'KIA DMS login'
+            }
+          );
+        } else {
+          if (config.rsaCdpEndpoint) {
+            session = await createCdpBrowserSession(config.rsaCdpEndpoint);
+          } else if (config.rsaUsePersistentProfile) {
+            session = await createPersistentBrowserSession(config.rsaUserDataDir, {
+              headless: config.rsaHeadless
+            });
+          } else {
+            session = await createBrowserSessionWithState(config.rsaSessionStatePath, {
+              headless: config.rsaHeadless
+            });
+          }
+        }
+      }
+
+      const reports = await runReportsForDealerSequence(session.page, {
+        mode: currentMode,
+        requiresKiaDms
+      });
+      logger.info('Configured reports completed', {
+        mode: currentMode,
+        count: reports.length,
+        reports: reports.map(report => ({
+          name: report.name,
+          dealerCode: report.dealerCode,
+          sheetName: report.sheetName,
+          dbAction: report.dbResult?.action,
+          rowCount: report.dbResult?.rowCount
+        }))
+      });
+
+      const failedReports = reports.filter(report => report.failed);
+      if (!failedReports.length && !config.dryRunReports) {
+        logger.info('All imports completed successfully; refreshing dashboard materialized views');
+        await refreshDashboardMaterializedViews();
+        logger.info('Dashboard materialized views refreshed after successful imports');
+      } else if (failedReports.length) {
+        logger.warn('Skipping dashboard materialized view refresh because one or more imports failed', {
+          mode: currentMode,
+          failedReportCount: failedReports.length,
+          failedReports: failedReports.map(report => report.name)
+        });
+      } else {
+        logger.warn('Skipping dashboard materialized view refresh because DRY_RUN_REPORTS is enabled');
+      }
+
+      logger.info('Report automation job finished', {
+        mode: currentMode,
+        failedReportCount: failedReports.length
+      });
+      await writeHealthStatus({
+        status: failedReports.length ? 'completed_with_failures' : 'success',
+        mode: currentMode,
+        startedAt: new Date(modeStartedAt).toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - modeStartedAt,
+        reports,
         failedReports: failedReports.map(report => report.name)
       });
-    } else {
-      logger.warn('Skipping dashboard materialized view refresh because DRY_RUN_REPORTS is enabled');
-    }
 
-    logger.info('Report automation job finished', {
-      failedReportCount: failedReports.length
-    });
-    await writeHealthStatus({
-      status: failedReports.length ? 'completed_with_failures' : 'success',
-      mode,
-      startedAt: new Date(startedAt).toISOString(),
-      completedAt: new Date().toISOString(),
-      durationMs: Date.now() - startedAt,
-      reports,
-      failedReports: failedReports.map(report => report.name)
-    });
+      if (queuedModes.length > 0) {
+        const nextMode = queuedModes.shift();
+        logger.info('Continuing with next queued mode in the same browser session', {
+          nextMode,
+          remainingQueueLength: queuedModes.length,
+          queuedModes
+        });
+        currentMode = nextMode;
+      } else {
+        currentMode = null;
+      }
+    }
   } catch (error) {
     jobFailed = true;
     if (error?.name === 'NetworkUnavailableError' && mode === 'regular') {
@@ -552,9 +610,10 @@ function modeFromArgs() {
 }
 
 function isMainModule() {
-  if (!process.argv[1]) return false;
+  const argvPath = process.env.pm_exec_path || process.argv[1];
+  if (!argvPath) return false;
 
-  return path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
+  return path.resolve(fileURLToPath(import.meta.url)).toLowerCase() === path.resolve(argvPath).toLowerCase();
 }
 
 const shouldRunFromCli = isMainModule();
@@ -564,68 +623,45 @@ if (shouldRunFromCli && process.argv.includes('--once')) {
 } else if (shouldRunFromCli) {
   const cronOptions = { timezone: config.kiaCronTimezone };
 
-  logger.info('Scheduling regular report automation job', {
-    cron: config.regularReportsCronSchedule,
-    mode: 'regular',
-    timezone: config.kiaCronTimezone
-  });
-  cron.schedule(config.regularReportsCronSchedule, () => runKiaDmsJob('regular'), cronOptions);
+  function scheduleCronJob(cronScheduleStr, taskFn, label) {
+    const parts = (cronScheduleStr || '').split(',').map(s => s.trim()).filter(Boolean);
+    const schedules = [];
+    let buf = '';
+    for (const part of parts) {
+      const test = buf ? `${buf},${part}` : part;
+      const segments = test.split(/\s+/).filter(Boolean);
+      if (segments.length >= 5) {
+        schedules.push(test);
+        buf = '';
+      } else {
+        buf = test;
+      }
+    }
+    if (buf) schedules.push(buf);
+    for (const schedule of schedules) {
+      logger.info(`Scheduling ${label} automation job`, {
+        cron: schedule,
+        timezone: cronOptions.timezone
+      });
+      cron.schedule(schedule, taskFn, cronOptions);
+    }
+  }
 
-  logger.info('Scheduling RSA Report automation job', {
-    cron: config.rsaReportCronSchedule,
-    mode: 'rsa-report',
-    timezone: config.kiaCronTimezone
-  });
-  cron.schedule(config.rsaReportCronSchedule, () => runKiaDmsJob('rsa-report'), cronOptions);
+  scheduleCronJob(config.regularReportsCronSchedule, () => runKiaDmsJob('regular'), 'regular');
+  
+  // Only schedule RSA report if we are NOT running under the main kia-cron-scheduler process.
+  // This delegates RSA reports solely to the dedicated kia-rsa-cron-job PM2 process.
+  if (process.env.LOG_SERVICE_NAME !== 'kia-cron-scheduler') {
+    scheduleCronJob(config.rsaReportCronSchedule, () => runKiaDmsJob('rsa-report'), 'rsa-report');
+  }
 
-  logger.info('Scheduling Open RO Yearly automation job', {
-    cron: config.openRoYearlyCronSchedule,
-    mode: 'open-ro-yearly',
-    timezone: config.kiaCronTimezone
-  });
-  cron.schedule(config.openRoYearlyCronSchedule, () => runKiaDmsJob('open-ro-yearly'), cronOptions);
-
-  logger.info('Scheduling Kia Call Center Complaints automation job', {
-    cron: config.kiaCallCenterComplaintsCronSchedule,
-    mode: 'kia-call-center-complaints',
-    timezone: config.kiaCronTimezone
-  });
-  cron.schedule(config.kiaCallCenterComplaintsCronSchedule, () => runKiaDmsJob('kia-call-center-complaints'), cronOptions);
-
-  logger.info('Scheduling Demo Job Cards automation job', {
-    cron: config.demoJobCardsCronSchedule,
-    mode: 'demo-job-cards',
-    timezone: config.kiaCronTimezone
-  });
-  cron.schedule(config.demoJobCardsCronSchedule, () => runKiaDmsJob('demo-job-cards'), cronOptions);
-
-  logger.info('Scheduling Demo Car List automation job', {
-    cron: config.demoCarListCronSchedule,
-    mode: 'demo-car-list',
-    timezone: config.kiaCronTimezone
-  });
-  cron.schedule(config.demoCarListCronSchedule, () => runKiaDmsJob('demo-car-list'), cronOptions);
-
-  logger.info('Scheduling RO Billing automation job', {
-    cron: config.roBillingCronSchedule,
-    mode: 'ro-billing',
-    timezone: config.kiaCronTimezone
-  });
-  cron.schedule(config.roBillingCronSchedule, () => runKiaDmsJob('ro-billing'), cronOptions);
-
-  logger.info('Scheduling Hyundai Repair Order automation job', {
-    cron: config.hmilRepairOrderCronSchedule,
-    mode: 'hyundai-repair-order',
-    timezone: config.kiaCronTimezone
-  });
-  cron.schedule(config.hmilRepairOrderCronSchedule, () => runKiaDmsJob('hyundai-repair-order'), cronOptions);
-
-  logger.info('Scheduling Service Appointment automation job', {
-    cron: config.serviceAppointmentCronSchedule,
-    mode: 'service-appointment',
-    timezone: config.kiaCronTimezone
-  });
-  cron.schedule(config.serviceAppointmentCronSchedule, () => runKiaDmsJob('service-appointment'), cronOptions);
+  scheduleCronJob(config.openRoYearlyCronSchedule, () => runKiaDmsJob('open-ro-yearly'), 'open-ro-yearly');
+  scheduleCronJob(config.kiaCallCenterComplaintsCronSchedule, () => runKiaDmsJob('kia-call-center-complaints'), 'kia-call-center-complaints');
+  scheduleCronJob(config.demoJobCardsCronSchedule, () => runKiaDmsJob('demo-job-cards'), 'demo-job-cards');
+  scheduleCronJob(config.demoCarListCronSchedule, () => runKiaDmsJob('demo-car-list'), 'demo-car-list');
+  scheduleCronJob(config.roBillingCronSchedule, () => runKiaDmsJob('ro-billing'), 'ro-billing');
+  scheduleCronJob(config.hmilRepairOrderCronSchedule, () => runKiaDmsJob('hyundai-repair-order'), 'hyundai-repair-order');
+  scheduleCronJob(config.serviceAppointmentCronSchedule, () => runKiaDmsJob('service-appointment'), 'service-appointment');
 
   await writeHealthStatus({
     status: 'idle',

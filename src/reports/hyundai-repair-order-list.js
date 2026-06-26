@@ -70,7 +70,7 @@ function configuredRange(account) {
     return overrideRange;
   }
 
-  if (account.id === 'am-platinum' && account.currentMonthOnly) {
+  if (account.currentMonthOnly) {
     return getCurrentMonthToDateRange();
   }
 
@@ -129,7 +129,58 @@ export async function downloadHyundaiRepairOrderListReport(
 
   await fillRepairOrderDateRange(reportContext, range);
 
-  logger.info(`${account.logPrefix} Repair Order List: toggling pager size (first selecting 50/100, then 1000/300) to trigger load`, {
+  const diffDays = Math.ceil(Math.abs(new Date(range.endDate) - new Date(range.startDate)) / (1000 * 60 * 60 * 24)) + 1;
+  const isOneMonthOrLess = diffDays <= 31;
+
+  if (isOneMonthOrLess) {
+    // Click search first to load data and wait for grid to be idle
+    logger.info(`${account.logPrefix} Repair Order List: range is <= 31 days (${diffDays} days). Clicking Search to trigger initial load...`);
+    await clickSearch(reportContext);
+    await waitForKendoGridIdle(reportContext, { timeout: 30000 });
+
+    // Check if grid has no exportable data
+    const emptyCheck = await gridHasNoExportableData(reportContext, '1000');
+    if (emptyCheck.noData) {
+      logger.info(`${account.logPrefix} Repair Order List report has no data; skipping export`, {
+        dealerCode,
+        range: `${range.startIso} to ${range.endIso}`
+      });
+
+      const dbResult = {
+        action: 'no_rows',
+        rowCount: 0,
+        headerCount: 0,
+        addedRowCount: 0,
+        duplicateRowCount: 0,
+        relationalInsertedRowCount: 0,
+        relationalDuplicateRowCount: 0
+      };
+
+      await cleanupHmilExportDir(outputDir, account);
+
+      logger.info(`${account.logPrefix} Repair Order List report finished (No Data)`, {
+        sheetName: account.repairOrderSheetName,
+        dbAction: dbResult.action,
+        rowCount: 0,
+        range: `${range.startIso} to ${range.endIso}`,
+        dealerCode
+      });
+
+      return {
+        name: 'Hyundai Repair Order List',
+        sheetName: account.repairOrderSheetName,
+        dbResult,
+        dealerCode,
+        range,
+        outputDir,
+        pageFiles: []
+      };
+    }
+  } else {
+    logger.info(`${account.logPrefix} Repair Order List: range is > 31 days (${diffDays} days). Skipping Search button click to avoid date range popup warning.`);
+  }
+
+  logger.info(`${account.logPrefix} Repair Order List: toggling pager size (first selecting 50/100, then 1000/300) to load all data`, {
     dealerCode,
     range: `${range.startIso} to ${range.endIso}`
   });
@@ -160,42 +211,44 @@ export async function downloadHyundaiRepairOrderListReport(
   await sleep(3000);
   await waitForKendoGridIdle(reportContext, { timeout: 120000 });
 
-  const emptyCheck = await gridHasNoExportableData(reportContext, selectedPageSize);
-  if (emptyCheck.noData) {
-    logger.info(`${account.logPrefix} Repair Order List report has no data; skipping export`, {
-      dealerCode,
-      range: `${range.startIso} to ${range.endIso}`
-    });
+  if (!isOneMonthOrLess) {
+    const emptyCheckPostLoad = await gridHasNoExportableData(reportContext, selectedPageSize);
+    if (emptyCheckPostLoad.noData) {
+      logger.info(`${account.logPrefix} Repair Order List report has no data after pager change; skipping export`, {
+        dealerCode,
+        range: `${range.startIso} to ${range.endIso}`
+      });
 
-    const dbResult = {
-      action: 'no_rows',
-      rowCount: 0,
-      headerCount: 0,
-      addedRowCount: 0,
-      duplicateRowCount: 0,
-      relationalInsertedRowCount: 0,
-      relationalDuplicateRowCount: 0
-    };
+      const dbResult = {
+        action: 'no_rows',
+        rowCount: 0,
+        headerCount: 0,
+        addedRowCount: 0,
+        duplicateRowCount: 0,
+        relationalInsertedRowCount: 0,
+        relationalDuplicateRowCount: 0
+      };
 
-    await cleanupHmilExportDir(outputDir, account);
+      await cleanupHmilExportDir(outputDir, account);
 
-    logger.info(`${account.logPrefix} Repair Order List report finished (No Data)`, {
-      sheetName: account.repairOrderSheetName,
-      dbAction: dbResult.action,
-      rowCount: 0,
-      range: `${range.startIso} to ${range.endIso}`,
-      dealerCode
-    });
+      logger.info(`${account.logPrefix} Repair Order List report finished (No Data after pager change)`, {
+        sheetName: account.repairOrderSheetName,
+        dbAction: dbResult.action,
+        rowCount: 0,
+        range: `${range.startIso} to ${range.endIso}`,
+        dealerCode
+      });
 
-    return {
-      name: 'Hyundai Repair Order List',
-      sheetName: account.repairOrderSheetName,
-      dbResult,
-      dealerCode,
-      range,
-      outputDir,
-      pageFiles: []
-    };
+      return {
+        name: 'Hyundai Repair Order List',
+        sheetName: account.repairOrderSheetName,
+        dbResult,
+        dealerCode,
+        range,
+        outputDir,
+        pageFiles: []
+      };
+    }
   }
 
   const pageFiles = await exportAllGridPagesToFiles(reportContext, {

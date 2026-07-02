@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { openDealerVehicleStockMgtReport } from '../navigation/kia-menu.js';
 import { findContextWithVisibleSelector } from '../playwright/frame-resolver.js';
 import { saveReportSheetToSupabase } from '../supabase/report-store.js';
+import { clearRelationalTable } from '../supabase/relational-store.js';
 import { toIsoDate } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
@@ -72,6 +73,14 @@ export async function downloadKiaStockManagementReport(page) {
   }
 
   const merged = await mergeExcelFiles(exportFiles);
+
+  if (merged.rows.length > 0) {
+    logger.info('Clearing existing relational table before saving fresh stock data', {
+      report: REPORT_NAME,
+      sheetName: config.kiaStockManagementSheetName
+    });
+    await clearRelationalTable(config.kiaStockManagementSheetName);
+  }
 
   const dbResult = await saveReportSheetToSupabase({
     brand: 'kia',

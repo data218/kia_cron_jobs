@@ -757,12 +757,12 @@ export async function runGdmsReportFirstHistoricalBackfill({
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
   const logFile = path.join(config.logsDir, `${logFilePrefix}-${runId}.log`);
   const logStream = fs.createWriteStream(logFile, { flags: 'a' });
-  const results = [];
+  const results = [...(resumeState?.results ?? [])];
   const selectedDealersForRun = Number.isFinite(maxDealers)
     ? dealerCodes.slice(startDealerIndex, startDealerIndex + maxDealers)
     : dealerCodes.slice(startDealerIndex);
   const startedAt = new Date();
-
+ 
   const initialState = {
     status: 'running',
     startedAt: startedAt.toISOString(),
@@ -787,7 +787,8 @@ export async function runGdmsReportFirstHistoricalBackfill({
     amPlatinumHistoricalUserId: accountId === 'am-platinum' ? config.amPlatinumHistoricalUserId : null,
     amPlatinumCurrentUserId: accountId === 'am-platinum' ? config.amPlatinumUserId : null,
     amPlatinumHistoricalCutoffDate: accountId === 'am-platinum' ? config.amPlatinumHistoricalCutoffDate : null,
-    logFile
+    logFile,
+    results: resumeState?.results ?? []
   };
   await writeJson(stateFile, initialState);
   if (accountId === 'am-platinum') {

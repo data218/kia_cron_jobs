@@ -853,6 +853,26 @@ export async function runGdmsReportFirstHistoricalBackfill({
 
           for (const range of selectedRanges) {
             const rangeIndex = reportRanges.indexOf(range);
+            
+            const prevResult = resumeState?.results?.find(prev => 
+              prev.dealerCode === dealerCode && 
+              prev.reportId === report.id && 
+              prev.startIso === range.startIso && 
+              prev.endIso === range.endIso && 
+              prev.status === 'success'
+            );
+            
+            if (prevResult) {
+              logger.info('Skipping already completed historical range from resume state', {
+                dealerCode,
+                reportId: report.id,
+                startIso: range.startIso,
+                endIso: range.endIso
+              });
+              results.push(prevResult);
+              continue;
+            }
+
             try {
               if (accountId === 'am-platinum' && shouldSkipAmPlatinumRangeForDealer(dealerCode, range)) {
                 const summary = summarizeResult({

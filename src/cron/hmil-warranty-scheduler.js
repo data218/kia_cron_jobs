@@ -333,21 +333,13 @@ export async function runHmilWarrantyJob(mode = 'scheduled', {
     : accounts;
 
   const lockDir = path.join(config.tempDir, 'hmil-warranty-scheduler.lock');
-  const effectiveAccounts = filteredAccounts
-    .filter(account => {
-      if (mode === 'scheduled' && account.userId === 'sahiltech') {
-        logger.info('Skipping HMIL primary account (sahiltech) for regular cron run as it is historical-only');
-        return false;
-      }
-      return true;
-    })
-    .map(account => ({
-      ...account,
-      headless: mode === 'historical' ? false : account.headless,
-      otpProvider: mode === 'historical'
-        ? config.hmilWarrantyHistoricalOtpProvider
-        : 'webhook'
-    }));
+  const effectiveAccounts = filteredAccounts.map(account => ({
+    ...account,
+    headless: mode === 'historical' ? false : account.headless,
+    otpProvider: mode === 'historical'
+      ? config.hmilWarrantyHistoricalOtpProvider
+      : 'webhook'
+  }));
   const resolvedDealerCodesByAccount = dealerCodesByAccount ??
     getWarrantyDealerCodesByAccount(effectiveAccounts);
 

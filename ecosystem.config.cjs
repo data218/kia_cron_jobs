@@ -144,7 +144,7 @@ module.exports = {
         NODE_ENV: 'production',
         LOG_SERVICE_NAME: 'am-platinum-cron-job',
         OTP_PROVIDER: 'webhook',
-        AM_PLATINUM_CRON_SCHEDULE: '30 11 * * *,40 14 * * *,0 19 * * *',
+        AM_PLATINUM_CRON_SCHEDULE: '0 10 * * *,0 14 * * *,0 18 * * *',
         AM_PLATINUM_CRON_TIMEZONE: 'Asia/Kolkata',
         AM_PLATINUM_CURRENT_MONTH_ONLY: 'true',
         GDMS_OTP_LOCK_ENABLED: 'true',

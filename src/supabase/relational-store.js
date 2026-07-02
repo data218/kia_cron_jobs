@@ -1004,7 +1004,7 @@ async function insertBatch(client, tableName, columns, batch, uploadedAt, stats)
   );
 
   if (!usesBusinessKey) {
-    const conflictTarget = tableName === 'kia_stock_management'
+    const conflictTarget = (tableName === 'kia_stock_management' || tableName === 'kia_stock_report')
       ? 'vin_number'
       : (usesExactRowDedupe ? 'full_row_hash' : 'row_hash');
 

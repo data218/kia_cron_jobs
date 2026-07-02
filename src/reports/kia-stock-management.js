@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { openDealerVehicleStockMgtReport } from '../navigation/kia-menu.js';
 import { findContextWithVisibleSelector } from '../playwright/frame-resolver.js';
 import { saveReportSheetToSupabase } from '../supabase/report-store.js';
-import { clearRelationalTable } from '../supabase/relational-store.js';
+import { withPostgresClient } from '../supabase/postgres.js';
 import { toIsoDate } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
@@ -17,6 +17,17 @@ import { clickSearch, selectKendoDropdownByInputId } from './report-actions.js';
 
 const REPORT_NAME = 'Kia Stock Management';
 const REPORT_ID = 'kia-stock-management';
+
+async function clearStockTableForDealer(dealerCode) {
+  return withPostgresClient(async client => {
+    logger.info(`Deleting existing stock records for dealer ${dealerCode}`);
+    const res = await client.query(
+      `DELETE FROM public.kia_stock_management WHERE upper(trim(order_dealer)) = upper(trim($1))`,
+      [dealerCode]
+    );
+    logger.info(`Deleted ${res.rowCount} existing stock records for dealer ${dealerCode}`);
+  });
+}
 
 async function resolveStockMgtContext(page) {
   // Use #btnSearch since it is visible, whereas the Kendo dropdown #sPhyTrn
@@ -75,11 +86,14 @@ export async function downloadKiaStockManagementReport(page) {
   const merged = await mergeExcelFiles(exportFiles);
 
   if (merged.rows.length > 0) {
-    logger.info('Clearing existing relational table before saving fresh stock data', {
-      report: REPORT_NAME,
-      sheetName: config.kiaStockManagementSheetName
+    const uniqueDealers = [...new Set(merged.rows.map(row => String(row.order_dealer || '').trim()).filter(Boolean))];
+    logger.info('Deduplicated dealers from exported stock dataset', {
+      uniqueDealers,
+      report: REPORT_NAME
     });
-    await clearRelationalTable(config.kiaStockManagementSheetName);
+    for (const dealer of uniqueDealers) {
+      await clearStockTableForDealer(dealer);
+    }
   }
 
   const dbResult = await saveReportSheetToSupabase({

@@ -98,7 +98,6 @@ export const reportDefinitions = [
     id: 'kia-stock-management',
     name: 'Kia Stock Management',
     requiresKiaDms: true,
-    noDealerSwitch: true,
     run: downloadKiaStockManagementReport
   },
   {

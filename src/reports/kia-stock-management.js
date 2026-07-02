@@ -29,6 +29,17 @@ async function clearStockTableForDealer(dealerCode) {
   });
 }
 
+async function clearStockReportTableForDealer(dealerCode) {
+  return withPostgresClient(async client => {
+    logger.info(`Deleting existing stock report records for dealer ${dealerCode}`);
+    const res = await client.query(
+      `DELETE FROM public.kia_stock_report WHERE upper(trim(order_dealer)) = upper(trim($1))`,
+      [dealerCode]
+    );
+    logger.info(`Deleted ${res.rowCount} existing stock report records for dealer ${dealerCode}`);
+  });
+}
+
 async function resolveStockMgtContext(page) {
   // Use #btnSearch since it is visible, whereas the Kendo dropdown #sPhyTrn
   // is hidden with style="display: none;".
@@ -93,12 +104,20 @@ export async function downloadKiaStockManagementReport(page) {
     });
     for (const dealer of uniqueDealers) {
       await clearStockTableForDealer(dealer);
+      await clearStockReportTableForDealer(dealer);
     }
   }
 
   const dbResult = await saveReportSheetToSupabase({
     brand: 'kia',
     sheetName: config.kiaStockManagementSheetName,
+    headers: merged.headers,
+    rows: merged.rows
+  });
+
+  const dbReportResult = await saveReportSheetToSupabase({
+    brand: 'kia',
+    sheetName: 'kia_stock_report',
     headers: merged.headers,
     rows: merged.rows
   });

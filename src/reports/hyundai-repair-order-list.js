@@ -16,8 +16,8 @@ import { sleep } from '../utils/sleep.js';
 import { openHmilRepairOrderListReport } from '../navigation/hmil-menu.js';
 import { selectKendoPagerSizeWithPreferredFallback, waitForKendoGridIdle } from './grid.js';
 import { exportAllGridPagesToFiles, gridHasNoExportableData, mergeExcelFiles } from './paged-export.js';
-import { addSourceDealerCodeToDataset } from './report-metadata.js';
 import { clickSearch, fillDate } from './report-actions.js';
+import { normalizeHyundaiRepairOrderDataset } from './hyundai-repair-order-schema.js';
 
 function buildRunDir(account, range, dealerCode) {
   const now = new Date();
@@ -71,7 +71,32 @@ function configuredRange(account) {
   }
 
   if (account.currentMonthOnly) {
-    return getCurrentMonthToDateRange();
+    const currentMonthRange = getCurrentMonthToDateRange();
+    if (!account.repairOrderStartDate || !account.repairOrderEndDate) {
+      return currentMonthRange;
+    }
+
+    const configuredStartDate = parseIsoLocalDate(account.repairOrderStartDate);
+    const configuredEndDate = parseIsoLocalDate(account.repairOrderEndDate);
+    const startDate = currentMonthRange.startDate > configuredStartDate
+      ? currentMonthRange.startDate
+      : configuredStartDate;
+    const endDate = currentMonthRange.endDate < configuredEndDate
+      ? currentMonthRange.endDate
+      : configuredEndDate;
+
+    if (startDate > endDate) {
+      return null;
+    }
+
+    return {
+      startDate,
+      endDate,
+      startPortal: formatDateForPortal(startDate),
+      endPortal: formatDateForPortal(endDate),
+      startIso: toIsoDate(startDate),
+      endIso: toIsoDate(endDate)
+    };
   }
 
   const startDate = parseIsoLocalDate(account.repairOrderStartDate);
@@ -124,6 +149,27 @@ export async function downloadHyundaiRepairOrderListReport(
   }
   const reportContext = await resolveRepairOrderContext(page);
   const range = suppliedRange ?? configuredRange(account);
+  if (!range) {
+    logger.info(`${account.logPrefix} Repair Order List skipped because current scheduler range does not overlap account date window`, {
+      dealerCode,
+      configuredStartDate: account.repairOrderStartDate,
+      configuredEndDate: account.repairOrderEndDate
+    });
+
+    return {
+      name: 'Hyundai Repair Order List',
+      sheetName: account.repairOrderSheetName,
+      dbResult: {
+        action: 'skipped_out_of_range',
+        rowCount: 0,
+        headerCount: 0
+      },
+      dealerCode,
+      range: null,
+      outputDir: null,
+      pageFiles: []
+    };
+  }
   const outputDir = buildRunDir(account, range, dealerCode);
   const baseName = filenameBase(account, range, dealerCode);
 
@@ -257,7 +303,10 @@ export async function downloadHyundaiRepairOrderListReport(
     pageSize: selectedPageSize,
     maxPages: suppliedMaxPages ?? 500
   });
-  const merged = addSourceDealerCodeToDataset(await mergeExcelFiles(pageFiles), dealerCode);
+  const merged = normalizeHyundaiRepairOrderDataset(
+    await mergeExcelFiles(pageFiles),
+    { dealerCode }
+  );
 
   const dbResult = await saveReportSheetToSupabase({
     brand: account.brand,

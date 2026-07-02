@@ -11,6 +11,8 @@ import { logger } from '../utils/logger.js';
 import { executeWithRetry } from '../utils/execute-with-retry.js';
 import { waitForConnectivity } from '../utils/network.js';
 import { createGdmsAccountProfile } from '../accounts/gdms-account-profile.js';
+import { clearCheckpoint, readCheckpoint, writeCheckpoint } from '../utils/checkpoint.js';
+import { isBrowserClosedError } from '../utils/failure.js';
 
 // ─── Dealer split ──────────────────────────────────────────────────────────────
 // MIS12345 (historical account) → N5211, N6828  (only these appear in its portal)
@@ -26,6 +28,17 @@ function serializeError(error) {
 
 function isActiveDealerAlias(dealerCode) {
   return !dealerCode || ['active', 'current', 'default'].includes(String(dealerCode).trim().toLowerCase());
+}
+
+function resolvedLoginRetries(account) {
+  return Number.isInteger(account?.loginRetries)
+    ? account.loginRetries
+    : config.loginRetries;
+}
+
+function modeFromArgs(defaultMode = 'am-platinum-regular') {
+  const modeArg = process.argv.find(arg => arg.startsWith('--mode='));
+  return modeArg ? modeArg.slice('--mode='.length) : defaultMode;
 }
 
 // ─── Health file helpers ───────────────────────────────────────────────────────
@@ -54,7 +67,7 @@ async function runSessionForDealers(account, dealerCodes, mode, reportResults) {
   const session = await retry(
     async () => loginToHmilDms(account),
     {
-      attempts: config.loginRetries + 1,
+      attempts: resolvedLoginRetries(account) + 1,
       delayMs: config.retryDelayMs,
       label: `AM Platinum DMS login (${account.userId})`
     }
@@ -62,17 +75,44 @@ async function runSessionForDealers(account, dealerCodes, mode, reportResults) {
 
   try {
     const selectedReports = getSelectedHmilReports(mode, account);
+    const tasks = selectedReports.flatMap(report =>
+      dealerCodes.map(dealerCode => ({
+        report,
+        dealerCode,
+        taskKey: `${report.id}:${dealerCode}`
+      }))
+    );
+    const checkpointName = `${account.id}-${String(mode).replace(/[^a-z0-9_-]+/gi, '_').toLowerCase()}`;
+    const checkpoint = await readCheckpoint(checkpointName);
+    const taskKeys = tasks.map(task => task.taskKey);
+    const canResume = checkpoint?.mode === mode
+      && JSON.stringify(checkpoint?.taskKeys ?? []) === JSON.stringify(taskKeys)
+      && Number.isInteger(checkpoint?.nextIndex)
+      && checkpoint.nextIndex >= 0
+      && checkpoint.nextIndex < tasks.length;
+    const startIndex = canResume ? checkpoint.nextIndex : 0;
     let activeDealerCode = null;
+    let firstFailureIndex = null;
 
-    for (const report of selectedReports) {
-      logger.info('AM Platinum report batch started', {
-        reportId: report.id,
-        report: report.name,
-        dealerCodes,
-        userId: account.userId
-      });
+    for (let index = startIndex; index < tasks.length; index += 1) {
+      const { report, dealerCode } = tasks[index];
+      if (index === startIndex || tasks[index - 1]?.report.id !== report.id) {
+        logger.info('AM Platinum report batch started', {
+          reportId: report.id,
+          report: report.name,
+          dealerCodes,
+          userId: account.userId
+        });
+      }
 
-      for (const dealerCode of dealerCodes) {
+      if (firstFailureIndex == null) {
+        await writeCheckpoint(checkpointName, {
+          mode,
+          nextIndex: index,
+          taskKeys
+        });
+      }
+
         try {
           if (!isActiveDealerAlias(dealerCode) && activeDealerCode !== dealerCode) {
             await changeActiveDealerForDms(session.page, dealerCode, {
@@ -99,6 +139,27 @@ async function runSessionForDealers(account, dealerCodes, mode, reportResults) {
             error: serializeError(error)
           });
           activeDealerCode = null;
+          if (firstFailureIndex == null) {
+            firstFailureIndex = index;
+          }
+          await writeCheckpoint(checkpointName, {
+            mode,
+            nextIndex: firstFailureIndex,
+            taskKeys,
+            failedTask: {
+              reportId: report.id,
+              dealerCode,
+              phase: 'dealer-change'
+            }
+          });
+          if (isBrowserClosedError(error)) {
+            logger.error('AM Platinum browser/session closed during dealer change; aborting remaining tasks', {
+              reportId: report.id,
+              dealerCode,
+              userId: account.userId
+            });
+            break;
+          }
           continue;
         }
 
@@ -149,8 +210,44 @@ async function runSessionForDealers(account, dealerCodes, mode, reportResults) {
             currentUrl: session.page.url(),
             error: serializeError(error)
           });
+          if (firstFailureIndex == null) {
+            firstFailureIndex = index;
+          }
+          await writeCheckpoint(checkpointName, {
+            mode,
+            nextIndex: firstFailureIndex,
+            taskKeys,
+            failedTask: {
+              reportId: report.id,
+              dealerCode,
+              phase: 'report-run'
+            }
+          });
+          if (isBrowserClosedError(error)) {
+            logger.error('AM Platinum browser/session closed during report execution; aborting remaining tasks', {
+              reportId: report.id,
+              dealerCode,
+              userId: account.userId
+            });
+            break;
+          }
+        }
+
+      if (firstFailureIndex == null) {
+        if (index + 1 < tasks.length) {
+          await writeCheckpoint(checkpointName, {
+            mode,
+            nextIndex: index + 1,
+            taskKeys
+          });
+        } else {
+          await clearCheckpoint(checkpointName);
         }
       }
+    }
+
+    if (firstFailureIndex == null) {
+      await clearCheckpoint(checkpointName);
     }
   } finally {
     await session?.close?.().catch(() => {});
@@ -313,6 +410,6 @@ if (shouldRunFromCli) {
   if (process.argv.includes('--scheduler')) {
     schedule();
   } else {
-    await run('am-platinum-regular');
+    await run(modeFromArgs('am-platinum-regular'));
   }
 }

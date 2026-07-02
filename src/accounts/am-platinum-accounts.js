@@ -167,7 +167,8 @@ export function createAmPlatinumAccount(accountKey = 'current') {
       password: config.amPlatinumHistoricalPassword,
       userIdEnvName: 'AM_PLATINUM_HISTORICAL_USER_ID',
       passwordEnvName: 'AM_PLATINUM_HISTORICAL_PASSWORD',
-      sessionStatePath: resolveAmPlatinumSessionStatePath('historical')
+      sessionStatePath: resolveAmPlatinumSessionStatePath('historical'),
+      legacySessionStatePaths: [config.amPlatinumHistoricalSessionStatePath]
     };
   }
 
@@ -176,7 +177,8 @@ export function createAmPlatinumAccount(accountKey = 'current') {
     id: 'am-platinum',
     displayName: config.amPlatinumUserId || 'current',
     logPrefix: `AM Platinum ${config.amPlatinumUserId || 'current'}`,
-    sessionStatePath: resolveAmPlatinumSessionStatePath('current')
+    sessionStatePath: resolveAmPlatinumSessionStatePath('current'),
+    legacySessionStatePaths: [config.amPlatinumSessionStatePath]
   };
 }
 

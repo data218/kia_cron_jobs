@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 export const NON_BUSINESS_HASH_COLUMNS = new Set([
   'id',
   'row_hash',
+  'full_row_hash',
+  'business_identity_key',
   'uploaded_at',
   's_no',
   'sno',
@@ -30,8 +32,12 @@ export const TABLE_IDENTITY_COLUMNS = {
     ['vin', 'ro_date', 'work_type']
   ],
   hyundai_repair_order_list: [
+    ['dlr_no', 'r_o_no'],
+    ['dealer', 'r_o_no'],
     ['dealer_code', 'r_o_no'],
+    ['source_dealer_code', 'r_o_no'],
     ['r_o_no'],
+    ['vin', 'r_o_date', 'work_type'],
     ['vin', 'ro_date', 'work_type']
   ],
   hyundai_ro_billing_report: [
@@ -206,6 +212,50 @@ export const TABLE_IDENTITY_COLUMNS = {
     ['dealer_code', 'b_t_no', 'b_t_date_time'],
     ['dealer_code', 'b_t_no', 'booking_done_on']
   ],
+  kia_booking_report: [
+    ['dealer_code', 'booking_no'],
+    ['dealer_code', 'booking_number'],
+    ['dealer_code', 'booking_id'],
+    ['booking_no'],
+    ['booking_number'],
+    ['booking_id'],
+    ['dealer_code', 'receipt_no'],
+    ['enquiry_no', 'booking_date', 'customer_name'],
+    ['mobile_no', 'booking_date', 'customer_name'],
+    ['customer_mobile_no', 'booking_date', 'customer_name']
+  ],
+  kia_sales_report: [
+    ['dealer_code', 'invoice_no'],
+    ['dealer_code', 'invoice_number'],
+    ['dealer_code', 'confirm_no'],
+    ['invoice_no'],
+    ['invoice_number'],
+    ['confirm_no'],
+    ['vin', 'confirm_date'],
+    ['chassis_no', 'confirm_date'],
+    ['vin', 'invoice_date'],
+    ['chassis_no', 'invoice_date']
+  ],
+  kia_enquiry_report: [
+    ['dealer_code', 'enquiry_no'],
+    ['dealer_code', 'enquiry_number'],
+    ['enquiry_no'],
+    ['enquiry_number'],
+    ['dealer_code', 'mobile_no', 'enquiry_date'],
+    ['dealer_code', 'customer_mobile_no', 'enquiry_date'],
+    ['mobile_no', 'enquiry_date', 'customer_name'],
+    ['customer_mobile_no', 'enquiry_date', 'customer_name']
+  ],
+  kia_accessories_counter_sales_report: [
+    ['dealer_code', 'invoice_no', 'part_no'],
+    ['dealer_code', 'invoice_no', 'part_number'],
+    ['dealer_code', 'bill_no', 'part_no'],
+    ['dealer_code', 'bill_no', 'part_number'],
+    ['invoice_no', 'part_no'],
+    ['invoice_no', 'part_number'],
+    ['bill_no', 'part_no'],
+    ['bill_no', 'part_number']
+  ],
   psf_yearly: [
     ['ro_no'],
     ['vin', 'ro_date', 'visit_type']
@@ -315,6 +365,19 @@ export const WARRANTY_TABLES = new Set([
   'hyundai_warranty_claim_list',
   'hyundai_warranty_claim_ytp'
 ]);
+
+export const EXACT_ROW_DEDUPE_TABLES = new Set([
+  'kia_booking_report',
+  'kia_sales_report',
+  'kia_enquiry_report',
+  'kia_accessories_counter_sales_report',
+  'kia_purchase_report',
+  'kia_stock_management'
+]);
+
+export function tableRequiresExactRowDedupe(tableName) {
+  return EXACT_ROW_DEDUPE_TABLES.has(tableName);
+}
 
 export function hashDataObjectForTable(tableName, data) {
   const identityGroups = identityGroupsForTable(tableName);

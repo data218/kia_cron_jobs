@@ -4,11 +4,16 @@ import { downloadOpenRoYearlyReport } from './open-ro-yearly.js';
 import { downloadDemoJobCardsReport } from './demo-job-cards.js';
 import { downloadDemoCarListReport } from './demo-car-list.js';
 import { downloadServiceAppointmentReport } from './service-appointment.js';
+import { downloadKiaBookingReport } from './kia-booking-report.js';
+import { downloadKiaSalesReport } from './kia-sales-report.js';
+import { downloadKiaEnquiryReport } from './kia-enquiry-report.js';
+import { downloadKiaAccessoriesCounterSalesReport } from './kia-accessories-counter-sales-report.js';
+import { downloadKiaPurchaseReport } from './kia-purchase-report.js';
+import { downloadKiaStockManagementReport } from './kia-stock-management.js';
 import { downloadPsfYearlyReport } from './psf-yearly.js';
 import { downloadEwReport } from './ew-report.js';
 import { downloadMcpReport } from './mcp-report.js';
 import { downloadRsaReport } from './rsa-report.js';
-import { downloadHyundaiRepairOrderListReport } from './hyundai-repair-order-list.js';
 import { downloadAdvWiseLubricantsVasReport } from './adv-wise-lubricants-vas.js';
 import { downloadOperationWiseAnalysisReport } from './operation-wise-analysis-report.js';
 import { downloadOperationWiseAnalysisAdvisorReport } from './operation-wise-analysis-advisor-report.js';
@@ -56,6 +61,47 @@ export const reportDefinitions = [
     run: downloadServiceAppointmentReport
   },
   {
+    id: 'kia-booking-report',
+    name: 'Booking Report',
+    requiresKiaDms: true,
+    noDealerSwitch: true,
+    run: downloadKiaBookingReport
+  },
+  {
+    id: 'kia-sales-report',
+    name: 'Sales Report',
+    requiresKiaDms: true,
+    noDealerSwitch: true,
+    run: downloadKiaSalesReport
+  },
+  {
+    id: 'kia-enquiry-report',
+    name: 'Enquiry Report',
+    requiresKiaDms: true,
+    noDealerSwitch: true,
+    run: downloadKiaEnquiryReport
+  },
+  {
+    id: 'kia-accessories-counter-sales-report',
+    name: 'Accessories Counter Sales Report',
+    requiresKiaDms: true,
+    run: downloadKiaAccessoriesCounterSalesReport
+  },
+  {
+    id: 'kia-purchase-report',
+    name: 'Purchase Report',
+    requiresKiaDms: true,
+    noDealerSwitch: true,
+    run: downloadKiaPurchaseReport
+  },
+  {
+    id: 'kia-stock-management',
+    name: 'Kia Stock Management',
+    requiresKiaDms: true,
+    noDealerSwitch: true,
+    run: downloadKiaStockManagementReport
+  },
+  {
     id: 'psf-yearly',
     name: 'PSF Yearly',
     requiresKiaDms: true,
@@ -97,12 +143,6 @@ export const reportDefinitions = [
     requiresKiaDms: false,
     includeInAll: false,
     run: downloadRsaReport
-  },
-  {
-    id: 'hyundai-repair-order-list',
-    name: 'Hyundai Repair Order List',
-    requiresKiaDms: true,
-    run: downloadHyundaiRepairOrderListReport
   }
 ];
 
@@ -114,11 +154,37 @@ const regularReportDefinitions = defaultReportDefinitions.filter(report =>
     'demo-job-cards',
     'demo-car-list',
     'service-appointment',
+    'kia-booking-report',
+    'kia-sales-report',
+    'kia-enquiry-report',
+    'kia-accessories-counter-sales-report',
+    'kia-purchase-report',
+    'kia-stock-management',
     'rsa-report',
-    'ro-billing',
-    'hyundai-repair-order-list'
+    'ro-billing'
   ].includes(report.id)
 );
+
+const MODE_REPORT_IDS = new Map([
+  ['open-ro-yearly', 'open-ro-yearly'],
+  ['kia-call-center-complaints', 'kia-call-center-complaints'],
+  ['demo-job-cards', 'demo-job-cards'],
+  ['demo-car-list', 'demo-car-list'],
+  ['service-appointment', 'service-appointment'],
+  ['rsa-report', 'rsa-report'],
+  ['ro-billing', 'ro-billing'],
+  ['kia-booking-report', 'kia-booking-report'],
+  ['kia-booking-report-historical', 'kia-booking-report'],
+  ['kia-sales-report', 'kia-sales-report'],
+  ['kia-sales-report-historical', 'kia-sales-report'],
+  ['kia-enquiry-report', 'kia-enquiry-report'],
+  ['kia-enquiry-report-historical', 'kia-enquiry-report'],
+  ['kia-accessories-counter-sales-report', 'kia-accessories-counter-sales-report'],
+  ['kia-accessories-counter-sales-report-historical', 'kia-accessories-counter-sales-report'],
+  ['kia-purchase-report', 'kia-purchase-report'],
+  ['kia-purchase-report-historical', 'kia-purchase-report'],
+  ['kia-stock-management', 'kia-stock-management']
+]);
 
 export function getSelectedReports({ mode = 'configured' } = {}) {
   if (config.testSingleReport) {
@@ -138,36 +204,9 @@ export function getSelectedReports({ mode = 'configured' } = {}) {
     return selected;
   }
 
-  if (mode === 'open-ro-yearly') {
-    return reportDefinitions.filter(report => report.id === 'open-ro-yearly');
-  }
-
-  if (mode === 'kia-call-center-complaints') {
-    return reportDefinitions.filter(report => report.id === 'kia-call-center-complaints');
-  }
-
-  if (mode === 'demo-job-cards') {
-    return reportDefinitions.filter(report => report.id === 'demo-job-cards');
-  }
-
-  if (mode === 'demo-car-list') {
-    return reportDefinitions.filter(report => report.id === 'demo-car-list');
-  }
-
-  if (mode === 'service-appointment') {
-    return reportDefinitions.filter(report => report.id === 'service-appointment');
-  }
-
-  if (mode === 'rsa-report') {
-    return reportDefinitions.filter(report => report.id === 'rsa-report');
-  }
-
-  if (mode === 'ro-billing') {
-    return reportDefinitions.filter(report => report.id === 'ro-billing');
-  }
-
-  if (mode === 'hyundai-repair-order') {
-    return reportDefinitions.filter(report => report.id === 'hyundai-repair-order-list');
+  const modeReportId = MODE_REPORT_IDS.get(mode);
+  if (modeReportId) {
+    return reportDefinitions.filter(report => report.id === modeReportId);
   }
 
   const requested = config.reportsToRun

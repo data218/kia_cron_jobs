@@ -97,6 +97,7 @@ const DEFAULT_HMIL_REPORT_IDS = new Set([
   'hyundai-repair-order-list',
   'hyundai-ro-billing-report',
   'hyundai-call-center-complaints',
+  'hyundai-customer-complaint-list',
   'hyundai-demo-car-list',
   'hyundai-service-appointment',
   'hyundai-trust-package-bodyshop-sot',
@@ -174,6 +175,7 @@ export function createHmilReportDefinitions(account = defaultAccount()) {
       id: 'hyundai-repair-order-list',
       name: 'Hyundai Repair Order List',
       sheetName: account.repairOrderSheetName,
+      dealerCodes: account.repairOrderUseActiveDealerOnly ? ['active'] : account.dealerCodes,
       run: (page, options = {}) => downloadHyundaiRepairOrderListReport(page, { ...options, account })
     },
     cloneReport({

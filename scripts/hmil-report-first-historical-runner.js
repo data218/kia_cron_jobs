@@ -544,7 +544,15 @@ async function runHistoricalReportRange({
     const result = await executeWithRetry({
       name: label,
       page,
-      fn: () => report.run(page, { dealerCode, account, range, skipNavigation, pageSize })
+      fn: () => report.run(page, {
+        dealerCode,
+        account,
+        range,
+        skipNavigation,
+        pageSize,
+        reportNameOverride: report.name,
+        sheetNameOverride: report.sheetName
+      })
     });
 
     return {
@@ -609,7 +617,9 @@ async function runOptimizedHistoricalReportRange({
         skipNavigation,
         optimizedNoSearch: true,
         pageSize,
-        maxPages
+        maxPages,
+        reportNameOverride: report.name,
+        sheetNameOverride: report.sheetName
       })
     });
 
@@ -684,12 +694,14 @@ export async function runGdmsReportFirstHistoricalBackfill({
   defaultStartDate = '2021-01-01',
   defaultHeadless = false,
   historicalReportIds = HISTORICAL_REPORT_IDS,
-  optimizedFullRangeNoSearch = false
+  optimizedFullRangeNoSearch = false,
+  customizeAccount = account => account,
+  customizeReports = reports => reports
 } = {}) {
   await fsp.mkdir(config.logsDir, { recursive: true });
 
   const baseAccount = createGdmsAccountProfile(accountId);
-  const account = {
+  const configuredAccount = {
     ...baseAccount,
     forceLogin: envBool(`${envPrefix}_HISTORICAL_FORCE_LOGIN`, baseAccount.forceLogin),
     headless: envBool(`${envPrefix}_HISTORICAL_HEADLESS`, defaultHeadless),
@@ -699,7 +711,9 @@ export async function runGdmsReportFirstHistoricalBackfill({
     ),
     serviceName
   };
-  const reports = selectedReports({ account, envPrefix, historicalReportIds });
+  const account = customizeAccount(configuredAccount) ?? configuredAccount;
+  const reports = customizeReports(selectedReports({ account, envPrefix, historicalReportIds })) ??
+    selectedReports({ account, envPrefix, historicalReportIds });
   const reportIds = reports.map(report => report.id);
   const dealerCodes = selectedDealers({ account, envPrefix, accountId });
   const startIso = env(`${envPrefix}_HISTORICAL_START_DATE`, defaultStartDate);

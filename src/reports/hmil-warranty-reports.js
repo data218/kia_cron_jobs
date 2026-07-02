@@ -15,6 +15,7 @@ import {
   toIsoDate
 } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
+import { withPostgresClient } from '../supabase/postgres.js';
 import { sleep } from '../utils/sleep.js';
 import { selectKendoPagerSizeByVisibleClick, waitForKendoGridIdle } from './grid.js';
 import {
@@ -166,6 +167,46 @@ export async function clearHmilWarrantyClaimListTable() {
     cleared: result.cleared,
     previousRowCount: result.previousRowCount
   });
+  return result;
+}
+
+export async function clearHmilWarrantyClaimListRowsByLogins(loginIds = []) {
+  const normalizedLogins = [...new Set(
+    loginIds
+      .map(login => String(login || '').trim().toLowerCase())
+      .filter(Boolean)
+  )];
+
+  if (!normalizedLogins.length) {
+    return clearHmilWarrantyClaimListTable();
+  }
+
+  const tableName = 'hyundai_warranty_claim_list';
+  const result = await withPostgresClient(async client => {
+    const previousCountResult = await client.query(
+      `SELECT COUNT(*)::int AS row_count
+       FROM public.${tableName}
+       WHERE lower(trim(source_login_id::text)) = ANY($1::text[])`,
+      [normalizedLogins]
+    );
+
+    const previousRowCount = Number(previousCountResult.rows[0]?.row_count ?? 0);
+
+    await client.query(
+      `DELETE FROM public.${tableName}
+       WHERE lower(trim(source_login_id::text)) = ANY($1::text[])`,
+      [normalizedLogins]
+    );
+
+    return {
+      tableName,
+      cleared: true,
+      previousRowCount,
+      loginIds: normalizedLogins
+    };
+  });
+
+  logger.info('HMIL warranty claim list rows cleared for selected logins', result);
   return result;
 }
 
@@ -391,7 +432,7 @@ async function exportWarrantyChunk(context, {
       outputDir,
       filenameBase,
       pageSize: selectedPageSize,
-      downloadTimeoutMs: 10000,
+      downloadTimeoutMs: config.hmilWarrantyExportDownloadTimeoutMs,
       maxPages: 500,
       exportSelector: report.exportSelector,
       exportWhenEmpty: true,

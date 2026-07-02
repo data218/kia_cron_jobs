@@ -10,10 +10,18 @@ import { retry } from '../utils/retry.js';
 import { logger } from '../utils/logger.js';
 import { executeWithRetry } from '../utils/execute-with-retry.js';
 import { waitForConnectivity } from '../utils/network.js';
+import { clearCheckpoint, readCheckpoint, writeCheckpoint } from '../utils/checkpoint.js';
+import { isBrowserClosedError } from '../utils/failure.js';
 
 function getCliMode(defaultMode) {
   const modeArg = process.argv.find(arg => arg.startsWith('--mode='));
   return modeArg ? modeArg.slice('--mode='.length) : defaultMode;
+}
+
+function resolvedLoginRetries(account) {
+  return Number.isInteger(account?.loginRetries)
+    ? account.loginRetries
+    : config.loginRetries;
 }
 
 function isActiveDealerAlias(dealerCode) {
@@ -26,6 +34,36 @@ function serializeError(error) {
     message: error.message,
     stack: error.stack
   };
+}
+
+function dealerCodesForReport(report, account) {
+  if (Array.isArray(report?.dealerCodes) && report.dealerCodes.length) {
+    return report.dealerCodes;
+  }
+
+  return account.dealerCodes.length ? account.dealerCodes : ['active'];
+}
+
+function taskKeyForReport(report, dealerCode) {
+  return `${report.id}:${dealerCode}`;
+}
+
+function buildReportTasks(selectedReports, account) {
+  return selectedReports.flatMap(report =>
+    dealerCodesForReport(report, account).map(dealerCode => ({
+      report,
+      dealerCode,
+      taskKey: taskKeyForReport(report, dealerCode)
+    }))
+  );
+}
+
+function checkpointNameForRun(account, mode) {
+  const safeMode = String(mode || account.defaultMode)
+    .trim()
+    .replace(/[^a-z0-9_-]+/gi, '_')
+    .toLowerCase();
+  return `${account.id}-${safeMode}`;
 }
 
 export function createGdmsAccountScheduler(account) {
@@ -157,68 +195,150 @@ export function createGdmsAccountScheduler(account) {
       session = await retry(
         async () => loginToHmilDms(account),
         {
-          attempts: config.loginRetries + 1,
+          attempts: resolvedLoginRetries(account) + 1,
           delayMs: config.retryDelayMs,
           label: `${account.logPrefix} DMS login`
         }
       );
 
       const selectedReports = getSelectedHmilReports(mode, account);
-      const dealerCodes = account.dealerCodes.length ? account.dealerCodes : ['active'];
+      const tasks = buildReportTasks(selectedReports, account);
+      const checkpointName = checkpointNameForRun(account, mode);
+      const checkpoint = await readCheckpoint(checkpointName);
+      const taskKeys = tasks.map(task => task.taskKey);
+      const canResume = checkpoint?.mode === mode
+        && JSON.stringify(checkpoint?.taskKeys ?? []) === JSON.stringify(taskKeys)
+        && Number.isInteger(checkpoint?.nextIndex)
+        && checkpoint.nextIndex >= 0
+        && checkpoint.nextIndex < tasks.length;
+      const startIndex = canResume ? checkpoint.nextIndex : 0;
       const reportResults = [];
       let activeDealerCode = null;
+      let firstFailureIndex = null;
 
       logger.info(`${account.logPrefix} reports selected`, {
         mode,
         reportCount: selectedReports.length,
         reports: selectedReports.map(report => report.id),
-        dealerCodes
+        dealerCodes: account.dealerCodes,
+        taskCount: tasks.length,
+        resumed: canResume,
+        startIndex
       });
 
-      for (const report of selectedReports) {
-        logger.info(`${account.logPrefix} report batch started`, {
-          reportId: report.id,
-          report: report.name,
-          dealerCodes
-        });
-
-        for (const dealerCode of dealerCodes) {
-          try {
-            activeDealerCode = await switchDealerIfNeeded(session.page, dealerCode, activeDealerCode);
-          } catch (error) {
-            logger.error(`${account.logPrefix} dealer change failed; skipping this dealer/report pair`, {
-              reportId: report.id,
-              report: report.name,
-              dealerCode,
-              currentUrl: session.page.url(),
-              err: serializeError(error)
-            });
-            reportResults.push({
-              status: 'failed',
-              reportId: report.id,
-              report: report.name,
-              dealerCode,
-              phase: 'dealer-change',
-              currentUrl: session.page.url(),
-              error: serializeError(error)
-            });
-            activeDealerCode = null;
-            continue;
-          }
-
-          reportResults.push(await runReportForDealer(session.page, report, dealerCode));
+      for (let index = startIndex; index < tasks.length; index += 1) {
+        const { report, dealerCode } = tasks[index];
+        if (index === startIndex || tasks[index - 1]?.report.id !== report.id) {
+          const dealerCodes = dealerCodesForReport(report, account);
+          logger.info(`${account.logPrefix} report batch started`, {
+            reportId: report.id,
+            report: report.name,
+            dealerCodes
+          });
         }
 
-        logger.info(`${account.logPrefix} report batch finished`, {
+        if (firstFailureIndex == null) {
+          await writeCheckpoint(checkpointName, {
+            mode,
+            nextIndex: index,
+            taskKeys
+          });
+        }
+
+        try {
+          activeDealerCode = await switchDealerIfNeeded(session.page, dealerCode, activeDealerCode);
+        } catch (error) {
+          logger.error(`${account.logPrefix} dealer change failed; skipping this dealer/report pair`, {
+            reportId: report.id,
+            report: report.name,
+            dealerCode,
+            currentUrl: session.page.url(),
+            err: serializeError(error)
+          });
+          reportResults.push({
+            status: 'failed',
+            reportId: report.id,
+            report: report.name,
+            dealerCode,
+            phase: 'dealer-change',
+            currentUrl: session.page.url(),
+            error: serializeError(error)
+          });
+          activeDealerCode = null;
+          if (firstFailureIndex == null) {
+            firstFailureIndex = index;
+          }
+          await writeCheckpoint(checkpointName, {
+            mode,
+            nextIndex: firstFailureIndex,
+            taskKeys,
+            failedTask: {
+              reportId: report.id,
+              dealerCode,
+              phase: 'dealer-change'
+            }
+          });
+          if (isBrowserClosedError(error)) {
+            logger.error(`${account.logPrefix} browser/session closed during dealer change; aborting remaining tasks`, {
+              reportId: report.id,
+              dealerCode
+            });
+            break;
+          }
+          continue;
+        }
+
+        const result = await runReportForDealer(session.page, report, dealerCode);
+        reportResults.push(result);
+        if (result.status === 'failed') {
+          if (firstFailureIndex == null) {
+            firstFailureIndex = index;
+          }
+          await writeCheckpoint(checkpointName, {
+            mode,
+            nextIndex: firstFailureIndex,
+            taskKeys,
+            failedTask: {
+              reportId: report.id,
+              dealerCode,
+              phase: result.phase ?? 'report-run'
+            }
+          });
+          if (isBrowserClosedError(result.error)) {
+            logger.error(`${account.logPrefix} browser/session closed during report execution; aborting remaining tasks`, {
+              reportId: report.id,
+              dealerCode
+            });
+            break;
+          }
+        } else if (firstFailureIndex == null) {
+          if (index + 1 < tasks.length) {
+            await writeCheckpoint(checkpointName, {
+              mode,
+              nextIndex: index + 1,
+              taskKeys
+            });
+          } else {
+            await clearCheckpoint(checkpointName);
+          }
+        }
+
+        if (index === tasks.length - 1 || tasks[index + 1]?.report.id !== report.id) {
+          logger.info(`${account.logPrefix} report batch finished`, {
           reportId: report.id,
           report: report.name,
           successCount: reportResults.filter(result => result.reportId === report.id && result.status === 'success').length,
           failureCount: reportResults.filter(result => result.reportId === report.id && result.status === 'failed').length
         });
+        }
       }
 
       const failedReports = reportResults.filter(result => result.status === 'failed');
       const successfulReports = reportResults.filter(result => result.status === 'success');
+
+      if (!failedReports.length) {
+        await clearCheckpoint(checkpointName);
+      }
 
       if (account.id === 'am-platinum' && failedReports.length === 0) {
         logger.info(`${account.logPrefix} all imports completed successfully; refreshing Platinum materialized views`);
@@ -241,7 +361,7 @@ export function createGdmsAccountScheduler(account) {
         startedAt: new Date(startedAt).toISOString(),
         completedAt: new Date().toISOString(),
         durationMs: Date.now() - startedAt,
-        dealerCodes,
+        dealerCodes: account.dealerCodes,
         reports: reportResults,
         failedReports
       });

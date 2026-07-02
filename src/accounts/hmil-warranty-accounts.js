@@ -24,6 +24,7 @@ function warrantyAccount({
     userIdEnvName,
     passwordEnvName,
     forceLogin: config.hmilWarrantyForceLogin,
+    loginRetries: config.hmilWarrantyLoginRetries,
     sessionCheckTimeoutMs: config.hmilSessionCheckTimeoutMs,
     sessionStatePath,
     downloadDir: config.hmilWarrantyDownloadDir,
@@ -67,7 +68,8 @@ function wrapPlatinumWarrantyAccount(account, id) {
     reportChunksDir: config.hmilWarrantyReportChunksDir,
     headless: config.headless,
     otpPurpose: 'hmil',
-    forceLogin: config.hmilWarrantyForceLogin
+    forceLogin: config.hmilWarrantyForceLogin,
+    loginRetries: config.hmilWarrantyLoginRetries
   };
 }
 

@@ -9,8 +9,21 @@ function env(name, fallback = '') {
   return process.env[name] ?? fallback;
 }
 
+function envScoped(name, fallback = '') {
+  const suffixes = [process.env.COMPUTERNAME, process.env.USERNAME]
+    .map(value => String(value ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '_'))
+    .filter(Boolean);
+
+  for (const suffix of suffixes) {
+    const value = process.env[`${name}_${suffix}`];
+    if (value != null && value !== '') return value;
+  }
+
+  return env(name, fallback);
+}
+
 function envInt(name, fallback) {
-  const raw = process.env[name];
+  const raw = envScoped(name);
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   if (Number.isNaN(parsed)) {
@@ -36,6 +49,18 @@ function envList(name, fallback = '') {
     .filter(Boolean);
 }
 
+function todayIsoLocal() {
+  const today = new Date();
+  return [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, '0'),
+    String(today.getDate()).padStart(2, '0')
+  ].join('-');
+}
+
+const defaultHmilPrimaryDealers = 'N5203,N5701,N5804,N5806,N6815,N6819,N6826';
+const defaultHmilSecondaryDealers = 'N5216,N6844,N6845,N6846,N6847,N6848';
+
 export const config = {
   rootDir,
   loginUrl: env('KIA_DMS_URL', 'https://dms.kiaindia.net/cmm/cmmi/selectLoginMain.dms'),
@@ -48,9 +73,9 @@ export const config = {
   telegramDropOldUpdates: envBool('TELEGRAM_DROP_OLD_UPDATES', true),
   otpRegex: new RegExp(env('OTP_REGEX', '\\d{4,6}')),
   otpFilePath: path.resolve(rootDir, env('OTP_FILE_PATH', './otp-inbox.json')),
-  otpWebhookBaseUrl: env('OTP_WEBHOOK_BASE_URL', 'http://127.0.0.1:3333'),
+  otpWebhookBaseUrl: envScoped('OTP_WEBHOOK_BASE_URL', 'http://127.0.0.1:3333'),
   otpWebhookToken: env('OTP_WEBHOOK_TOKEN', 'change-me'),
-  otpWebhookHost: env('OTP_WEBHOOK_HOST', '0.0.0.0'),
+  otpWebhookHost: envScoped('OTP_WEBHOOK_HOST', '0.0.0.0'),
   otpWebhookPort: envInt('OTP_WEBHOOK_PORT', envInt('PORT', 3333)),
   otpWebhookDebug: envBool('OTP_WEBHOOK_DEBUG', false),
   otpFreshnessGraceMs: envInt('OTP_FRESHNESS_GRACE_MS', 15000),
@@ -63,7 +88,13 @@ export const config = {
   demoCarListCronSchedule: env('DEMO_CAR_LIST_CRON_SCHEDULE', '30 15 * * 1'),
   serviceAppointmentCronSchedule: env('SERVICE_APPOINTMENT_CRON_SCHEDULE', '45 18 * * *'),
   roBillingCronSchedule: env('RO_BILLING_CRON_SCHEDULE', '0 9-18 * * *'),
-  hmilRepairOrderCronSchedule: env('HMIL_REPAIR_ORDER_CRON_SCHEDULE', '20 10-18 * * *'),
+  kiaBookingReportCronSchedule: env('KIA_BOOKING_REPORT_CRON_SCHEDULE', '50 18 * * *'),
+  kiaSalesReportCronSchedule: env('KIA_SALES_REPORT_CRON_SCHEDULE', '50 18 * * *'),
+  kiaEnquiryReportCronSchedule: env('KIA_ENQUIRY_REPORT_CRON_SCHEDULE', '50 18 * * *'),
+  kiaAccessoriesCounterSalesCronSchedule: env('KIA_ACCESSORIES_COUNTER_SALES_CRON_SCHEDULE', '50 18 * * *'),
+  kiaPurchaseReportCronSchedule: env('KIA_PURCHASE_REPORT_CRON_SCHEDULE', '20 19 * * *'),
+  kiaStockManagementCronSchedule: env('KIA_STOCK_MANAGEMENT_CRON_SCHEDULE', '20 19 * * *'),
+  hmilRepairOrderCronSchedule: env('HMIL_REPAIR_ORDER_CRON_SCHEDULE', '20 16 * * *'),
   headless: envBool('HEADLESS', false),
   slowMoMs: envInt('SLOW_MO_MS', 0),
   pageReadyDelayMs: envDelayMs('PAGE_READY_DELAY_MS', 5000),
@@ -74,6 +105,9 @@ export const config = {
   retryDelayMs: envInt('RETRY_DELAY_MS', 15000),
   playwrightActionTimeoutMs: envInt('PLAYWRIGHT_ACTION_TIMEOUT_MS', 45000),
   playwrightNavigationTimeoutMs: envInt('PLAYWRIGHT_NAVIGATION_TIMEOUT_MS', 60000),
+  playwrightBrowserChannel: env('PLAYWRIGHT_BROWSER_CHANNEL', '').trim(),
+  playwrightUsePersistentContext: envBool('PLAYWRIGHT_USE_PERSISTENT_CONTEXT', false),
+  playwrightUserDataDir: path.resolve(rootDir, env('PLAYWRIGHT_USER_DATA_DIR', './storage/playwright-browser-profile')),
   networkCheckUrl: env('NETWORK_CHECK_URL', 'https://www.gstatic.com/generate_204'),
   networkCheckUrls: envList(
     'NETWORK_CHECK_URLS',
@@ -163,6 +197,34 @@ export const config = {
   serviceAppointmentBackfillStartDate: env('SERVICE_APPOINTMENT_BACKFILL_START_DATE', '2026-05-01'),
   serviceAppointmentPostSearchDelayMs: envDelayMs('SERVICE_APPOINTMENT_POST_SEARCH_DELAY_MS', 5000),
   serviceAppointmentBetweenChunksDelayMs: envDelayMs('SERVICE_APPOINTMENT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  kiaBookingReportSheetName: env('KIA_BOOKING_REPORT_SHEET_NAME', 'kia_booking_report'),
+  kiaBookingReportPageSize: env('KIA_BOOKING_REPORT_PAGE_SIZE', '300'),
+  kiaBookingReportBackfillStartDate: env('KIA_BOOKING_REPORT_BACKFILL_START_DATE', '2025-01-01'),
+  kiaBookingReportPostSearchDelayMs: envDelayMs('KIA_BOOKING_REPORT_POST_SEARCH_DELAY_MS', 5000),
+  kiaBookingReportBetweenChunksDelayMs: envDelayMs('KIA_BOOKING_REPORT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  kiaSalesReportSheetName: env('KIA_SALES_REPORT_SHEET_NAME', 'kia_sales_report'),
+  kiaSalesReportPageSize: env('KIA_SALES_REPORT_PAGE_SIZE', '300'),
+  kiaSalesReportBackfillStartDate: env('KIA_SALES_REPORT_BACKFILL_START_DATE', '2025-01-01'),
+  kiaSalesReportPostSearchDelayMs: envDelayMs('KIA_SALES_REPORT_POST_SEARCH_DELAY_MS', 5000),
+  kiaSalesReportBetweenChunksDelayMs: envDelayMs('KIA_SALES_REPORT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  kiaEnquiryReportSheetName: env('KIA_ENQUIRY_REPORT_SHEET_NAME', 'kia_enquiry_report'),
+  kiaEnquiryReportPageSize: env('KIA_ENQUIRY_REPORT_PAGE_SIZE', '300'),
+  kiaEnquiryReportBackfillStartDate: env('KIA_ENQUIRY_REPORT_BACKFILL_START_DATE', '2025-01-01'),
+  kiaEnquiryReportPostSearchDelayMs: envDelayMs('KIA_ENQUIRY_REPORT_POST_SEARCH_DELAY_MS', 5000),
+  kiaEnquiryReportBetweenChunksDelayMs: envDelayMs('KIA_ENQUIRY_REPORT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  kiaAccessoriesCounterSalesSheetName: env('KIA_ACCESSORIES_COUNTER_SALES_SHEET_NAME', 'kia_accessories_counter_sales_report'),
+  kiaAccessoriesCounterSalesPageSize: env('KIA_ACCESSORIES_COUNTER_SALES_PAGE_SIZE', '300'),
+  kiaAccessoriesCounterSalesBackfillStartDate: env('KIA_ACCESSORIES_COUNTER_SALES_BACKFILL_START_DATE', '2025-01-01'),
+  kiaAccessoriesCounterSalesPostSearchDelayMs: envDelayMs('KIA_ACCESSORIES_COUNTER_SALES_POST_SEARCH_DELAY_MS', 5000),
+  kiaAccessoriesCounterSalesBetweenChunksDelayMs: envDelayMs('KIA_ACCESSORIES_COUNTER_SALES_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  kiaPurchaseReportSheetName: env('KIA_PURCHASE_REPORT_SHEET_NAME', 'kia_purchase_report'),
+  kiaPurchaseReportPageSize: env('KIA_PURCHASE_REPORT_PAGE_SIZE', '300'),
+  kiaPurchaseReportBackfillStartDate: env('KIA_PURCHASE_REPORT_BACKFILL_START_DATE', '2025-01-01'),
+  kiaPurchaseReportPostSearchDelayMs: envDelayMs('KIA_PURCHASE_REPORT_POST_SEARCH_DELAY_MS', 5000),
+  kiaPurchaseReportBetweenChunksDelayMs: envDelayMs('KIA_PURCHASE_REPORT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  kiaStockManagementSheetName: env('KIA_STOCK_MANAGEMENT_SHEET_NAME', 'kia_stock_management'),
+  kiaStockManagementPageSize: env('KIA_STOCK_MANAGEMENT_PAGE_SIZE', '300'),
+  kiaStockManagementPostSearchDelayMs: envDelayMs('KIA_STOCK_MANAGEMENT_POST_SEARCH_DELAY_MS', 5000),
   psfYearlySheetName: env('PSF_YEARLY_SHEET_NAME', 'PSF Yearly'),
   psfYearlyPageSize: env('PSF_YEARLY_PAGE_SIZE', '300'),
   psfYearlyPostSearchDelayMs: envDelayMs('PSF_YEARLY_POST_SEARCH_DELAY_MS', 5000),
@@ -211,24 +273,41 @@ export const config = {
   rsaHeadless: envBool('RSA_HEADLESS', false),
   rsaUsePersistentProfile: envBool('RSA_USE_PERSISTENT_PROFILE', false),
   rsaUserDataDir: path.resolve(rootDir, env('RSA_USER_DATA_DIR', './storage/rsa-chrome-profile')),
-  hmilCronSchedule: env('HMIL_CRON_SCHEDULE', '20 10-18 * * *'),
+  hmilCronSchedule: env('HMIL_CRON_SCHEDULE', '20 16 * * *'),
   hmilCurrentMonthOnly: envBool('HMIL_CURRENT_MONTH_ONLY', true),
   hmilLoginUrl: env('HMIL_DMS_URL', 'https://ndms.hmil.net/cmm/cmmi/selectLoginMain.dms'),
   hmilHomeUrl: env('HMIL_HOME_URL', 'https://ndms.hmil.net/cmm/cmmd/selectHome.dms'),
   hmilUserId: env('HMIL_USER_ID'),
   hmilPassword: env('HMIL_PASSWORD'),
   hmilForceLogin: envBool('HMIL_FORCE_LOGIN', true),
+  hmilLoginRetries: envInt('HMIL_LOGIN_RETRIES', 0),
   hmilSessionCheckTimeoutMs: envInt('HMIL_SESSION_CHECK_TIMEOUT_MS', 8000),
   hmilSessionStatePath: path.resolve(rootDir, env('HMIL_SESSION_STATE_PATH', './storage/hmil-dms-state.json')),
+  hmilSecondarySessionStatePath: path.resolve(
+    rootDir,
+    env('HMIL_SECONDARY_SESSION_STATE_PATH', './storage/hmil-secondary-dms-state.json')
+  ),
   hmilDownloadDir: path.resolve(rootDir, env('HMIL_DOWNLOAD_DIR', './downloads/hmil')),
   hmilReportChunksDir: path.resolve(rootDir, env('HMIL_REPORT_CHUNKS_DIR', './downloads/report-chunks/hmil')),
-  hmilDealerCodes: envList('HMIL_DEALER_CODES', 'N5216,N6844,N6845,N6846,N6847,N6848')
+  hmilPrimaryDealerCodes: envList('HMIL_PRIMARY_DEALER_CODES', defaultHmilPrimaryDealers)
+    .map(value => value.toUpperCase()),
+  hmilSecondaryDealerCodes: envList(
+    'HMIL_SECONDARY_DEALER_CODES',
+    env('HMIL_DEALER_CODES', defaultHmilSecondaryDealers)
+  )
+    .map(value => value.toUpperCase()),
+  hmilDealerCodes: envList('HMIL_DEALER_CODES', env('HMIL_PRIMARY_DEALER_CODES', defaultHmilPrimaryDealers))
     .map(value => value.toUpperCase()),
   hmilReportsToRun: env('HMIL_REPORTS_TO_RUN', 'all'),
   hmilRepairOrderSheetName: env('HMIL_REPAIR_ORDER_SHEET_NAME', 'Hyundai Repair Order List'),
   hmilRepairOrderPageSize: env('HMIL_REPAIR_ORDER_PAGE_SIZE', '5000'),
-  hmilRepairOrderStartDate: env('HMIL_REPAIR_ORDER_START_DATE', '2026-05-01'),
-  hmilRepairOrderEndDate: env('HMIL_REPAIR_ORDER_END_DATE', '2026-05-31'),
+  hmilRepairOrderUseActiveDealerOnly: envBool('HMIL_REPAIR_ORDER_USE_ACTIVE_DEALER_ONLY', true),
+  hmilRepairOrderStartDate: env('HMIL_REPAIR_ORDER_START_DATE', '2025-01-01'),
+  hmilRepairOrderEndDate: env('HMIL_REPAIR_ORDER_END_DATE', todayIsoLocal()),
+  hmilPrimaryRepairOrderStartDate: env('HMIL_PRIMARY_REPAIR_ORDER_START_DATE', env('HMIL_REPAIR_ORDER_START_DATE', '2025-01-01')),
+  hmilPrimaryRepairOrderEndDate: env('HMIL_PRIMARY_REPAIR_ORDER_END_DATE', '2026-04-25'),
+  hmilSecondaryRepairOrderStartDate: env('HMIL_SECONDARY_REPAIR_ORDER_START_DATE', '2026-04-25'),
+  hmilSecondaryRepairOrderEndDate: env('HMIL_SECONDARY_REPAIR_ORDER_END_DATE', env('HMIL_REPAIR_ORDER_END_DATE', todayIsoLocal())),
   hmilRepairOrderPostSearchDelayMs: envDelayMs('HMIL_REPAIR_ORDER_POST_SEARCH_DELAY_MS', 0),
   hmilSecondaryUserId: env('HMIL_SECONDARY_USER_ID', 'MIS5216'),
   hmilSecondaryPassword: env('HMIL_SECONDARY_PASSWORD'),
@@ -236,21 +315,27 @@ export const config = {
   hmilWarrantyCronTimezone: env('HMIL_WARRANTY_CRON_TIMEZONE', 'Asia/Kolkata'),
   hmilWarrantyHistoricalOtpProvider: env('HMIL_WARRANTY_HISTORICAL_OTP_PROVIDER', 'manual'),
   hmilWarrantyHistoricalStartDate: env('HMIL_WARRANTY_HISTORICAL_START_DATE', '2025-01-01'),
-  hmilWarrantyPageSize: env('HMIL_WARRANTY_PAGE_SIZE', '300'),
+  hmilWarrantyPageSize: env('HMIL_WARRANTY_PAGE_SIZE', '1000'),
+  hmilWarrantyExportDownloadTimeoutMs: envInt('HMIL_WARRANTY_EXPORT_DOWNLOAD_TIMEOUT_MS', 30000),
+  hmilWarrantyMaxRunMs: envInt('HMIL_WARRANTY_MAX_RUN_MS', 10800000),
   hmilWarrantyResume: envBool('HMIL_WARRANTY_RESUME', false),
   hmilWarrantyScheduledResume: envBool('HMIL_WARRANTY_SCHEDULED_RESUME', true),
+  hmilWarrantyLoginRetries: envInt('HMIL_WARRANTY_LOGIN_RETRIES', 0),
   hmilWarrantySecondaryDealerCodes: envList(
     'HMIL_WARRANTY_SECONDARY_DEALER_CODES',
-    'N5216,N6844,N6845,N6846,N6847,N6848'
+    env('HMIL_SECONDARY_DEALER_CODES', defaultHmilSecondaryDealers)
   ).map(value => value.toUpperCase()),
   hmilWarrantyForceLogin: envBool('HMIL_WARRANTY_FORCE_LOGIN', false),
   hmilWarrantyPrimarySessionStatePath: path.resolve(
     rootDir,
-    env('HMIL_WARRANTY_PRIMARY_SESSION_STATE_PATH', './storage/hmil-warranty-sahiltech-state.json')
+    env('HMIL_WARRANTY_PRIMARY_SESSION_STATE_PATH', env('HMIL_SESSION_STATE_PATH', './storage/hmil-dms-state.json'))
   ),
   hmilWarrantySecondarySessionStatePath: path.resolve(
     rootDir,
-    env('HMIL_WARRANTY_SECONDARY_SESSION_STATE_PATH', './storage/hmil-warranty-mis5216-state.json')
+    env(
+      'HMIL_WARRANTY_SECONDARY_SESSION_STATE_PATH',
+      env('HMIL_SECONDARY_SESSION_STATE_PATH', './storage/hmil-secondary-dms-state.json')
+    )
   ),
   hmilWarrantyDownloadDir: path.resolve(rootDir, env('HMIL_WARRANTY_DOWNLOAD_DIR', './downloads/hmil-warranty')),
   hmilWarrantyReportChunksDir: path.resolve(
@@ -278,6 +363,7 @@ export const config = {
     env('AM_PLATINUM_HISTORICAL_SESSION_STATE_PATH', './storage/am-platinum-historical-dms-state.json')
   ),
   amPlatinumForceLogin: envBool('AM_PLATINUM_FORCE_LOGIN', true),
+  amPlatinumLoginRetries: envInt('AM_PLATINUM_LOGIN_RETRIES', 0),
   amPlatinumSessionCheckTimeoutMs: envInt('AM_PLATINUM_SESSION_CHECK_TIMEOUT_MS', envInt('HMIL_SESSION_CHECK_TIMEOUT_MS', 8000)),
   amPlatinumSessionStatePath: path.resolve(rootDir, env('AM_PLATINUM_SESSION_STATE_PATH', './storage/am-platinum-dms-state.json')),
   amPlatinumDownloadDir: path.resolve(rootDir, env('AM_PLATINUM_DOWNLOAD_DIR', './downloads/am-platinum')),

@@ -9,6 +9,7 @@ import { changeActiveDealerForDms } from '../navigation/dealer-change.js';
 import {
   clearHmilWarrantyTables,
   clearHmilWarrantyClaimListTable,
+  clearHmilWarrantyClaimListRowsByLogins,
   hmilWarrantyReportDefinitions,
   runHmilWarrantyReport
 } from '../reports/hmil-warranty-reports.js';
@@ -17,6 +18,7 @@ import { withDirectoryLock } from '../utils/file-lock.js';
 import { logger } from '../utils/logger.js';
 import { waitForConnectivity } from '../utils/network.js';
 import { retry } from '../utils/retry.js';
+import { isBrowserClosedError } from '../utils/failure.js';
 
 function serializeError(error) {
   return {
@@ -28,6 +30,12 @@ function serializeError(error) {
 
 function isActiveDealerAlias(dealerCode) {
   return !dealerCode || ['active', 'current', 'default'].includes(String(dealerCode).trim().toLowerCase());
+}
+
+function resolvedLoginRetries(account) {
+  return Number.isInteger(account?.loginRetries)
+    ? account.loginRetries
+    : config.loginRetries;
 }
 
 const RAJOURI_HISTORICAL_FETCH_CODE = 'N6824';
@@ -65,13 +73,20 @@ export function getWarrantyDealerCodesForAccount(account) {
       : ['active'];
   }
 
-  return config.hmilDealerCodes.length ? config.hmilDealerCodes : ['active'];
+  return config.hmilPrimaryDealerCodes.length ? config.hmilPrimaryDealerCodes : ['active'];
 }
 
 function getWarrantyDealerCodesByAccount(accounts) {
   return Object.fromEntries(
     accounts.map(account => [account.userId, getWarrantyDealerCodesForAccount(account)])
   );
+}
+
+function ensureDeadlineNotExceeded(deadlineAt, label) {
+  if (!deadlineAt) return;
+  if (Date.now() > deadlineAt) {
+    throw new Error(`HMIL warranty max runtime exceeded while ${label}`);
+  }
 }
 
 async function isLoginFormVisible(page) {
@@ -136,16 +151,19 @@ export async function executeHmilWarrantySequence({
   dealerCodesByAccount = null,
   dryRun = false,
   resume = false,
+  deadlineAt = null,
   login = loginToHmilDms,
   runReport = runHmilWarrantyReport
 }) {
   const results = [];
 
   for (const account of accounts) {
+    ensureDeadlineNotExceeded(deadlineAt, `starting account ${account.userId}`);
     const dealerCodes = dealerCodesByAccount?.[account.userId] ??
       getWarrantyDealerCodesForAccount(account);
     let session;
     let activeDealerCode = null;
+    let accountSessionDead = false;
 
     logger.info('Starting all dealers for account in single session', {
       sourceLoginId: account.userId,
@@ -157,68 +175,19 @@ export async function executeHmilWarrantySequence({
         session = await retry(
           () => login(account),
           {
-            attempts: config.loginRetries + 1,
+            attempts: resolvedLoginRetries(account) + 1,
             delayMs: config.retryDelayMs,
             label: `${account.logPrefix} login`
           }
         );
       }
 
-      // Run Hyundai Warranty Claim List once per account immediately after login
-      const claimListReport = reports.find(r => r.id === 'hyundai-warranty-claim-list');
-      if (claimListReport) {
-        const itemStartedAt = Date.now();
-        const label = `${claimListReport.name} [${account.userId}] [default-dealer]`;
-        try {
-          const result = dryRun
-            ? {
-                name: claimListReport.name,
-                id: claimListReport.id,
-                sheetName: claimListReport.sheetName,
-                sourceLoginId: account.userId,
-                dealerCode: 'default',
-                dbResult: { action: 'dry-run', rowCount: 0 }
-              }
-            : await executeWithRetry({
-                name: label,
-                page: session.page,
-                fn: () => runReport(session.page, { account, mode, report: claimListReport, dealerCode: 'default', resume })
-              });
-
-          results.push({
-            status: 'success',
-            accountId: account.id,
-            sourceLoginId: account.userId,
-            dealerCode: 'default',
-            reportId: claimListReport.id,
-            durationMs: Date.now() - itemStartedAt,
-            ...result
-          });
-        } catch (error) {
-          logger.error('HMIL warranty claim list report failed', {
-            sourceLoginId: account.userId,
-            err: serializeError(error)
-          });
-          results.push({
-            status: 'failed',
-            accountId: account.id,
-            sourceLoginId: account.userId,
-            dealerCode: 'default',
-            reportId: claimListReport.id,
-            report: claimListReport.name,
-            durationMs: Date.now() - itemStartedAt,
-            error: serializeError(error)
-          });
-        }
-      }
-
       for (const dealerCode of dealerCodes) {
-        const effectiveReports = reports.filter(r => {
-          if (r.id === 'hyundai-warranty-claim-list') {
-            return false;
-          }
-          return true;
-        });
+        if (accountSessionDead) {
+          break;
+        }
+        ensureDeadlineNotExceeded(deadlineAt, `starting dealer ${dealerCode} for ${account.userId}`);
+        const effectiveReports = reports;
 
         if (effectiveReports.length === 0) {
           continue;
@@ -249,11 +218,20 @@ export async function executeHmilWarrantySequence({
               });
             }
             activeDealerCode = null;
+            if (isBrowserClosedError(error)) {
+              logger.error('HMIL warranty browser/session closed during dealer change; aborting remaining dealers for this account', {
+                sourceLoginId: account.userId,
+                dealerCode
+              });
+              accountSessionDead = true;
+              break;
+            }
             continue;
           }
         }
 
         for (const report of effectiveReports) {
+          ensureDeadlineNotExceeded(deadlineAt, `starting report ${report.id} for ${dealerCode} (${account.userId})`);
           const itemStartedAt = Date.now();
           const label = `${report.name} [${account.userId}] [${dealerCode}]`;
 
@@ -299,6 +277,15 @@ export async function executeHmilWarrantySequence({
               durationMs: Date.now() - itemStartedAt,
               error: serializeError(error)
             });
+            if (isBrowserClosedError(error)) {
+              logger.error('HMIL warranty browser/session closed during report execution; aborting remaining work for this account', {
+                sourceLoginId: account.userId,
+                dealerCode,
+                reportId: report.id
+              });
+              accountSessionDead = true;
+              break;
+            }
           }
         }
       }
@@ -362,6 +349,7 @@ export async function runHmilWarrantyJob(mode = 'scheduled', {
     }
 
     const startedAt = Date.now();
+    const deadlineAt = startedAt + config.hmilWarrantyMaxRunMs;
     await ensureWarrantyDirs(effectiveAccounts);
     await waitForConnectivity({ label: `HMIL warranty ${mode} startup` });
     await writeWarrantyHealth({
@@ -379,7 +367,15 @@ export async function runHmilWarrantyJob(mode = 'scheduled', {
     }
 
     if (!dryRun && reports.some(r => r.id === 'hyundai-warranty-claim-list')) {
-      await clearHmilWarrantyClaimListTable();
+      const selectedLogins = effectiveAccounts
+        .map(account => String(account.userId || '').trim())
+        .filter(Boolean);
+
+      if (selectedLogins.length === createWarrantyScheduledAccounts().length) {
+        await clearHmilWarrantyClaimListTable();
+      } else {
+        await clearHmilWarrantyClaimListRowsByLogins(selectedLogins);
+      }
     }
 
     const results = await executeHmilWarrantySequence({
@@ -388,7 +384,8 @@ export async function runHmilWarrantyJob(mode = 'scheduled', {
       reports,
       dealerCodesByAccount: resolvedDealerCodesByAccount,
       dryRun,
-      resume
+      resume,
+      deadlineAt
     });
 
     const failed = results.filter(result => result.status === 'failed');

@@ -191,6 +191,109 @@ async function clickNextPage(page, { gridSelector } = {}) {
   return true;
 }
 
+async function goToFirstGridPage(page, pageSize, { gridSelector } = {}) {
+  const initialState = await getPagerState(page, pageSize, { gridSelector });
+  if (!initialState.hasPager || initialState.currentPage <= 1) {
+    return initialState;
+  }
+
+  const resetViaJsApi = await page.evaluate(({ selector }) => {
+    const jquery = window.jQuery || window.$;
+    const gridElement = selector
+      ? document.querySelector(selector)
+      : document.querySelector('#grid, .k-grid');
+    if (!gridElement) {
+      return false;
+    }
+
+    const kendoGrid = jquery?.(gridElement).data('kendoGrid') ??
+      window.kendo?.widgetInstance?.(gridElement);
+    if (!kendoGrid?.dataSource) {
+      return false;
+    }
+
+    if (typeof kendoGrid.dataSource.page === 'function') {
+      kendoGrid.dataSource.page(1);
+      return true;
+    }
+
+    if (typeof kendoGrid.dataSource.query === 'function') {
+      const options = typeof kendoGrid.dataSource.options === 'object'
+        ? { ...kendoGrid.dataSource.options }
+        : {};
+      kendoGrid.dataSource.query({
+        ...options,
+        page: 1,
+        pageSize: typeof kendoGrid.dataSource.pageSize === 'function'
+          ? kendoGrid.dataSource.pageSize()
+          : options.pageSize
+      });
+      return true;
+    }
+
+    if (typeof kendoGrid.dataSource.read === 'function') {
+      kendoGrid.dataSource.read();
+      return true;
+    }
+
+    return false;
+  }, { selector: gridSelector }).catch(() => false);
+
+  if (resetViaJsApi) {
+    await waitForKendoGridIdle(page, { timeout: 120000, gridSelector });
+    const afterJsReset = await getPagerState(page, pageSize, { gridSelector });
+    if (afterJsReset.currentPage === 1) {
+      logger.info('Reset Kendo grid pager back to page 1 before export', {
+        fromPage: initialState.currentPage,
+        totalPages: initialState.totalPages,
+        gridSelector
+      });
+      return afterJsReset;
+    }
+  }
+
+  const pager = pagerLocator(page, gridSelector);
+  const firstButton = pager.locator([
+    'a[title*="first" i]',
+    'a[aria-label*="first" i]',
+    'a.k-pager-first',
+    'a.k-link:has(.k-i-seek-w)',
+    'a.k-link:has(.k-i-arrow-60-left)',
+    'a.k-pager-nav:has(.k-i-seek-w)',
+    'a.k-pager-nav:has(.k-i-arrow-60-left)'
+  ].join(',')).first();
+
+  const firstVisible = await firstButton.isVisible({ timeout: 2000 }).catch(() => false);
+  if (firstVisible) {
+    const disabled = await firstButton.evaluate(element =>
+      element.classList.contains('k-state-disabled') ||
+      element.classList.contains('k-disabled') ||
+      element.getAttribute('aria-disabled') === 'true'
+    ).catch(() => true);
+
+    if (!disabled) {
+      await firstButton.click();
+      await waitForKendoGridIdle(page, { timeout: 120000, gridSelector });
+      const afterFirstClick = await getPagerState(page, pageSize, { gridSelector });
+      if (afterFirstClick.currentPage === 1) {
+        logger.info('Reset pager to page 1 via visible First button before export', {
+          fromPage: initialState.currentPage,
+          totalPages: initialState.totalPages,
+          gridSelector
+        });
+        return afterFirstClick;
+      }
+    }
+  }
+
+  logger.warn('Unable to deterministically reset Kendo grid pager to page 1 before export', {
+    currentPage: initialState.currentPage,
+    totalPages: initialState.totalPages,
+    gridSelector
+  });
+  return getPagerState(page, pageSize, { gridSelector });
+}
+
 function uniqueHeaders(rawHeaders) {
   const counts = new Map();
   return rawHeaders.map((header, index) => {
@@ -229,7 +332,7 @@ export async function extractAllGridPagesFromDom(page, {
 } = {}) {
   const headers = [];
   const rowValues = [];
-  const initialState = await getPagerState(page, pageSize, { gridSelector });
+  const initialState = await goToFirstGridPage(page, pageSize, { gridSelector });
   const totalPages = initialState.totalPages;
 
   for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
@@ -382,7 +485,7 @@ export async function exportAllGridPagesToFiles(page, {
     return pageFiles;
   }
 
-  const firstState = await getPagerState(page, pageSize, { gridSelector });
+  const firstState = await goToFirstGridPage(page, pageSize, { gridSelector });
   let totalPages = firstState.totalPages;
 
   logger.info('Grid export starting', {

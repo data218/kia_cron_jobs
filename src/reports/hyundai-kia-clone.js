@@ -246,6 +246,39 @@ function aggregateResults(results) {
   return { insertedRows, duplicateRows };
 }
 
+async function resolveReportContext(page, report, { skipNavigation = false } = {}) {
+  const openReport = async () => {
+    if (!skipNavigation) {
+      await report.open(page);
+    }
+  };
+
+  await openReport();
+
+  try {
+    return await findContextWithVisibleSelector(page, report.readySelector ?? report.dateFromSelector, {
+      timeout: report.readyTimeoutMs ?? 90000,
+      label: `${report.name} ready selector`
+    });
+  } catch (error) {
+    if (skipNavigation) {
+      throw error;
+    }
+
+    logger.warn(`${reportAccount(report).logPrefix} mirrored report did not expose its ready selector after initial navigation; retrying report open in the same attempt`, {
+      reportId: report.id,
+      readySelector: report.readySelector ?? report.dateFromSelector,
+      message: error.message
+    });
+
+    await report.open(page);
+    return findContextWithVisibleSelector(page, report.readySelector ?? report.dateFromSelector, {
+      timeout: report.readyTimeoutMs ?? 90000,
+      label: `${report.name} ready selector`
+    });
+  }
+}
+
 export function createHyundaiKiaCloneReport(report) {
   return async function downloadHyundaiKiaCloneReport(page, {
     dealerCode = 'active',
@@ -253,28 +286,25 @@ export function createHyundaiKiaCloneReport(report) {
     skipNavigation = false,
     optimizedNoSearch = false,
     pageSize: suppliedPageSize,
-    maxPages: suppliedMaxPages
+    maxPages: suppliedMaxPages,
+    reportNameOverride,
+    sheetNameOverride
   } = {}) {
     const account = reportAccount(report);
     const range = suppliedRange ?? getRange(report.rangeType, account);
+    const effectiveReportName = reportNameOverride ?? report.name;
+    const effectiveSheetName = sheetNameOverride ?? report.sheetName;
 
     logger.info(`${account.logPrefix} mirrored KIA report started`, {
       reportId: report.id,
-      reportName: report.name,
-      sheetName: report.sheetName,
+      reportName: effectiveReportName,
+      sheetName: effectiveSheetName,
       dealerCode,
       range: `${range.startIso} to ${range.endIso}`,
       optimizedNoSearch
     });
 
-    if (!skipNavigation) {
-      await report.open(page);
-    }
-
-    const reportContext = await findContextWithVisibleSelector(page, report.readySelector ?? report.dateFromSelector, {
-      timeout: report.readyTimeoutMs ?? 90000,
-      label: `${report.name} ready selector`
-    });
+    const reportContext = await resolveReportContext(page, report, { skipNavigation });
     await reportContext.locator(report.dateToSelector).first().waitFor({
       state: 'visible',
       timeout: 30000
@@ -493,8 +523,8 @@ export function createHyundaiKiaCloneReport(report) {
 
           logger.info(`${account.logPrefix} mirrored KIA report loop had no rows; skipped Supabase save`, {
             reportId: report.id,
-            reportName: report.name,
-            sheetName: report.sheetName,
+            reportName: effectiveReportName,
+            sheetName: effectiveSheetName,
             dealerCode,
             loopValue,
             headerCount: merged.headers.length,
@@ -505,7 +535,7 @@ export function createHyundaiKiaCloneReport(report) {
 
         const dbResult = await saveReportSheetToSupabase({
           brand: account.brand,
-          sheetName: report.sheetName,
+          sheetName: effectiveSheetName,
           headers: merged.headers,
           rows: merged.rows
         });
@@ -524,8 +554,8 @@ export function createHyundaiKiaCloneReport(report) {
 
         logger.info(`${account.logPrefix} mirrored KIA report loop finished`, {
           reportId: report.id,
-          reportName: report.name,
-          sheetName: report.sheetName,
+          reportName: effectiveReportName,
+          sheetName: effectiveSheetName,
           dealerCode,
           loopValue,
           dbAction: dbResult.action,
@@ -549,8 +579,8 @@ export function createHyundaiKiaCloneReport(report) {
 
         logger.error(`${account.logPrefix} mirrored report loop failed; continuing with next loop value`, {
           reportId: report.id,
-          reportName: report.name,
-          sheetName: report.sheetName,
+          reportName: effectiveReportName,
+          sheetName: effectiveSheetName,
           dealerCode,
           loopValue,
           screenshotPath,
@@ -568,8 +598,8 @@ export function createHyundaiKiaCloneReport(report) {
 
     logger.info(`${account.logPrefix} mirrored KIA report finished`, {
       reportId: report.id,
-      reportName: report.name,
-      sheetName: report.sheetName,
+      reportName: effectiveReportName,
+      sheetName: effectiveSheetName,
       dealerCode,
       loopCount: loopValues.length,
       rowCount: totalRows,
@@ -586,9 +616,9 @@ export function createHyundaiKiaCloneReport(report) {
     });
 
     return {
-      name: report.name,
+      name: effectiveReportName,
       id: report.id,
-      sheetName: report.sheetName,
+      sheetName: effectiveSheetName,
       dealerCode,
       dbResult: {
         ...dbResult,

@@ -101,6 +101,33 @@ module.exports = {
       }
     },
     {
+      name: 'hmil-ro-billing-2008-2020-once',
+      script: './scripts/run-hmil-ro-billing-2008-2020-once.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      stop_exit_codes: [0],
+      restart_delay: 30000,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-hmil-ro-billing-2008-2020-out.log',
+      error_file: './logs/pm2-hmil-ro-billing-2008-2020-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'hmil-ro-billing-2008-2020',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_START_DATE: '2008-01-01',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_END_DATE: '2020-12-31',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_REPORTS: 'hyundai-ro-billing-report',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_OTP_PROVIDER: 'webhook',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_RESUME_FROM_STATE: 'true',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_STOP_ON_FAILURE: 'false',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_SKIP_EXISTING: 'false',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_HEADLESS: 'false'
+      }
+    },
+    {
       name: 'am-platinum-cron-job',
       script: './src/cron/am-platinum-scheduler.js',
       args: '--scheduler',
@@ -121,7 +148,7 @@ module.exports = {
         AM_PLATINUM_CRON_TIMEZONE: 'Asia/Kolkata',
         AM_PLATINUM_CURRENT_MONTH_ONLY: 'true',
         GDMS_OTP_LOCK_ENABLED: 'true',
-        AM_PLATINUM_SKIP_PHASE1: 'true'
+        AM_PLATINUM_SKIP_PHASE1: 'false'
       }
     },
     // Operation-wise is NOT a separate PM2 app — it runs inside am-platinum-historical-pipeline
@@ -196,7 +223,7 @@ module.exports = {
         HMIL_WARRANTY_HISTORICAL_START_DATE: '2025-01-01',
         HMIL_WARRANTY_CRON_TIMEZONE: 'Asia/Kolkata',
         HMIL_WARRANTY_SCHEDULED_RESUME: 'true',
-        HMIL_WARRANTY_FORCE_LOGIN: 'true',
+        HMIL_WARRANTY_FORCE_LOGIN: 'false',
         GDMS_OTP_LOCK_ENABLED: 'true'
       }
     },

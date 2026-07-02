@@ -20,7 +20,7 @@ function buildAssignments() {
     {
       login: String(config.hmilUserId || 'sahiltech').trim(),
       group: 'Hyundai primary',
-      dealers: config.hmilDealerCodes
+      dealers: config.hmilPrimaryDealerCodes
     },
     {
       login: String(config.hmilSecondaryUserId || 'MIS5216').trim(),
@@ -106,7 +106,7 @@ export async function analyzeWarrantyCoverageByLogin() {
   console.log('');
   console.log('Warranty coverage audit — 4 login IDs × assigned dealers × 2 reports');
   console.log(`Expected Claim List range: ${start} → ${end} (${expectedMonths.length} months)`);
-  console.log('Note: MIS12345 only runs in full/resume backfill, not daily cron.');
+  console.log('Note: daily warranty scheduling currently includes sahiltech, MIS5216, MIS1988, and MIS12345.');
   console.log('');
 
   await withPostgresClient(async client => {

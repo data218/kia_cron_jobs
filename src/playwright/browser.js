@@ -14,6 +14,23 @@ function configureContextTimeouts(context) {
   context.setDefaultNavigationTimeout(config.playwrightNavigationTimeoutMs);
 }
 
+function resolveLaunchOptions(options = {}) {
+  const headless = options.headless ?? config.headless;
+  const channel = (options.channel ?? config.playwrightBrowserChannel) || undefined;
+
+  const launchOptions = {
+    headless,
+    slowMo: config.slowMoMs,
+    downloadsPath: config.downloadDir
+  };
+
+  if (channel) {
+    launchOptions.channel = channel;
+  }
+
+  return launchOptions;
+}
+
 export async function sessionStateExists() {
   return fs.access(config.sessionStatePath).then(() => true).catch(() => false);
 }
@@ -29,11 +46,33 @@ export async function createBrowserSession() {
   await ensureDir(config.downloadDir);
 
   const hasStorageState = await sessionStateExists();
-  const browser = await chromium.launch({
-    headless: config.headless,
-    slowMo: config.slowMoMs,
-    downloadsPath: config.downloadDir
-  });
+  if (config.playwrightUsePersistentContext) {
+    await ensureDir(config.playwrightUserDataDir);
+    const context = await chromium.launchPersistentContext(config.playwrightUserDataDir, {
+      ...resolveLaunchOptions(),
+      acceptDownloads: true,
+      downloadsPath: config.downloadDir
+    });
+    configureContextTimeouts(context);
+    const page = context.pages()[0] ?? await context.newPage();
+    const browser = context.browser();
+
+    if (hasStorageState) {
+      logger.info('Persistent browser context enabled; saved storage state file will be refreshed after login', {
+        path: config.sessionStatePath
+      });
+    }
+
+    return {
+      browser,
+      context,
+      page,
+      hasStorageState: false,
+      close: () => context.close()
+    };
+  }
+
+  const browser = await chromium.launch(resolveLaunchOptions());
 
   const context = await browser.newContext({
     acceptDownloads: true,
@@ -60,11 +99,33 @@ export async function createBrowserSessionWithState(statePath = config.sessionSt
   await ensureDir(config.downloadDir);
 
   const hasStorageState = await fs.access(statePath).then(() => true).catch(() => false);
-  const browser = await chromium.launch({
-    headless: options.headless ?? config.headless,
-    slowMo: config.slowMoMs,
-    downloadsPath: config.downloadDir
-  });
+  if (config.playwrightUsePersistentContext) {
+    await ensureDir(config.playwrightUserDataDir);
+    const context = await chromium.launchPersistentContext(config.playwrightUserDataDir, {
+      ...resolveLaunchOptions(options),
+      acceptDownloads: true,
+      downloadsPath: config.downloadDir
+    });
+    configureContextTimeouts(context);
+    const page = context.pages()[0] ?? await context.newPage();
+    const browser = context.browser();
+
+    if (hasStorageState) {
+      logger.info('Persistent browser context enabled; state file loading is skipped for visible session', {
+        path: statePath
+      });
+    }
+
+    return {
+      browser,
+      context,
+      page,
+      hasStorageState: false,
+      close: () => context.close()
+    };
+  }
+
+  const browser = await chromium.launch(resolveLaunchOptions(options));
 
   const context = await browser.newContext({
     acceptDownloads: true,
@@ -91,8 +152,7 @@ export async function createPersistentBrowserSession(userDataDir = config.rsaUse
   await ensureDir(config.downloadDir);
 
   const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: options.headless ?? config.headless,
-    slowMo: config.slowMoMs,
+    ...resolveLaunchOptions(options),
     acceptDownloads: true,
     downloadsPath: config.downloadDir
   });

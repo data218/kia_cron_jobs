@@ -4,9 +4,12 @@ import { quoteIdentifier, withPostgresClient } from './postgres.js';
 import {
   NON_BUSINESS_HASH_COLUMNS,
   WARRANTY_TABLES,
+  fullRowContentHash,
   identityGroupsForTable,
-  resolveBusinessIdentityKey
+  resolveBusinessIdentityKey,
+  tableRequiresExactRowDedupe
 } from './row-identity.js';
+import { HYUNDAI_REPAIR_ORDER_CANONICAL_HEADERS } from '../reports/hyundai-repair-order-schema.js';
 
 const IMPORTANT_INDEX_COLUMNS = new Set([
   'bill_date',
@@ -27,14 +30,56 @@ const IMPORTANT_INDEX_COLUMNS = new Set([
   'booking_date',
   'uploaded_at'
 ]);
-const RESERVED_COLUMNS = new Set(['id', 'row_hash', 'uploaded_at']);
+const RESERVED_COLUMNS = new Set([
+  'id',
+  'row_hash',
+  'full_row_hash',
+  'business_identity_key',
+  'uploaded_at'
+]);
 const IDENTITY_COLUMN_ALIASES = {
   claim_no: ['claim_no', 'claim_number', 'warranty_claim_no'],
   r_o_no: ['r_o_no', 'ro_no'],
+  dlr_no: ['dlr_no', 'dealer', 'dealer_code', 'source_dealer_code', 'sale_dealer_code'],
   claim_type: ['claim_type', 'warranty_claim_type'],
   claim_date: ['claim_date', 'warranty_claim_date'],
   ro_date: ['ro_date', 'r_o_date']
 };
+
+const STRICT_RELATIONAL_TABLE_HEADERS = {
+  hyundai_repair_order_list: HYUNDAI_REPAIR_ORDER_CANONICAL_HEADERS,
+  am_platinum_repair_order_list: HYUNDAI_REPAIR_ORDER_CANONICAL_HEADERS
+};
+
+const STRICT_RELATIONAL_BACKFILL_ALIASES = {
+  hyundai_repair_order_list: {
+    no: ['s_no', 'sno', 'sr_no', 'serial_no', 'sl_no'],
+    r_o_no: ['ro_no'],
+    r_o_date: ['ro_date'],
+    r_o_status: ['status', 'new_r_o_status'],
+    svc_adv: ['service_adv'],
+    tech_name: ['man_tech', 'main_technician'],
+    special_message: ['special_msg'],
+    ro_source: ['source_of_ro'],
+    dlr_no: ['dealer', 'dealer_code', 'source_dealer_code', 'sale_dealer_code']
+  },
+  am_platinum_repair_order_list: {
+    no: ['s_no', 'sno', 'sr_no', 'serial_no', 'sl_no'],
+    r_o_no: ['ro_no'],
+    r_o_date: ['ro_date'],
+    r_o_status: ['status', 'new_r_o_status'],
+    svc_adv: ['service_adv'],
+    tech_name: ['man_tech', 'main_technician'],
+    special_message: ['special_msg'],
+    ro_source: ['source_of_ro'],
+    dlr_no: ['dealer', 'dealer_code', 'source_dealer_code', 'sale_dealer_code']
+  }
+};
+
+const RUNTIME_DDL_DISABLED_TABLES = new Set([
+  'hyundai_repair_order_list',
+  'am_platinum_repair_order_list'
+]);
 
 function normalizeSqlName(value, fallback = 'column') {
   const normalized = String(value ?? '')
@@ -145,6 +190,23 @@ function parseDateValue(value, slashFormat = 'dmy') {
 
   const text = String(value ?? '').trim();
   if (!text) return null;
+
+  const isoLikeDate = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[tT\s].*)?$/);
+  if (isoLikeDate) {
+    const [, yyyy, mm, dd] = isoLikeDate;
+    const date = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+    if (
+      date.getFullYear() === Number(yyyy) &&
+      date.getMonth() === Number(mm) - 1 &&
+      date.getDate() === Number(dd)
+    ) {
+      return [
+        String(yyyy).padStart(4, '0'),
+        String(mm).padStart(2, '0'),
+        String(dd).padStart(2, '0')
+      ].join('-');
+    }
+  }
 
   const compactYmd = text.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (compactYmd) {
@@ -265,6 +327,19 @@ function buildBusinessIdentityKey(tableName, columns, normalizedValues) {
     columns.map((column, index) => [column.name, normalizedValues[index]])
   );
   return resolveBusinessIdentityKey(tableName, data);
+}
+
+function buildNormalizedDataObject(columns, normalizedValues) {
+  return Object.fromEntries(
+    columns.map((column, index) => [column.name, normalizedValues[index]])
+  );
+}
+
+function buildFullRowHash(tableName, columns, normalizedValues) {
+  return fullRowContentHash(
+    tableName,
+    buildNormalizedDataObject(columns, normalizedValues)
+  );
 }
 
 export function rowSignature(row) {
@@ -434,12 +509,109 @@ async function ensureIdColumnDefault(client, tableName) {
   });
 }
 
+function strictColumnsForTable(tableName) {
+  const headers = STRICT_RELATIONAL_TABLE_HEADERS[tableName];
+  if (!headers) return null;
+  return headers.map(header => normalizeSqlName(header, 'column'));
+}
+
+async function backfillStrictCanonicalColumns(client, tableName) {
+  const aliasMap = STRICT_RELATIONAL_BACKFILL_ALIASES[tableName];
+  if (!aliasMap) return;
+
+  const existingColumns = await getExistingColumnTypes(client, tableName);
+  if (!existingColumns.size) return;
+
+  const assignments = Object.entries(aliasMap)
+    .filter(([target]) => existingColumns.has(target))
+    .map(([target, aliases]) => {
+      const sources = [target, ...aliases].filter(columnName => existingColumns.has(columnName));
+      if (sources.length <= 1) {
+        return null;
+      }
+
+      return `${quoteIdentifier(target)} = coalesce(${sources.map(quoteIdentifier).join(', ')})`;
+    })
+    .filter(Boolean);
+
+  if (!assignments.length) return;
+
+  const table = `public.${quoteIdentifier(tableName)}`;
+  await client.query(`
+    update ${table}
+    set ${assignments.join(',\n        ')}
+  `);
+}
+
+async function pruneUnexpectedColumns(client, tableName) {
+  const strictColumns = strictColumnsForTable(tableName);
+  if (!strictColumns) return;
+
+  const existingColumns = await getExistingColumnTypes(client, tableName);
+  const removableColumns = [...existingColumns.keys()]
+    .filter(columnName => !RESERVED_COLUMNS.has(columnName))
+    .filter(columnName => !strictColumns.includes(columnName));
+
+  if (!removableColumns.length) return;
+
+  const table = `public.${quoteIdentifier(tableName)}`;
+  await client.query(`
+    alter table ${table}
+    ${removableColumns.map(columnName => `drop column if exists ${quoteIdentifier(columnName)}`).join(',\n    ')}
+  `);
+
+  logger.info('Pruned unexpected relational columns', {
+    tableName,
+    removedColumns: removableColumns
+  });
+}
+
+async function assertReportTableReady(client, tableName, columns, { usesBusinessKey = false, usesExactRowDedupe = false } = {}) {
+  const existingColumns = await getExistingColumnTypes(client, tableName);
+  if (!existingColumns.size) {
+    throw new Error(`Relational table ${tableName} is missing. Run the repair-order migration/setup before importing new rows.`);
+  }
+
+  const requiredColumns = new Set([
+    'id',
+    'row_hash',
+    'uploaded_at',
+    ...columns.map(column => column.name)
+  ]);
+
+  if (usesBusinessKey) {
+    requiredColumns.add('business_identity_key');
+  }
+  if (usesExactRowDedupe) {
+    requiredColumns.add('full_row_hash');
+  }
+
+  const missingColumns = [...requiredColumns].filter(columnName => !existingColumns.has(columnName));
+  if (missingColumns.length) {
+    throw new Error(
+      `Relational table ${tableName} is missing required columns: ${missingColumns.join(', ')}. Run the repair-order migration/setup before importing new rows.`
+    );
+  }
+}
+
 async function ensureReportTable(client, tableName, columns) {
   const signature = `${tableName}:${columns.map(column => `${column.name}:${column.type}`).join('|')}`;
   if (ensuredTableSignatures.has(signature)) {
     return;
   }
   const table = `public.${quoteIdentifier(tableName)}`;
+  const usesExactRowDedupe = tableRequiresExactRowDedupe(tableName);
+  const usesBusinessKey = WARRANTY_TABLES.has(tableName);
+
+  if (RUNTIME_DDL_DISABLED_TABLES.has(tableName)) {
+    await assertReportTableReady(client, tableName, columns, {
+      usesBusinessKey,
+      usesExactRowDedupe
+    });
+    ensuredTableSignatures.add(signature);
+    return;
+  }
+
   const columnSql = columns
     .map(column => `${quoteIdentifier(column.name)} ${columnSqlType(column.type)}`)
     .join(',\n          ');
@@ -447,7 +619,7 @@ async function ensureReportTable(client, tableName, columns) {
   await client.query(`
     create table if not exists ${table} (
       id bigserial primary key,
-      row_hash text unique not null,
+      row_hash text not null,
       ${columnSql},
       uploaded_at timestamptz default now()
     )
@@ -462,6 +634,8 @@ async function ensureReportTable(client, tableName, columns) {
 
   await reconcileExistingColumnTypes(client, tableName, columns);
   await ensureIdColumnDefault(client, tableName);
+  await backfillStrictCanonicalColumns(client, tableName);
+  await pruneUnexpectedColumns(client, tableName);
 
   await client.query(`
     alter table ${table}
@@ -471,10 +645,34 @@ async function ensureReportTable(client, tableName, columns) {
     alter table ${table}
     add column if not exists uploaded_at timestamptz default now()
   `);
-  await client.query(`
-    create unique index if not exists ${quoteIdentifier(`idx_${tableName}_row_hash`)}
-    on ${table}(row_hash)
-  `);
+
+  if (usesExactRowDedupe) {
+    await client.query(`
+      do $$
+      begin
+        if exists (
+          select 1
+          from pg_constraint
+          where conrelid = '${table}'::regclass
+            and conname = '${tableName}_row_hash_key'
+        ) then
+          execute 'alter table ${table} drop constraint ${quoteIdentifier(`${tableName}_row_hash_key`)}';
+        end if;
+      end $$;
+    `);
+    await client.query(`
+      drop index if exists ${quoteIdentifier(`idx_${tableName}_row_hash`)};
+    `);
+    await client.query(`
+      create index if not exists ${quoteIdentifier(`idx_${tableName}_row_hash`)}
+      on ${table}(row_hash)
+    `);
+  } else {
+    await client.query(`
+      create unique index if not exists ${quoteIdentifier(`idx_${tableName}_row_hash`)}
+      on ${table}(row_hash)
+    `);
+  }
 
   const indexColumns = columns
     .map(column => column.name)
@@ -487,7 +685,14 @@ async function ensureReportTable(client, tableName, columns) {
     `);
   }
 
-  if (WARRANTY_TABLES.has(tableName)) {
+  if (usesExactRowDedupe) {
+    await client.query(`
+      alter table ${table}
+      add column if not exists full_row_hash text
+    `);
+  }
+
+  if (usesBusinessKey) {
     await client.query(`
       alter table ${table}
       add column if not exists business_identity_key text
@@ -514,49 +719,224 @@ async function ensureReportTable(client, tableName, columns) {
   ensuredTableSignatures.add(signature);
 }
 
-function sqlParamCast(columnIndex, columnCount, usesBusinessKey, column) {
-  if (columnIndex === 0) return '::text';
-  if (usesBusinessKey && columnIndex === 1) return '::text';
-  if (columnIndex === columnCount - 1) return '::timestamptz';
-  if (column?.type === 'date') return '::date';
-  if (column?.type === 'numeric') return '::numeric';
+function sqlParamCast(valueType) {
+  if (valueType === 'date') return '::date';
+  if (valueType === 'numeric') return '::numeric';
+  if (valueType === 'timestamptz') return '::timestamptz';
   return '::text';
 }
 
-function prepareBatchRows(tableName, columns, batch, uploadedAt, stats, usesBusinessKey) {
+function buildInsertLayout(columns, usesBusinessKey, usesExactRowDedupe) {
+  const metadata = [{ name: 'row_hash', type: 'text' }];
+  if (usesBusinessKey) {
+    metadata.push({ name: 'business_identity_key', type: 'text' });
+  }
+  if (usesExactRowDedupe) {
+    metadata.push({ name: 'full_row_hash', type: 'text' });
+  }
+
+  return [
+    ...metadata,
+    ...columns.map(column => ({ name: column.name, type: column.type })),
+    { name: 'uploaded_at', type: 'timestamptz' }
+  ];
+}
+
+function prepareBatchRows(tableName, columns, batch, uploadedAt, stats, usesBusinessKey, usesExactRowDedupe) {
   return batch.map(row => {
     const normalizedValues = columns.map(column => normalizeValue(row[column.header], column, stats));
     const rowHash = rowSignatureFromNormalizedValues(columns, normalizedValues, tableName);
     const businessIdentityKey = usesBusinessKey
       ? buildBusinessIdentityKey(tableName, columns, normalizedValues)
       : null;
-    const rowValues = usesBusinessKey
-      ? [rowHash, businessIdentityKey, ...normalizedValues, uploadedAt]
-      : [rowHash, ...normalizedValues, uploadedAt];
+    const fullRowHash = usesExactRowDedupe
+      ? buildFullRowHash(tableName, columns, normalizedValues)
+      : null;
+    const rowValues = [rowHash];
+    if (usesBusinessKey) {
+      rowValues.push(businessIdentityKey);
+    }
+    if (usesExactRowDedupe) {
+      rowValues.push(fullRowHash);
+    }
+    rowValues.push(...normalizedValues, uploadedAt);
 
-    return { rowHash, businessIdentityKey, rowValues };
+    return { rowHash, businessIdentityKey, fullRowHash, rowValues };
   });
 }
 
-async function upsertPreparedRows(client, tableName, columns, preparedRows, usesBusinessKey, conflictTarget) {
-  if (!preparedRows.length) {
-    return { insertedCount: 0, updatedCount: 0 };
+async function filterExistingFullRowDuplicates(client, tableName, preparedRows) {
+  const hashes = [...new Set(
+    preparedRows
+      .map(row => row.fullRowHash)
+      .filter(value => !isEmpty(value))
+  )];
+
+  if (!hashes.length) {
+    return { rows: preparedRows, skippedCount: 0 };
   }
 
   const table = `public.${quoteIdentifier(tableName)}`;
-  const insertColumns = usesBusinessKey
-    ? ['row_hash', 'business_identity_key', ...columns.map(column => column.name), 'uploaded_at']
-    : ['row_hash', ...columns.map(column => column.name), 'uploaded_at'];
+  const existing = new Set();
+
+  for (let index = 0; index < hashes.length; index += 1000) {
+    const batch = hashes.slice(index, index + 1000);
+    const result = await client.query(
+      `select full_row_hash from ${table} where full_row_hash = any($1::text[])`,
+      [batch]
+    );
+    for (const row of result.rows) {
+      if (!isEmpty(row.full_row_hash)) {
+        existing.add(row.full_row_hash);
+      }
+    }
+  }
+
+  if (!existing.size) {
+    return { rows: preparedRows, skippedCount: 0 };
+  }
+
+  const rows = [];
+  let skippedCount = 0;
+  for (const row of preparedRows) {
+    if (!isEmpty(row.fullRowHash) && existing.has(row.fullRowHash)) {
+      skippedCount += 1;
+      continue;
+    }
+    rows.push(row);
+  }
+
+  return { rows, skippedCount };
+}
+
+async function backfillExactRowHashes(client, tableName, columns) {
+  if (!tableRequiresExactRowDedupe(tableName)) {
+    return 0;
+  }
+
+  const table = quoteIdentifier(tableName);
+  const result = await client.query(
+    `
+      select
+        id,
+        to_jsonb(${table}) - 'id' - 'row_hash' - 'full_row_hash' - 'business_identity_key' - 'uploaded_at' as data
+      from ${table}
+      where full_row_hash is null
+      order by id
+    `
+  );
+
+  if (!result.rowCount) {
+    return 0;
+  }
+
+  const updates = result.rows
+    .map(row => {
+      const normalizedValues = columns.map(column => normalizeValue(row.data?.[column.name], column));
+      return {
+        id: row.id,
+        full_row_hash: buildFullRowHash(tableName, columns, normalizedValues)
+      };
+    })
+    .filter(row => !isEmpty(row.full_row_hash));
+
+  if (!updates.length) {
+    return 0;
+  }
+
+  const publicTable = `public.${quoteIdentifier(tableName)}`;
+  for (let index = 0; index < updates.length; index += 500) {
+    const batch = updates.slice(index, index + 500);
+    await client.query(
+      `
+        update ${publicTable} as target
+        set full_row_hash = source.full_row_hash
+        from jsonb_to_recordset($1::jsonb) as source(id bigint, full_row_hash text)
+        where target.id = source.id
+      `,
+      [JSON.stringify(batch)]
+    );
+  }
+
+  logger.info('Backfilled exact row hashes for relational report table', {
+    tableName,
+    rowCount: updates.length
+  });
+
+  return updates.length;
+}
+
+async function removeExistingExactRowDuplicates(client, tableName) {
+  if (!tableRequiresExactRowDedupe(tableName)) {
+    return 0;
+  }
+
+  const table = `public.${quoteIdentifier(tableName)}`;
+  const result = await client.query(
+    `
+      with ranked as (
+        select
+          id,
+          row_number() over (
+            partition by full_row_hash
+            order by uploaded_at desc nulls last, id desc
+          ) as duplicate_rank
+        from ${table}
+        where full_row_hash is not null
+      )
+      delete from ${table} as target
+      using ranked
+      where target.id = ranked.id
+        and ranked.duplicate_rank > 1
+      returning target.id
+    `
+  );
+
+  return result.rowCount ?? 0;
+}
+
+async function ensureExactRowUniqueIndex(client, tableName) {
+  if (!tableRequiresExactRowDedupe(tableName)) {
+    return;
+  }
+
+  const table = `public.${quoteIdentifier(tableName)}`;
+  await client.query(`
+    drop index if exists ${quoteIdentifier(`idx_${tableName}_full_row_hash`)};
+  `);
+  await client.query(`
+    create unique index ${quoteIdentifier(`idx_${tableName}_full_row_hash`)}
+    on ${table}(full_row_hash)
+  `);
+}
+
+async function upsertPreparedRows(client, tableName, columns, preparedRows, usesBusinessKey, usesExactRowDedupe, conflictTarget) {
+  if (!preparedRows.length) {
+    return { insertedCount: 0, updatedCount: 0, skippedExistingExactDuplicateCount: 0 };
+  }
+
+  const {
+    rows: filteredRows,
+    skippedCount: skippedExistingExactDuplicateCount
+  } = usesExactRowDedupe
+    ? await filterExistingFullRowDuplicates(client, tableName, preparedRows)
+    : { rows: preparedRows, skippedCount: 0 };
+
+  if (!filteredRows.length) {
+    return { insertedCount: 0, updatedCount: 0, skippedExistingExactDuplicateCount };
+  }
+
+  const table = `public.${quoteIdentifier(tableName)}`;
+  const insertLayout = buildInsertLayout(columns, usesBusinessKey, usesExactRowDedupe);
+  const insertColumns = insertLayout.map(column => column.name);
   const values = [];
   const rowGroups = [];
   let paramIndex = 1;
 
-  for (const { rowValues } of preparedRows) {
+  for (const { rowValues } of filteredRows) {
     const placeholders = rowValues.map((value, columnIndex) => {
-      const column = usesBusinessKey
-        ? (columnIndex <= 1 ? null : columns[columnIndex - 2])
-        : (columnIndex === 0 ? null : columns[columnIndex - 1]);
-      const placeholder = `$${paramIndex}${sqlParamCast(columnIndex, rowValues.length, usesBusinessKey, column)}`;
+      const layoutColumn = insertLayout[columnIndex];
+      const placeholder = `$${paramIndex}${sqlParamCast(layoutColumn?.type)}`;
       values.push(value);
       paramIndex += 1;
       return placeholder;
@@ -571,10 +951,15 @@ async function upsertPreparedRows(client, tableName, columns, preparedRows, uses
   const businessKeyUpdate = usesBusinessKey
     ? 'business_identity_key = excluded.business_identity_key,'
     : '';
+  const fullRowHashUpdate = usesExactRowDedupe
+    ? 'full_row_hash = excluded.full_row_hash,'
+    : '';
 
   const onConflictSql = conflictTarget === 'business_identity_key'
     ? `on conflict (${quoteIdentifier(conflictTarget)}) where business_identity_key is not null do update set`
-    : `on conflict (${quoteIdentifier(conflictTarget)}) do update set`;
+    : conflictTarget === 'vin_number'
+      ? `on conflict (vin_number) where vin_number is not null do update set`
+      : `on conflict (${quoteIdentifier(conflictTarget)}) do update set`;
 
   const result = await client.query(
     `
@@ -583,6 +968,7 @@ async function upsertPreparedRows(client, tableName, columns, preparedRows, uses
       ${onConflictSql}
         row_hash = excluded.row_hash,
         ${businessKeyUpdate}
+        ${fullRowHashUpdate}
         ${updateSql},
         uploaded_at = excluded.uploaded_at
       returning (xmax = 0) as inserted
@@ -597,19 +983,40 @@ async function upsertPreparedRows(client, tableName, columns, preparedRows, uses
     else updatedCount += 1;
   }
 
-  return { insertedCount, updatedCount };
+  return { insertedCount, updatedCount, skippedExistingExactDuplicateCount };
 }
 
 async function insertBatch(client, tableName, columns, batch, uploadedAt, stats) {
   if (!batch.length) {
-    return { insertedCount: 0, updatedCount: 0 };
+    return { insertedCount: 0, updatedCount: 0, skippedExistingExactDuplicateCount: 0 };
   }
 
   const usesBusinessKey = WARRANTY_TABLES.has(tableName);
-  const preparedRows = prepareBatchRows(tableName, columns, batch, uploadedAt, stats, usesBusinessKey);
+  const usesExactRowDedupe = tableRequiresExactRowDedupe(tableName);
+  const preparedRows = prepareBatchRows(
+    tableName,
+    columns,
+    batch,
+    uploadedAt,
+    stats,
+    usesBusinessKey,
+    usesExactRowDedupe
+  );
 
   if (!usesBusinessKey) {
-    return upsertPreparedRows(client, tableName, columns, preparedRows, false, 'row_hash');
+    const conflictTarget = tableName === 'kia_stock_management'
+      ? 'vin_number'
+      : (usesExactRowDedupe ? 'full_row_hash' : 'row_hash');
+
+    return upsertPreparedRows(
+      client,
+      tableName,
+      columns,
+      preparedRows,
+      false,
+      usesExactRowDedupe,
+      conflictTarget
+    );
   }
 
   const withBusinessKey = preparedRows.filter(row => row.businessIdentityKey);
@@ -620,6 +1027,7 @@ async function insertBatch(client, tableName, columns, batch, uploadedAt, stats)
     columns,
     withBusinessKey,
     true,
+    usesExactRowDedupe,
     'business_identity_key'
   );
   const rowHashResult = await upsertPreparedRows(
@@ -628,12 +1036,15 @@ async function insertBatch(client, tableName, columns, batch, uploadedAt, stats)
     columns,
     withoutBusinessKey,
     true,
+    usesExactRowDedupe,
     'row_hash'
   );
 
   return {
     insertedCount: businessResult.insertedCount + rowHashResult.insertedCount,
-    updatedCount: businessResult.updatedCount + rowHashResult.updatedCount
+    updatedCount: businessResult.updatedCount + rowHashResult.updatedCount,
+    skippedExistingExactDuplicateCount:
+      businessResult.skippedExistingExactDuplicateCount + rowHashResult.skippedExistingExactDuplicateCount
   };
 }
 
@@ -656,15 +1067,27 @@ export async function saveReportSheetToRelationalTable({
   const seenFullRowHashes = new Set();
   const uniqueRows = [];
   let skippedDuplicateIncomingRows = 0;
+  const usesExactRowDedupe = tableRequiresExactRowDedupe(tableName);
 
   for (const row of rows) {
     const normalizedValues = columns.map(column => normalizeValue(row[column.header], column));
     const rowHash = rowSignatureFromNormalizedValues(columns, normalizedValues, tableName);
+    const fullRowHash = usesExactRowDedupe
+      ? buildFullRowHash(tableName, columns, normalizedValues)
+      : null;
     const businessIdentityKey = WARRANTY_TABLES.has(tableName)
       ? buildBusinessIdentityKey(tableName, columns, normalizedValues)
       : null;
 
-    if (businessIdentityKey) {
+    if (usesExactRowDedupe) {
+      if (!isEmpty(fullRowHash) && seenFullRowHashes.has(fullRowHash)) {
+        skippedDuplicateIncomingRows += 1;
+        continue;
+      }
+      if (!isEmpty(fullRowHash)) {
+        seenFullRowHashes.add(fullRowHash);
+      }
+    } else if (businessIdentityKey) {
       if (seenBusinessKeys.has(businessIdentityKey)) {
         skippedDuplicateIncomingRows += 1;
         continue;
@@ -689,15 +1112,22 @@ export async function saveReportSheetToRelationalTable({
   return withPostgresClient(async client => {
     await client.query('SET statement_timeout = 0');
     await ensureReportTable(client, tableName, columns);
+    const backfilledFullRowHashCount = await backfillExactRowHashes(client, tableName, columns);
+    const removedExistingExactDuplicateCount = await removeExistingExactRowDuplicates(client, tableName);
+    await ensureExactRowUniqueIndex(client, tableName);
     logger.info('Relational report table ready', {
       sheetName,
       tableName,
       columnCount: columns.length,
-      columns: columns.map(column => ({ name: column.name, type: column.type }))
+      columns: columns.map(column => ({ name: column.name, type: column.type })),
+      exactRowDedupe: usesExactRowDedupe,
+      backfilledFullRowHashCount,
+      removedExistingExactDuplicateCount
     });
 
     let insertedRowCount = 0;
     let updatedRowCount = 0;
+    let skippedExistingExactDuplicateCount = 0;
     let batchCount = 0;
     for (let index = 0; index < uniqueRows.length; index += effectiveBatchSize) {
       const batch = uniqueRows.slice(index, index + effectiveBatchSize);
@@ -706,6 +1136,7 @@ export async function saveReportSheetToRelationalTable({
         const batchResult = await insertBatch(client, tableName, columns, batch, uploadedAt, stats);
         insertedRowCount += batchResult.insertedCount;
         updatedRowCount += batchResult.updatedCount;
+        skippedExistingExactDuplicateCount += batchResult.skippedExistingExactDuplicateCount ?? 0;
       } catch (error) {
         logger.error('Relational report batch insert failed', {
           sheetName,
@@ -722,13 +1153,14 @@ export async function saveReportSheetToRelationalTable({
       }
     }
 
-    const duplicateRowCount = skippedDuplicateIncomingRows + updatedRowCount;
+    const duplicateRowCount = skippedDuplicateIncomingRows + skippedExistingExactDuplicateCount + updatedRowCount;
     logger.info('Relational report rows inserted', {
       sheetName,
       tableName,
       incomingRowCount: rows.length,
       uniqueIncomingRowCount: uniqueRows.length,
       skippedDuplicateIncomingRows,
+      skippedExistingExactDuplicateCount,
       insertedRowCount,
       updatedRowCount,
       duplicateRowCount,
@@ -747,6 +1179,7 @@ export async function saveReportSheetToRelationalTable({
       insertedRowCount,
       updatedRowCount,
       duplicateRowCount,
+      skippedExistingExactDuplicateCount,
       batchCount,
       batchSize: effectiveBatchSize,
       durationMs: Date.now() - startedAt,

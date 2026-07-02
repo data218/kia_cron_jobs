@@ -168,7 +168,7 @@ export async function loginToKiaDms() {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const session = await loginToKiaDms();
   await session.browser.close();
 }

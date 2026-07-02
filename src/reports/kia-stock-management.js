@@ -29,16 +29,8 @@ async function clearStockTableForDealer(dealerCode) {
   });
 }
 
-async function clearStockReportTableForDealer(dealerCode) {
-  return withPostgresClient(async client => {
-    logger.info(`Deleting existing stock report records for dealer ${dealerCode}`);
-    const res = await client.query(
-      `DELETE FROM public.kia_stock_report WHERE upper(trim(order_dealer)) = upper(trim($1))`,
-      [dealerCode]
-    );
-    logger.info(`Deleted ${res.rowCount} existing stock report records for dealer ${dealerCode}`);
-  });
-}
+// kia_stock_report intentionally has NO delete function.
+// Old vehicle records are preserved forever; only new VINs are inserted (DO NOTHING on conflict).
 
 async function resolveStockMgtContext(page) {
   // Use #btnSearch since it is visible, whereas the Kendo dropdown #sPhyTrn
@@ -103,8 +95,9 @@ export async function downloadKiaStockManagementReport(page) {
       report: REPORT_NAME
     });
     for (const dealer of uniqueDealers) {
+      // Delete + re-insert fresh data for kia_stock_management (daily snapshot).
+      // kia_stock_report keeps all historical records — no delete.
       await clearStockTableForDealer(dealer);
-      await clearStockReportTableForDealer(dealer);
     }
   }
 

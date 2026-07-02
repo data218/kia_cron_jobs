@@ -957,12 +957,21 @@ async function upsertPreparedRows(client, tableName, columns, preparedRows, uses
 
   const onConflictSql = conflictTarget === 'business_identity_key'
     ? `on conflict (${quoteIdentifier(conflictTarget)}) where business_identity_key is not null do update set`
-    : conflictTarget === 'vin_number'
-      ? `on conflict (vin_number) where vin_number is not null do update set`
-      : `on conflict (${quoteIdentifier(conflictTarget)}) do update set`;
+    : conflictTarget === 'vin_number_do_nothing'
+      ? null  // handled below as DO NOTHING
+      : conflictTarget === 'vin_number'
+        ? `on conflict (vin_number) where vin_number is not null do update set`
+        : `on conflict (${quoteIdentifier(conflictTarget)}) do update set`;
 
   const result = await client.query(
+    onConflictSql === null
+      ? `
+      insert into ${table} (${insertColumns.map(quoteIdentifier).join(', ')})
+      values ${rowGroups.join(',\n        ')}
+      on conflict (vin_number) where vin_number is not null do nothing
+      returning (xmax = 0) as inserted
     `
+      : `
       insert into ${table} (${insertColumns.map(quoteIdentifier).join(', ')})
       values ${rowGroups.join(',\n        ')}
       ${onConflictSql}
@@ -1004,9 +1013,11 @@ async function insertBatch(client, tableName, columns, batch, uploadedAt, stats)
   );
 
   if (!usesBusinessKey) {
-    const conflictTarget = (tableName === 'kia_stock_management' || tableName === 'kia_stock_report')
-      ? 'vin_number'
-      : (usesExactRowDedupe ? 'full_row_hash' : 'row_hash');
+    const conflictTarget = tableName === 'kia_stock_management'
+      ? 'vin_number'          // delete+reinsert daily; upsert on conflict
+      : tableName === 'kia_stock_report'
+        ? 'vin_number_do_nothing'  // never delete; skip existing VINs
+        : (usesExactRowDedupe ? 'full_row_hash' : 'row_hash');
 
     return upsertPreparedRows(
       client,

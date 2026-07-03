@@ -68,21 +68,26 @@ function isMainModule() {
 
 function parseCronSchedules(cronScheduleStr) {
   if (!cronScheduleStr) return [];
-  const schedules = [];
-  const parts = cronScheduleStr.split(',').map(s => s.trim()).filter(Boolean);
-  let buf = '';
-  for (const part of parts) {
-    const test = buf ? `${buf},${part}` : part;
-    const segments = test.split(/\s+/).filter(Boolean);
-    if (segments.length >= 5) {
-      schedules.push(test);
-      buf = '';
-    } else {
-      buf = test;
+  // Support '|' as a top-level separator between full cron expressions
+  // (e.g. "0 11 * * *|30 20 * * *") as well as comma-in-hour syntax
+  // (e.g. "0 11,17 * * *") via the reassembly loop below.
+  const results = [];
+  for (const expr of cronScheduleStr.split('|').map(s => s.trim()).filter(Boolean)) {
+    const parts = expr.split(',').map(s => s.trim()).filter(Boolean);
+    let buf = '';
+    for (const part of parts) {
+      const test = buf ? `${buf},${part}` : part;
+      const segments = test.split(/\s+/).filter(Boolean);
+      if (segments.length >= 5) {
+        results.push(test);
+        buf = '';
+      } else {
+        buf = test;
+      }
     }
+    if (buf) results.push(buf);
   }
-  if (buf) schedules.push(buf);
-  return schedules;
+  return results;
 }
 
 const shouldRunFromCli = isMainModule() || process.argv.includes('--scheduler');

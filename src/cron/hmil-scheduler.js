@@ -66,12 +66,31 @@ function isMainModule() {
   return path.resolve(fileURLToPath(import.meta.url)) === path.resolve(argvPath);
 }
 
+function parseCronSchedules(cronScheduleStr) {
+  if (!cronScheduleStr) return [];
+  const schedules = [];
+  const parts = cronScheduleStr.split(',').map(s => s.trim()).filter(Boolean);
+  let buf = '';
+  for (const part of parts) {
+    const test = buf ? `${buf},${part}` : part;
+    const segments = test.split(/\s+/).filter(Boolean);
+    if (segments.length >= 5) {
+      schedules.push(test);
+      buf = '';
+    } else {
+      buf = test;
+    }
+  }
+  if (buf) schedules.push(buf);
+  return schedules;
+}
+
 const shouldRunFromCli = isMainModule() || process.argv.includes('--scheduler');
 
 if (shouldRunFromCli && process.argv.includes('--once')) {
   await runHmilDmsJob(modeFromArgs());
 } else if (shouldRunFromCli) {
-  const schedules = (config.hmilCronSchedule || '').split(',').map(s => s.trim()).filter(Boolean);
+  const schedules = parseCronSchedules(config.hmilCronSchedule);
   for (const schedulePattern of schedules) {
     logger.info('Scheduling HMIL multi-account automation job', {
       cron: schedulePattern,

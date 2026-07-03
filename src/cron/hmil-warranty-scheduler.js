@@ -434,6 +434,25 @@ function isMainModule() {
   return path.resolve(fileURLToPath(import.meta.url)) === path.resolve(argvPath);
 }
 
+function parseCronSchedules(cronScheduleStr) {
+  if (!cronScheduleStr) return [];
+  const schedules = [];
+  const parts = cronScheduleStr.split(',').map(s => s.trim()).filter(Boolean);
+  let buf = '';
+  for (const part of parts) {
+    const test = buf ? `${buf},${part}` : part;
+    const segments = test.split(/\s+/).filter(Boolean);
+    if (segments.length >= 5) {
+      schedules.push(test);
+      buf = '';
+    } else {
+      buf = test;
+    }
+  }
+  if (buf) schedules.push(buf);
+  return schedules;
+}
+
 const shouldRun = isMainModule() || process.argv.includes('--scheduler');
 
 if (shouldRun) {
@@ -446,7 +465,7 @@ if (shouldRun) {
     await runHmilWarrantyJob(modeFromArgs(), { reports });
   } else {
     const label = reportFilter ? reportFilter : 'all';
-    const schedules = (config.hmilWarrantyCronSchedule || '').split(',').map(s => s.trim()).filter(Boolean);
+    const schedules = parseCronSchedules(config.hmilWarrantyCronSchedule);
     for (const schedulePattern of schedules) {
       logger.info('Scheduling HMIL warranty automation job', {
         report: label,

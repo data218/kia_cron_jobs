@@ -385,8 +385,27 @@ export function createGdmsAccountScheduler(account) {
     }
   }
 
+  function parseCronSchedules(cronScheduleStr) {
+    if (!cronScheduleStr) return [];
+    const schedules = [];
+    const parts = cronScheduleStr.split(',').map(s => s.trim()).filter(Boolean);
+    let buf = '';
+    for (const part of parts) {
+      const test = buf ? `${buf},${part}` : part;
+      const segments = test.split(/\s+/).filter(Boolean);
+      if (segments.length >= 5) {
+        schedules.push(test);
+        buf = '';
+      } else {
+        buf = test;
+      }
+    }
+    if (buf) schedules.push(buf);
+    return schedules;
+  }
+
   function schedule() {
-    const schedules = (account.cronSchedule || '').split(',').map(s => s.trim()).filter(Boolean);
+    const schedules = parseCronSchedules(account.cronSchedule);
     for (const schedulePattern of schedules) {
       logger.info(`Scheduling ${account.logPrefix} report automation job`, {
         cron: schedulePattern,

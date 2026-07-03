@@ -369,9 +369,28 @@ async function run(mode = 'am-platinum-regular') {
   }
 }
 
+function parseCronSchedules(cronScheduleStr) {
+  if (!cronScheduleStr) return [];
+  const schedules = [];
+  const parts = cronScheduleStr.split(',').map(s => s.trim()).filter(Boolean);
+  let buf = '';
+  for (const part of parts) {
+    const test = buf ? `${buf},${part}` : part;
+    const segments = test.split(/\s+/).filter(Boolean);
+    if (segments.length >= 5) {
+      schedules.push(test);
+      buf = '';
+    } else {
+      buf = test;
+    }
+  }
+  if (buf) schedules.push(buf);
+  return schedules;
+}
+
 // ─── Scheduling ────────────────────────────────────────────────────────────────
 function schedule() {
-  const schedules = (config.amPlatinumCronSchedule || '').split(',').map(s => s.trim()).filter(Boolean);
+  const schedules = parseCronSchedules(config.amPlatinumCronSchedule);
   const skipPhase1 = process.env.AM_PLATINUM_SKIP_PHASE1 === 'true';
   const activeDealers = skipPhase1 ? CURRENT_DEALERS : [...HISTORICAL_DEALERS, ...CURRENT_DEALERS];
 

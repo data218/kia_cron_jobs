@@ -8,12 +8,13 @@ import {
   formatDateForPortal,
   getCurrentMonthToDateRange,
   getReportDateOverrideRange,
+  parseIsoLocalDate,
   toIsoDate
 } from '../utils/date-range.js';
 import { logger } from '../utils/logger.js';
 import { sleep } from '../utils/sleep.js';
-import { selectKendoPagerSize, selectKendoPagerSizeByVisibleClick, waitForKendoGridIdle } from './grid.js';
-import { exportAllGridPagesToFiles, getPagerState, mergeExcelFiles } from './paged-export.js';
+import { selectKendoPagerSizeWithPreferredFallback, waitForKendoGridIdle } from './grid.js';
+import { exportAllGridPagesToFiles, getPagerState, gridHasNoExportableData, mergeExcelFiles } from './paged-export.js';
 import { addMetadataToDataset, addSourceDealerCodeToDataset } from './report-metadata.js';
 import {
   clickSearch,
@@ -109,10 +110,27 @@ function currentMonthFullRange(today = new Date()) {
   };
 }
 
-function getRange(rangeType) {
+function getRange(rangeType, account) {
   const overrideRange = getReportDateOverrideRange();
   if (overrideRange) {
     return overrideRange;
+  }
+
+  if (rangeType === 'open-ro-yearly') {
+    const startDate = parseIsoLocalDate(config.openRoYearlyStartDate || '2025-03-01');
+    const endDate = new Date();
+    return {
+      startDate,
+      endDate,
+      startPortal: formatDateForPortal(startDate),
+      endPortal: formatDateForPortal(endDate),
+      startIso: toIsoDate(startDate),
+      endIso: toIsoDate(endDate)
+    };
+  }
+
+  if (account?.currentMonthOnly) {
+    return getCurrentMonthToDateRange();
   }
 
   if (rangeType === 'current-month-full') {
@@ -176,21 +194,14 @@ async function fillStartDateOnly(context, report, range) {
 }
 
 async function selectPagerSizeWithFallback(context, size, reportId, { visibleClick = false } = {}) {
-  const selectPagerSize = visibleClick ? selectKendoPagerSizeByVisibleClick : selectKendoPagerSize;
-  try {
-    return await selectPagerSize(context, size, { timeout: visibleClick ? 300000 : 45000 });
-  } catch (error) {
-    if (String(size) === '300') {
-      throw error;
+  return selectKendoPagerSizeWithPreferredFallback(
+    context,
+    ['300'],
+    {
+      visibleClick,
+      timeout: visibleClick ? 300000 : 45000
     }
-
-    logger.warn('Hyundai mirrored report page size selection failed; falling back to 300', {
-      reportId,
-      requestedSize: size,
-      error: error.message
-    });
-    return await selectPagerSize(context, '300', { timeout: visibleClick ? 300000 : 45000 });
-  }
+  );
 }
 
 async function getLoopValues(context, report) {
@@ -235,6 +246,39 @@ function aggregateResults(results) {
   return { insertedRows, duplicateRows };
 }
 
+async function resolveReportContext(page, report, { skipNavigation = false } = {}) {
+  const openReport = async () => {
+    if (!skipNavigation) {
+      await report.open(page);
+    }
+  };
+
+  await openReport();
+
+  try {
+    return await findContextWithVisibleSelector(page, report.readySelector ?? report.dateFromSelector, {
+      timeout: report.readyTimeoutMs ?? 90000,
+      label: `${report.name} ready selector`
+    });
+  } catch (error) {
+    if (skipNavigation) {
+      throw error;
+    }
+
+    logger.warn(`${reportAccount(report).logPrefix} mirrored report did not expose its ready selector after initial navigation; retrying report open in the same attempt`, {
+      reportId: report.id,
+      readySelector: report.readySelector ?? report.dateFromSelector,
+      message: error.message
+    });
+
+    await report.open(page);
+    return findContextWithVisibleSelector(page, report.readySelector ?? report.dateFromSelector, {
+      timeout: report.readyTimeoutMs ?? 90000,
+      label: `${report.name} ready selector`
+    });
+  }
+}
+
 export function createHyundaiKiaCloneReport(report) {
   return async function downloadHyundaiKiaCloneReport(page, {
     dealerCode = 'active',
@@ -242,28 +286,25 @@ export function createHyundaiKiaCloneReport(report) {
     skipNavigation = false,
     optimizedNoSearch = false,
     pageSize: suppliedPageSize,
-    maxPages: suppliedMaxPages
+    maxPages: suppliedMaxPages,
+    reportNameOverride,
+    sheetNameOverride
   } = {}) {
     const account = reportAccount(report);
-    const range = suppliedRange ?? getRange(report.rangeType);
+    const range = suppliedRange ?? getRange(report.rangeType, account);
+    const effectiveReportName = reportNameOverride ?? report.name;
+    const effectiveSheetName = sheetNameOverride ?? report.sheetName;
 
     logger.info(`${account.logPrefix} mirrored KIA report started`, {
       reportId: report.id,
-      reportName: report.name,
-      sheetName: report.sheetName,
+      reportName: effectiveReportName,
+      sheetName: effectiveSheetName,
       dealerCode,
       range: `${range.startIso} to ${range.endIso}`,
       optimizedNoSearch
     });
 
-    if (!skipNavigation) {
-      await report.open(page);
-    }
-
-    const reportContext = await findContextWithVisibleSelector(page, report.readySelector ?? report.dateFromSelector, {
-      timeout: report.readyTimeoutMs ?? 90000,
-      label: `${report.name} ready selector`
-    });
+    const reportContext = await resolveReportContext(page, report, { skipNavigation });
     await reportContext.locator(report.dateToSelector).first().waitFor({
       state: 'visible',
       timeout: 30000
@@ -300,7 +341,14 @@ export function createHyundaiKiaCloneReport(report) {
           await selectDropdownIfConfigured(reportContext, dropdown);
         }
 
-        if (optimizedNoSearch) {
+        if (report.skipSearchButtonClick) {
+          logger.info(`${account.logPrefix} skipping Search button click as per report config`, {
+            reportId: report.id,
+            dealerCode,
+            loopValue,
+            range: `${range.startIso} to ${range.endIso}`
+          });
+        } else if (optimizedNoSearch) {
           logger.info(`${account.logPrefix} optimized historical export: skipping Search and selecting pager size`, {
             reportId: report.id,
             dealerCode,
@@ -321,14 +369,100 @@ export function createHyundaiKiaCloneReport(report) {
           }
         }
 
+        const requestedPageSize = suppliedPageSize ?? report.pageSize ?? (optimizedNoSearch ? '1000' : '300');
+        const emptyCheck = (optimizedNoSearch || report.skipSearchButtonClick)
+          ? { noData: false }
+          : await gridHasNoExportableData(reportContext, requestedPageSize);
+
+        if (emptyCheck.noData) {
+          logger.info(`${account.logPrefix} mirrored report month has no data; skipping pager size and export`, {
+            reportId: report.id,
+            dealerCode,
+            loopValue,
+            range: `${range.startIso} to ${range.endIso}`,
+            totalItems: emptyCheck.totalItems,
+            visibleRowCount: emptyCheck.visibleRowCount,
+            hasNoDataMessage: emptyCheck.hasNoDataMessage
+          });
+
+          const emptyResult = {
+            action: 'no_rows',
+            rowCount: 0,
+            headerCount: 0,
+            addedRowCount: 0,
+            duplicateRowCount: 0,
+            relationalInsertedRowCount: 0,
+            relationalDuplicateRowCount: 0
+          };
+
+          results.push({
+            dbResult: emptyResult,
+            rowCount: 0,
+            headerCount: 0,
+            pageCount: 0
+          });
+          continue;
+        }
+
+        if (optimizedNoSearch || report.skipSearchButtonClick) {
+          logger.info(`${account.logPrefix} Toggling pager size to 50/100 first to trigger load...`);
+          try {
+            await selectKendoPagerSizeWithPreferredFallback(
+              reportContext,
+              ['50', '100'],
+              {
+                visibleClick: true,
+                timeout: 15000
+              }
+            );
+            await sleep(1500);
+          } catch (err) {
+            logger.warn('Failed to select intermediate pager size; continuing directly to target size', { error: err.message });
+          }
+        }
+
         const selectedPageSize = await selectPagerSizeWithFallback(
           reportContext,
-          suppliedPageSize ?? report.pageSize ?? (optimizedNoSearch ? '1000' : '300'),
+          requestedPageSize,
           report.id,
           { visibleClick: true }
         );
 
-        await waitForKendoGridIdle(reportContext, { timeout: optimizedNoSearch ? 300000 : 120000 });
+        if (optimizedNoSearch || report.skipSearchButtonClick) {
+          await sleep(3000);
+        }
+
+        await waitForKendoGridIdle(reportContext, { timeout: (optimizedNoSearch || report.skipSearchButtonClick) ? 300000 : 120000 });
+
+        if (report.skipSearchButtonClick || optimizedNoSearch) {
+          const postLoadCheck = await gridHasNoExportableData(reportContext, selectedPageSize);
+          if (postLoadCheck.noData) {
+            logger.info(`${account.logPrefix} mirrored report has no data after pager change; skipping export`, {
+              reportId: report.id,
+              dealerCode,
+              loopValue,
+              range: `${range.startIso} to ${range.endIso}`
+            });
+
+            const emptyResult = {
+              action: 'no_rows',
+              rowCount: 0,
+              headerCount: 0,
+              addedRowCount: 0,
+              duplicateRowCount: 0,
+              relationalInsertedRowCount: 0,
+              relationalDuplicateRowCount: 0
+            };
+
+            results.push({
+              dbResult: emptyResult,
+              rowCount: 0,
+              headerCount: 0,
+              pageCount: 0
+            });
+            continue;
+          }
+        }
         const pagerState = await getPagerState(reportContext, selectedPageSize);
         logger.info(`${account.logPrefix} mirrored report grid ready for export`, {
           reportId: report.id,
@@ -362,7 +496,7 @@ export function createHyundaiKiaCloneReport(report) {
             : {})
         };
         const merged = Object.keys(metadata).length
-          ? addMetadataToDataset(withDealer, metadata, { range })
+          ? addMetadataToDataset(withDealer, metadata, { range, loopValue })
           : withDealer;
 
         if (!merged.rows.length && !report.saveEmptyDataset) {
@@ -389,8 +523,8 @@ export function createHyundaiKiaCloneReport(report) {
 
           logger.info(`${account.logPrefix} mirrored KIA report loop had no rows; skipped Supabase save`, {
             reportId: report.id,
-            reportName: report.name,
-            sheetName: report.sheetName,
+            reportName: effectiveReportName,
+            sheetName: effectiveSheetName,
             dealerCode,
             loopValue,
             headerCount: merged.headers.length,
@@ -401,7 +535,7 @@ export function createHyundaiKiaCloneReport(report) {
 
         const dbResult = await saveReportSheetToSupabase({
           brand: account.brand,
-          sheetName: report.sheetName,
+          sheetName: effectiveSheetName,
           headers: merged.headers,
           rows: merged.rows
         });
@@ -420,8 +554,8 @@ export function createHyundaiKiaCloneReport(report) {
 
         logger.info(`${account.logPrefix} mirrored KIA report loop finished`, {
           reportId: report.id,
-          reportName: report.name,
-          sheetName: report.sheetName,
+          reportName: effectiveReportName,
+          sheetName: effectiveSheetName,
           dealerCode,
           loopValue,
           dbAction: dbResult.action,
@@ -445,8 +579,8 @@ export function createHyundaiKiaCloneReport(report) {
 
         logger.error(`${account.logPrefix} mirrored report loop failed; continuing with next loop value`, {
           reportId: report.id,
-          reportName: report.name,
-          sheetName: report.sheetName,
+          reportName: effectiveReportName,
+          sheetName: effectiveSheetName,
           dealerCode,
           loopValue,
           screenshotPath,
@@ -464,8 +598,8 @@ export function createHyundaiKiaCloneReport(report) {
 
     logger.info(`${account.logPrefix} mirrored KIA report finished`, {
       reportId: report.id,
-      reportName: report.name,
-      sheetName: report.sheetName,
+      reportName: effectiveReportName,
+      sheetName: effectiveSheetName,
       dealerCode,
       loopCount: loopValues.length,
       rowCount: totalRows,
@@ -482,9 +616,9 @@ export function createHyundaiKiaCloneReport(report) {
     });
 
     return {
-      name: report.name,
+      name: effectiveReportName,
       id: report.id,
-      sheetName: report.sheetName,
+      sheetName: effectiveSheetName,
       dealerCode,
       dbResult: {
         ...dbResult,

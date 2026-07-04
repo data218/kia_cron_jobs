@@ -18,6 +18,7 @@ import {
   exportAllGridPagesToFiles,
   mergeExcelFiles
 } from './paged-export.js';
+import { addDealerCodeToDataset } from './report-metadata.js';
 import { clickSearch, fillDate, getInputValue } from './report-actions.js';
 
 function chunkFileName(chunk) {
@@ -112,8 +113,8 @@ async function applyRoBillingChunk(reportContext, chunk) {
   await waitForKendoGridIdle(reportContext, { timeout: 120000 });
 }
 
-export async function downloadRoBillingReport(page) {
-  logger.info('RO Billing report started');
+export async function downloadRoBillingReport(page, { dealerCode = 'active' } = {}) {
+  logger.info('RO Billing report started', { dealerCode });
   await openRoBillingReport(page);
   const reportContext = await resolveRoBillingContext(page);
 
@@ -160,7 +161,10 @@ export async function downloadRoBillingReport(page) {
     chunkCount: chunkPlan.chunks.length,
     fileCount: exportFiles.length
   });
-  const merged = await mergeExcelFiles(exportFiles);
+  const merged = addDealerCodeToDataset(
+    exportFiles.length ? await mergeExcelFiles(exportFiles) : { headers: [], rows: [] },
+    dealerCode
+  );
 
   const dbResult = await saveReportSheetToSupabase({
     brand: 'kia',

@@ -14,7 +14,7 @@ const platinumTables = [
   'am_platinum_operation_wise_analysis_advisor_report',
 ];
 
-const dealers = ['N5211', 'N6824', 'N6828'];
+const dealers = ['N5211', 'N6250', 'N6828'];
 
 async function analyzeTable(client, tableName) {
   console.log(`\nAnalyzing ${tableName}...`);
@@ -112,39 +112,39 @@ async function main() {
     }
 
     console.log('\n\n========== SUMMARY TABLE ==========\n');
-    console.log('Table Name                               | Total | N5211 | N6824 | N6828 | Date Range');
+    console.log('Table Name                               | Total | N5211 | N6250 | N6828 | Date Range');
     console.log('-'.repeat(110));
     
     let totalRowsAll = 0;
-    const dealerTotals = { N5211: 0, N6824: 0, N6828: 0 };
+    const dealerTotals = { N5211: 0, N6250: 0, N6828: 0 };
     
     for (const result of results) {
       const n5211 = result.dealers.N5211 || 0;
-      const n6824 = result.dealers.N6824 || 0;
+      const n6250 = result.dealers.N6250 || 0;
       const n6828 = result.dealers.N6828 || 0;
       
       dealerTotals.N5211 += n5211;
-      dealerTotals.N6824 += n6824;
+      dealerTotals.N6250 += n6250;
       dealerTotals.N6828 += n6828;
       totalRowsAll += result.totalRows;
       
       const tableName = result.tableName.padEnd(40);
       const totalStr = String(result.totalRows).padStart(5);
       const n5211Str = String(n5211).padStart(5);
-      const n6824Str = String(n6824).padStart(5);
+      const n6250Str = String(n6250).padStart(5);
       const n6828Str = String(n6828).padStart(5);
       const dateStr = result.dateRange.padEnd(20);
       
-      console.log(`${tableName} | ${totalStr} | ${n5211Str} | ${n6824Str} | ${n6828Str} | ${dateStr}`);
+      console.log(`${tableName} | ${totalStr} | ${n5211Str} | ${n6250Str} | ${n6828Str} | ${dateStr}`);
     }
     
     console.log('-'.repeat(110));
     const tableName = 'TOTALS'.padEnd(40);
     const totalStr = String(totalRowsAll).padStart(5);
     const n5211Str = String(dealerTotals.N5211).padStart(5);
-    const n6824Str = String(dealerTotals.N6824).padStart(5);
+    const n6250Str = String(dealerTotals.N6250).padStart(5);
     const n6828Str = String(dealerTotals.N6828).padStart(5);
-    console.log(`${tableName} | ${totalStr} | ${n5211Str} | ${n6824Str} | ${n6828Str}`);
+    console.log(`${tableName} | ${totalStr} | ${n5211Str} | ${n6250Str} | ${n6828Str}`);
     
     console.log('\n\n========== ANALYSIS ==========\n');
     
@@ -158,20 +158,20 @@ async function main() {
       console.log(`N5211: NO DATA\n`);
     }
     
-    // Check N6824
-    if (dealerTotals.N6824 > 0) {
-      const avgPerTable = dealerTotals.N6824 / platinumTables.length;
+    // Check N6250 (Rajouri)
+    if (dealerTotals.N6250 > 0) {
+      const avgPerTable = dealerTotals.N6250 / platinumTables.length;
       if (avgPerTable > 100) {
-        console.log(`N6824: ${dealerTotals.N6824} total rows (~${Math.round(avgPerTable)} per table avg)`);
+        console.log(`N6250: ${dealerTotals.N6250} total rows (~${Math.round(avgPerTable)} per table avg)`);
         console.log(`Status: APPEARS TO HAVE HISTORICAL DATA`);
         console.log(`Action: BACKFILL COMPLETE - No action needed\n`);
       } else {
-        console.log(`N6824: ${dealerTotals.N6824} total rows (~${Math.round(avgPerTable)} per table avg)`);
+        console.log(`N6250: ${dealerTotals.N6250} total rows (~${Math.round(avgPerTable)} per table avg)`);
         console.log(`Status: LOW ROW COUNT - Likely missing historical data`);
         console.log(`Action: NEEDS HISTORICAL BACKFILL\n`);
       }
     } else {
-      console.log(`N6824: NO DATA`);
+      console.log(`N6250: NO DATA`);
       console.log(`Status: Never backfilled`);
       console.log(`Action: NEEDS HISTORICAL BACKFILL\n`);
     }
@@ -197,7 +197,7 @@ async function main() {
     console.log('\n========== RECOMMENDATION ==========\n');
     const needsBackfill = [];
     if (dealerTotals.N5211 < platinumTables.length * 50) needsBackfill.push('N5211');
-    if (dealerTotals.N6824 < platinumTables.length * 50) needsBackfill.push('N6824');
+    if (dealerTotals.N6250 < platinumTables.length * 50) needsBackfill.push('N6250');
     if (dealerTotals.N6828 < platinumTables.length * 50) needsBackfill.push('N6828');
     
     if (needsBackfill.length > 0) {

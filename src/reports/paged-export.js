@@ -52,8 +52,18 @@ function fileNameForPage(filenameBase, pageNumber, totalPages) {
   return `${filenameBase}_page_${pageNumber}.xlsx`;
 }
 
-export async function getPagerState(page, pageSize) {
-  const pager = page.locator('.k-pager-wrap:visible, .k-grid-pager:visible').first();
+function gridLocator(page, gridSelector) {
+  return page.locator(gridSelector || '#grid:visible, .k-grid:visible').first();
+}
+
+function pagerLocator(page, gridSelector) {
+  return gridSelector
+    ? page.locator(`${gridSelector} .k-pager-wrap, ${gridSelector} .k-grid-pager`).first()
+    : page.locator('.k-pager-wrap:visible, .k-grid-pager:visible').first();
+}
+
+export async function getPagerState(page, pageSize, { gridSelector } = {}) {
+  const pager = pagerLocator(page, gridSelector);
   const visible = await pager.isVisible({ timeout: 2000 }).catch(() => false);
 
   if (!visible) {
@@ -98,16 +108,24 @@ export async function getPagerState(page, pageSize) {
     const pageNumbers = Array.from(pagerElement.querySelectorAll('.k-pager-numbers a, .k-pager-numbers span'))
       .map(element => Number.parseInt(element.textContent?.trim() || '', 10))
       .filter(Number.isFinite);
+    const zeroPager = pageNumbers.length > 0 &&
+      pageNumbers.every(number => number === 0) &&
+      Array.from(pagerElement.querySelectorAll('.k-pager-nav')).every(element =>
+        element.classList.contains('k-state-disabled') ||
+        element.classList.contains('k-disabled') ||
+        element.getAttribute('aria-disabled') === 'true'
+      );
+    const resolvedTotalItems = zeroPager ? 0 : totalItems;
     const highestVisiblePage = pageNumbers.length ? Math.max(...pageNumbers) : currentPage;
-    const totalPages = totalItems && resolvedPageSize
-      ? Math.max(1, Math.ceil(totalItems / resolvedPageSize))
+    const totalPages = resolvedTotalItems && resolvedPageSize
+      ? Math.max(1, Math.ceil(resolvedTotalItems / resolvedPageSize))
       : Math.max(1, highestVisiblePage);
 
     return {
       totalPages,
       currentPage,
       hasPager: true,
-      totalItems,
+      totalItems: resolvedTotalItems,
       pageSize: resolvedPageSize,
       requestedPageSize,
       selectedPageSize,
@@ -116,8 +134,8 @@ export async function getPagerState(page, pageSize) {
   }, pageSize);
 }
 
-export async function getVisibleGridDataRowCount(page) {
-  const grid = page.locator('#grid:visible, .k-grid:visible').first();
+export async function getVisibleGridDataRowCount(page, { gridSelector } = {}) {
+  const grid = gridLocator(page, gridSelector);
   const visible = await grid.isVisible({ timeout: 2000 }).catch(() => false);
 
   if (!visible) {
@@ -145,8 +163,8 @@ export async function getVisibleGridDataRowCount(page) {
   });
 }
 
-async function clickNextPage(page) {
-  const pager = page.locator('.k-pager-wrap:visible, .k-grid-pager:visible').first();
+async function clickNextPage(page, { gridSelector } = {}) {
+  const pager = pagerLocator(page, gridSelector);
   const nextButton = pager.locator([
     'a[title*="next" i]',
     'a[aria-label*="next" i]',
@@ -173,8 +191,179 @@ async function clickNextPage(page) {
   return true;
 }
 
-export async function gridHasExplicitNoDataMessage(page) {
-  const grid = page.locator('#grid:visible, .k-grid:visible').first();
+async function goToFirstGridPage(page, pageSize, { gridSelector } = {}) {
+  const initialState = await getPagerState(page, pageSize, { gridSelector });
+  if (!initialState.hasPager || initialState.currentPage <= 1) {
+    return initialState;
+  }
+
+  const resetViaJsApi = await page.evaluate(({ selector }) => {
+    const jquery = window.jQuery || window.$;
+    const gridElement = selector
+      ? document.querySelector(selector)
+      : document.querySelector('#grid, .k-grid');
+    if (!gridElement) {
+      return false;
+    }
+
+    const kendoGrid = jquery?.(gridElement).data('kendoGrid') ??
+      window.kendo?.widgetInstance?.(gridElement);
+    if (!kendoGrid?.dataSource) {
+      return false;
+    }
+
+    if (typeof kendoGrid.dataSource.page === 'function') {
+      kendoGrid.dataSource.page(1);
+      return true;
+    }
+
+    if (typeof kendoGrid.dataSource.query === 'function') {
+      const options = typeof kendoGrid.dataSource.options === 'object'
+        ? { ...kendoGrid.dataSource.options }
+        : {};
+      kendoGrid.dataSource.query({
+        ...options,
+        page: 1,
+        pageSize: typeof kendoGrid.dataSource.pageSize === 'function'
+          ? kendoGrid.dataSource.pageSize()
+          : options.pageSize
+      });
+      return true;
+    }
+
+    if (typeof kendoGrid.dataSource.read === 'function') {
+      kendoGrid.dataSource.read();
+      return true;
+    }
+
+    return false;
+  }, { selector: gridSelector }).catch(() => false);
+
+  if (resetViaJsApi) {
+    await waitForKendoGridIdle(page, { timeout: 120000, gridSelector });
+    const afterJsReset = await getPagerState(page, pageSize, { gridSelector });
+    if (afterJsReset.currentPage === 1) {
+      logger.info('Reset Kendo grid pager back to page 1 before export', {
+        fromPage: initialState.currentPage,
+        totalPages: initialState.totalPages,
+        gridSelector
+      });
+      return afterJsReset;
+    }
+  }
+
+  const pager = pagerLocator(page, gridSelector);
+  const firstButton = pager.locator([
+    'a[title*="first" i]',
+    'a[aria-label*="first" i]',
+    'a.k-pager-first',
+    'a.k-link:has(.k-i-seek-w)',
+    'a.k-link:has(.k-i-arrow-60-left)',
+    'a.k-pager-nav:has(.k-i-seek-w)',
+    'a.k-pager-nav:has(.k-i-arrow-60-left)'
+  ].join(',')).first();
+
+  const firstVisible = await firstButton.isVisible({ timeout: 2000 }).catch(() => false);
+  if (firstVisible) {
+    const disabled = await firstButton.evaluate(element =>
+      element.classList.contains('k-state-disabled') ||
+      element.classList.contains('k-disabled') ||
+      element.getAttribute('aria-disabled') === 'true'
+    ).catch(() => true);
+
+    if (!disabled) {
+      await firstButton.click();
+      await waitForKendoGridIdle(page, { timeout: 120000, gridSelector });
+      const afterFirstClick = await getPagerState(page, pageSize, { gridSelector });
+      if (afterFirstClick.currentPage === 1) {
+        logger.info('Reset pager to page 1 via visible First button before export', {
+          fromPage: initialState.currentPage,
+          totalPages: initialState.totalPages,
+          gridSelector
+        });
+        return afterFirstClick;
+      }
+    }
+  }
+
+  logger.warn('Unable to deterministically reset Kendo grid pager to page 1 before export', {
+    currentPage: initialState.currentPage,
+    totalPages: initialState.totalPages,
+    gridSelector
+  });
+  return getPagerState(page, pageSize, { gridSelector });
+}
+
+function uniqueHeaders(rawHeaders) {
+  const counts = new Map();
+  return rawHeaders.map((header, index) => {
+    const base = header || `Column ${index + 1}`;
+    const count = (counts.get(base) || 0) + 1;
+    counts.set(base, count);
+    return count === 1 ? base : `${base} ${count}`;
+  });
+}
+
+async function extractVisibleGridPage(page, { gridSelector } = {}) {
+  const grid = gridLocator(page, gridSelector);
+  await grid.waitFor({ state: 'visible', timeout: 10000 });
+
+  return grid.evaluate(gridElement => {
+    const headerCells = Array.from(gridElement.querySelectorAll(
+      '.k-grid-header th:not(.k-hierarchy-cell), thead th:not(.k-hierarchy-cell)'
+    ));
+    const headers = headerCells.map(cell =>
+      (cell.innerText || cell.textContent || '').replace(/\s+/g, ' ').trim()
+    );
+    const rows = Array.from(gridElement.querySelectorAll(
+      '.k-grid-content tbody tr, tbody[role="rowgroup"] tr'
+    )).map(row => Array.from(row.querySelectorAll('td:not(.k-hierarchy-cell)')).map(cell =>
+      (cell.innerText || cell.textContent || '').replace(/\s+/g, ' ').trim()
+    )).filter(cells => cells.length && cells.some(Boolean));
+
+    return { headers, rows };
+  });
+}
+
+export async function extractAllGridPagesFromDom(page, {
+  pageSize,
+  maxPages = 500,
+  gridSelector
+} = {}) {
+  const headers = [];
+  const rowValues = [];
+  const initialState = await goToFirstGridPage(page, pageSize, { gridSelector });
+  const totalPages = initialState.totalPages;
+
+  for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+    if (pageNumber > maxPages) {
+      throw new Error(`Stopped DOM extraction after ${maxPages} pages`);
+    }
+
+    const extracted = await extractVisibleGridPage(page, { gridSelector });
+    if (!headers.length) {
+      headers.push(...uniqueHeaders(extracted.headers));
+    }
+    rowValues.push(...extracted.rows);
+
+    if (pageNumber >= totalPages || !await clickNextPage(page, { gridSelector })) {
+      break;
+    }
+  }
+
+  const rows = rowValues.map(values => Object.fromEntries(
+    headers.map((header, index) => [header, values[index] ?? ''])
+  ));
+  logger.info('Grid rows extracted directly from DOM', {
+    rowCount: rows.length,
+    headerCount: headers.length,
+    totalPages
+  });
+  return { headers, rows, pageCount: totalPages };
+}
+
+export async function gridHasExplicitNoDataMessage(page, { gridSelector } = {}) {
+  const grid = gridLocator(page, gridSelector);
   const visible = await grid.isVisible({ timeout: 2000 }).catch(() => false);
 
   if (!visible) {
@@ -184,13 +373,49 @@ export async function gridHasExplicitNoDataMessage(page) {
   return grid.evaluate(gridElement => /no\s+records|no\s+data|no\s+items/i.test(gridElement.textContent || ''));
 }
 
-export async function exportCurrentGridPageToFile(page, filePath, { downloadTimeoutMs = 120000 } = {}) {
+export async function gridHasNoExportableData(page, pageSize, { gridSelector, recheckIfAmbiguous = true } = {}) {
+  let state = await getPagerState(page, pageSize, { gridSelector });
+  let visibleRowCount = await getVisibleGridDataRowCount(page, { gridSelector });
+  let hasNoDataMessage = await gridHasExplicitNoDataMessage(page, { gridSelector });
+
+  if (
+    recheckIfAmbiguous &&
+    state.totalItems !== 0 &&
+    visibleRowCount === 0 &&
+    !hasNoDataMessage
+  ) {
+    await waitForKendoGridIdle(page, { timeout: 10000 });
+    state = await getPagerState(page, pageSize, { gridSelector });
+    visibleRowCount = await getVisibleGridDataRowCount(page, { gridSelector });
+    hasNoDataMessage = await gridHasExplicitNoDataMessage(page, { gridSelector });
+  }
+
+  const noData =
+    state.totalItems === 0 ||
+    hasNoDataMessage ||
+    (visibleRowCount === 0 && (state.totalItems == null || state.totalItems === 0));
+
+  return {
+    noData,
+    totalItems: state.totalItems,
+    visibleRowCount,
+    hasNoDataMessage,
+    totalPages: state.totalPages,
+    hasPager: state.hasPager
+  };
+}
+
+export async function exportCurrentGridPageToFile(page, filePath, {
+  downloadTimeoutMs = 120000,
+  exportSelector
+} = {}) {
   const exportButton = await firstVisible(page, [
+    exportSelector,
     'a.k-grid-excel[onclick*="excelExportToKendoGrid"]',
     'a.k-grid-excel',
     'a[role="button"].k-grid-excel',
     'a:has(.k-i-file-excel)'
-  ], 30000);
+  ].filter(Boolean), 30000);
 
   await fs.mkdir(path.dirname(filePath), { recursive: true });
 
@@ -214,56 +439,64 @@ export async function exportAllGridPagesToFiles(page, {
   filenameBase,
   pageSize,
   downloadTimeoutMs = 120000,
-  maxPages = 500
+  maxPages = 500,
+  exportSelector,
+  exportWhenEmpty = false,
+  emptyDownloadTimeoutMs = 10000,
+  gridSelector
 }) {
   const pageFiles = [];
-  let firstState = await getPagerState(page, pageSize);
-  let visibleRowCount = await getVisibleGridDataRowCount(page);
-  let hasNoDataMessage = await gridHasExplicitNoDataMessage(page);
-
-  if (firstState.totalItems !== 0 && visibleRowCount === 0 && !hasNoDataMessage) {
-    logger.warn('Grid row count is zero without an explicit no-data state; rechecking before export decision', {
-      filenameBase,
-      totalItems: firstState.totalItems,
-      visibleRowCount,
-      hasNoDataMessage
-    });
-
-    await waitForKendoGridIdle(page, { timeout: 10000 });
-    firstState = await getPagerState(page, pageSize);
-    visibleRowCount = await getVisibleGridDataRowCount(page);
-    hasNoDataMessage = await gridHasExplicitNoDataMessage(page);
-  }
-
-  const totalPages = firstState.totalPages;
+  const emptyCheck = await gridHasNoExportableData(page, pageSize, { gridSelector });
 
   logger.info('Grid pagination detected', {
     filenameBase,
+    totalPages: emptyCheck.totalPages ?? 1,
+    hasPager: emptyCheck.hasPager,
+    totalItems: emptyCheck.totalItems,
+    visibleRowCount: emptyCheck.visibleRowCount,
+    hasNoDataMessage: emptyCheck.hasNoDataMessage
+  });
+
+  if (emptyCheck.noData) {
+    logger.info('Grid has no data rows', {
+      filenameBase,
+      totalItems: emptyCheck.totalItems,
+      visibleRowCount: emptyCheck.visibleRowCount,
+      hasNoDataMessage: emptyCheck.hasNoDataMessage,
+      exportWhenEmpty
+    });
+
+    if (exportWhenEmpty) {
+      const filePath = path.join(outputDir, fileNameForPage(filenameBase, 1, 1));
+      try {
+        await exportCurrentGridPageToFile(page, filePath, {
+          downloadTimeoutMs: emptyDownloadTimeoutMs,
+          exportSelector
+        });
+        pageFiles.push(filePath);
+      } catch (error) {
+        logger.warn('Empty grid did not produce an Excel download; continuing to next report', {
+          filenameBase,
+          error: error.message
+        });
+      }
+    }
+
+    return pageFiles;
+  }
+
+  const firstState = await goToFirstGridPage(page, pageSize, { gridSelector });
+  let totalPages = firstState.totalPages;
+
+  logger.info('Grid export starting', {
+    filenameBase,
     totalPages,
     currentPage: firstState.currentPage,
-    hasPager: firstState.hasPager,
     totalItems: firstState.totalItems,
     pageSize: firstState.pageSize,
     requestedPageSize: firstState.requestedPageSize,
-    selectedPageSize: firstState.selectedPageSize,
-    visibleRowCount,
-    hasNoDataMessage
+    selectedPageSize: firstState.selectedPageSize
   });
-
-  const shouldSkipExport =
-    firstState.totalItems === 0 ||
-    hasNoDataMessage ||
-    (visibleRowCount === 0 && (firstState.totalItems == null || firstState.totalItems === 0));
-
-  if (shouldSkipExport) {
-    logger.info('Grid has no data rows; skipping export download', {
-      filenameBase,
-      totalItems: firstState.totalItems,
-      visibleRowCount,
-      hasNoDataMessage
-    });
-    return pageFiles;
-  }
 
   for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
     if (pageNumber > maxPages) {
@@ -271,20 +504,60 @@ export async function exportAllGridPagesToFiles(page, {
     }
 
     const filePath = path.join(outputDir, fileNameForPage(filenameBase, pageNumber, totalPages));
-    await exportCurrentGridPageToFile(page, filePath, { downloadTimeoutMs });
+    await exportCurrentGridPageToFile(page, filePath, {
+      downloadTimeoutMs,
+      exportSelector
+    });
     pageFiles.push(filePath);
 
     if (pageNumber >= totalPages) {
       break;
     }
 
-    const moved = await clickNextPage(page);
+    const beforeState = await getPagerState(page, pageSize, { gridSelector });
+    const moved = await clickNextPage(page, { gridSelector });
     if (!moved) {
       logger.warn('Pager next button is disabled before expected last page', {
         pageNumber,
         totalPages
       });
       break;
+    }
+
+    const afterState = await getPagerState(page, pageSize, { gridSelector });
+    if (afterState.currentPage <= beforeState.currentPage) {
+      logger.warn('Pager page did not advance after next click; stopping export to avoid loop', {
+        filenameBase,
+        pageNumber,
+        beforePage: beforeState.currentPage,
+        afterPage: afterState.currentPage,
+        totalPages
+      });
+      break;
+    }
+
+    const visibleRowCount = await getVisibleGridDataRowCount(page, { gridSelector });
+    if (visibleRowCount === 0) {
+      logger.warn('Grid page has no visible rows after pagination; stopping export', {
+        filenameBase,
+        pageNumber: afterState.currentPage,
+        totalPages
+      });
+      break;
+    }
+
+    if (afterState.totalItems != null && afterState.pageSize) {
+      const resolvedTotalPages = Math.max(1, Math.ceil(afterState.totalItems / afterState.pageSize));
+      if (resolvedTotalPages < totalPages) {
+        logger.info('Correcting pager totalPages from live grid state', {
+          filenameBase,
+          previousTotalPages: totalPages,
+          resolvedTotalPages,
+          totalItems: afterState.totalItems,
+          pageSize: afterState.pageSize
+        });
+        totalPages = resolvedTotalPages;
+      }
     }
   }
 
@@ -340,6 +613,19 @@ export async function exportPagedGridToSupabase(page, {
     filenameBase,
     pageSize
   });
+
+  if (!pageFiles.length) {
+    logger.info('No data files exported; skipping database save', { reportId, sheetName });
+    await cleanupReportExportDir(outputDir).catch(() => {});
+    return {
+      action: 'skipped_no_data',
+      rowCount: 0,
+      headerCount: 0,
+      pageCount: 0,
+      outputDir,
+      pageFiles: []
+    };
+  }
 
   const merged = await mergeExcelFiles(pageFiles, { forcedHeaders });
   const dbResult = await saveReportSheetToSupabase({

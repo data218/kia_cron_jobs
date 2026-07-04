@@ -1,5 +1,4 @@
 import path from 'node:path';
-import fs from 'node:fs/promises';
 import { config } from '../config.js';
 import { openOpenRoYearlyReport } from '../navigation/kia-menu.js';
 import { findContextWithVisibleSelector } from '../playwright/frame-resolver.js';
@@ -13,9 +12,11 @@ import {
   exportAllGridPagesToFiles,
   mergeExcelFiles
 } from './paged-export.js';
+import { addDealerCodeToDataset } from './report-metadata.js';
 import {
   clickSearch,
   fillDate,
+  getInputValue,
   selectKendoDropdownByInputId
 } from './report-actions.js';
 
@@ -23,21 +24,6 @@ function chunkFileName(chunk) {
   const start = chunk.startIso.replaceAll('-', '_');
   const end = chunk.endIso.replaceAll('-', '_');
   return `open_ro_${start}_to_${end}`;
-}
-
-async function findExistingChunkExports(chunkDir, filenameBase) {
-  const files = await fs.readdir(chunkDir).catch(error => {
-    if (error.code === 'ENOENT') {
-      return [];
-    }
-    throw error;
-  });
-
-  return files
-    .filter(file => file === `${filenameBase}.xlsx` || file.startsWith(`${filenameBase}_page_`))
-    .filter(file => file.toLowerCase().endsWith('.xlsx'))
-    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
-    .map(file => path.join(chunkDir, file));
 }
 
 async function resolveOpenRoContext(page) {
@@ -58,13 +44,28 @@ async function fillOpenRoDateRange(page, chunk) {
     endDate: chunk.endPortal
   });
 
-  // Fill end date first so the portal never sees a temporary start > end range.
-  await fillDate(page, '#sRoDateToDate', chunk.endPortal);
   await fillDate(page, '#sRoDateFromDate', chunk.startPortal);
+  await fillDate(page, '#sRoDateToDate', chunk.endPortal);
+
+  const actualStart = await getInputValue(page, '#sRoDateFromDate');
+  const actualEnd = await getInputValue(page, '#sRoDateToDate');
+  logger.info('Open RO date fields verified before search', {
+    expectedStart: chunk.startPortal,
+    actualStart,
+    expectedEnd: chunk.endPortal,
+    actualEnd
+  });
+
+  if (actualStart.trim() !== chunk.startPortal || actualEnd.trim() !== chunk.endPortal) {
+    throw new Error(
+      `Open RO date fields did not retain expected values. ` +
+      `Expected ${chunk.startPortal} - ${chunk.endPortal}, got ${actualStart} - ${actualEnd}`
+    );
+  }
 }
 
-export async function downloadOpenRoYearlyReport(page) {
-  logger.info('Open RO Yearly report started');
+export async function downloadOpenRoYearlyReport(page, { dealerCode = 'active' } = {}) {
+  logger.info('Open RO Yearly report started', { dealerCode });
   await openOpenRoYearlyReport(page);
   const reportContext = await resolveOpenRoContext(page);
 
@@ -77,12 +78,16 @@ export async function downloadOpenRoYearlyReport(page) {
       : config.openRoYearlyStartDate
   );
   const endDate = overrideRange?.endDate ?? new Date();
-  const chunks = getThirtyDayChunks(startDate, endDate);
+  const chunks = getThirtyDayChunks(startDate, endDate).reverse();
   const runDate = toIsoDate(endDate);
-  const chunkDir = path.join(config.reportChunksDir, 'open-ro-yearly', runDate);
+  const dealerKey = String(dealerCode || 'active').trim().toUpperCase();
+  const chunkDir = path.join(config.reportChunksDir, 'open-ro-yearly', dealerKey, runDate);
   const exportFiles = [];
 
+  await cleanupReportExportDir(chunkDir).catch(() => {});
+
   logger.info('Open RO Yearly date chunks prepared', {
+    dealerCode: dealerKey,
     startDate: toIsoDate(startDate),
     endDate: runDate,
     chunkCount: chunks.length,
@@ -91,22 +96,11 @@ export async function downloadOpenRoYearlyReport(page) {
 
   for (const [index, chunk] of chunks.entries()) {
     logger.info('Processing Open RO chunk', {
+      dealerCode: dealerKey,
       chunk: `${index + 1}/${chunks.length}`,
       startDate: chunk.startPortal,
       endDate: chunk.endPortal
     });
-
-    const filenameBase = chunkFileName(chunk);
-    const existingChunkFiles = await findExistingChunkExports(chunkDir, filenameBase);
-    if (existingChunkFiles.length) {
-      logger.info('Reusing existing Open RO chunk exports', {
-        chunk: `${index + 1}/${chunks.length}`,
-        filenameBase,
-        fileCount: existingChunkFiles.length
-      });
-      exportFiles.push(...existingChunkFiles);
-      continue;
-    }
 
     await fillOpenRoDateRange(reportContext, chunk);
 
@@ -125,7 +119,7 @@ export async function downloadOpenRoYearlyReport(page) {
 
     const chunkPageFiles = await exportAllGridPagesToFiles(reportContext, {
       outputDir: chunkDir,
-      filenameBase,
+      filenameBase: chunkFileName(chunk),
       pageSize: config.openRoYearlyPageSize
     });
     exportFiles.push(...chunkPageFiles);
@@ -141,10 +135,31 @@ export async function downloadOpenRoYearlyReport(page) {
   }
 
   logger.info('Merging Open RO chunks', {
+    dealerCode: dealerKey,
     chunkCount: chunks.length,
     fileCount: exportFiles.length
   });
-  const merged = await mergeExcelFiles(exportFiles);
+  if (!exportFiles.length) {
+    logger.info('No Open RO data found across any date chunks; skipping database save');
+    await cleanupReportExportDir(chunkDir).catch(() => {});
+    return {
+      name: 'Open RO Yearly',
+      sheetName: config.openRoYearlySheetName,
+      dbResult: {
+        action: 'skipped_no_data',
+        rowCount: 0,
+        headerCount: 0
+      },
+      chunkCount: chunks.length,
+      chunkDir,
+      chunkFiles: []
+    };
+  }
+
+  const merged = addDealerCodeToDataset(
+    await mergeExcelFiles(exportFiles),
+    dealerKey
+  );
 
   const dbResult = await saveReportSheetToSupabase({
     brand: 'kia',
@@ -156,6 +171,7 @@ export async function downloadOpenRoYearlyReport(page) {
   await cleanupReportExportDir(chunkDir);
 
   logger.info('Open RO Yearly report finished', {
+    dealerCode: dealerKey,
     sheetName: config.openRoYearlySheetName,
     dbAction: dbResult.action,
     rowCount: merged.rows.length,

@@ -51,3 +51,8 @@ export async function captureFailureScreenshot(page, name, attempt) {
     return null;
   }
 }
+
+export function isBrowserClosedError(error) {
+  const text = `${error?.name ?? ''}\n${error?.message ?? ''}\n${error?.stack ?? ''}`;
+  return /target page.*closed|context.*closed|browser.*closed|has been closed|target closed/i.test(text);
+}

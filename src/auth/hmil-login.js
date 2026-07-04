@@ -103,20 +103,140 @@ async function stateExists(statePath) {
   return fs.access(statePath).then(() => true).catch(() => false);
 }
 
-function loginPageUrl(account) {
-  if (/selectLoginAction\.json/i.test(account.loginUrl)) {
-    return account.loginUrl.replace(/selectLoginAction\.json/i, 'selectLoginMain.dms');
+function sessionMetaPath(statePath) {
+  return `${statePath}.meta.json`;
+}
+
+async function readSessionMeta(statePath) {
+  try {
+    return JSON.parse(await fs.readFile(sessionMetaPath(statePath), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+async function writeSessionMeta(statePath, account) {
+  await ensureDir(statePath);
+  await fs.writeFile(sessionMetaPath(statePath), JSON.stringify({
+    userId: String(account.userId || '').trim(),
+    accountId: account.id,
+    savedAt: new Date().toISOString()
+  }, null, 2));
+}
+
+async function deleteSessionArtifacts(statePath) {
+  await fs.unlink(statePath).catch(() => {});
+  await fs.unlink(sessionMetaPath(statePath)).catch(() => {});
+}
+
+async function migrateLegacySessionArtifacts(account) {
+  const targetPath = account.sessionStatePath;
+  const targetMetaPath = sessionMetaPath(targetPath);
+  const legacyPaths = [...new Set(
+    (account.legacySessionStatePaths || [])
+      .map(filePath => String(filePath || '').trim())
+      .filter(Boolean)
+      .filter(filePath => path.resolve(filePath) !== path.resolve(targetPath))
+  )];
+
+  if (!legacyPaths.length || await stateExists(targetPath)) {
+    return;
   }
 
-  return account.loginUrl;
+  for (const legacyPath of legacyPaths) {
+    if (!(await stateExists(legacyPath))) {
+      continue;
+    }
+
+    await ensureDir(targetPath);
+    await fs.copyFile(legacyPath, targetPath);
+
+    const legacyMetaPath = sessionMetaPath(legacyPath);
+    if (await stateExists(legacyMetaPath)) {
+      await fs.copyFile(legacyMetaPath, targetMetaPath).catch(() => {});
+    }
+    await writeSessionMeta(targetPath, account);
+
+    logger.info(`Migrated legacy ${account.logPrefix} session cache to user-scoped path`, {
+      userId: account.userId,
+      legacyPath,
+      targetPath
+    });
+    return;
+  }
+}
+
+async function sessionMetaMatchesAccount(statePath, account) {
+  const meta = await readSessionMeta(statePath);
+  if (!meta?.userId) {
+    return false;
+  }
+
+  return String(meta.userId).trim().toUpperCase() === String(account.userId || '').trim().toUpperCase();
+}
+
+function normalizeHmilBaseUrl(url) {
+  const cleaned = String(url || 'https://ndms.hmil.net').trim().replace(/\/+$/, '');
+  return cleaned.replace(/\/cmm\/.*$/i, '');
+}
+
+function loginPageUrl(account) {
+  const url = account.loginUrl || 'https://ndms.hmil.net';
+
+  if (/selectLoginAction\.json/i.test(url)) {
+    return url.replace(/selectLoginAction\.json/i, 'selectLoginMain.dms');
+  }
+
+  if (/selectLoginMain\.dms/i.test(url)) {
+    return url;
+  }
+
+  const base = normalizeHmilBaseUrl(url);
+  if (/ndms\.hmil\.net$/i.test(base)) {
+    return `${base}/cmm/cmmi/selectLoginMain.dms`;
+  }
+
+  return url;
+}
+
+function homePageUrl(account) {
+  const url = account.homeUrl || account.loginUrl || 'https://ndms.hmil.net';
+
+  if (/selectHome\.dms/i.test(url)) {
+    return url;
+  }
+
+  const base = normalizeHmilBaseUrl(url);
+  if (/ndms\.hmil\.net$/i.test(base)) {
+    return `${base}/cmm/cmmd/selectHome.dms`;
+  }
+
+  return url;
 }
 
 async function createHmilBrowserSession(account) {
   await ensureDir(account.sessionStatePath);
   await ensureDir(account.downloadDir);
+  await migrateLegacySessionArtifacts(account);
+
+  if (account.forceLogin) {
+    await deleteSessionArtifacts(account.sessionStatePath);
+  }
 
   const savedStorageStateExists = await stateExists(account.sessionStatePath);
-  const hasStorageState = savedStorageStateExists && !account.forceLogin;
+  const metaMatches = savedStorageStateExists
+    ? await sessionMetaMatchesAccount(account.sessionStatePath, account)
+    : false;
+
+  if (savedStorageStateExists && !metaMatches) {
+    logger.warn(`Saved ${account.logPrefix} session metadata missing or wrong user; ignoring cached cookies`, {
+      path: account.sessionStatePath,
+      expectedUserId: account.userId
+    });
+    await deleteSessionArtifacts(account.sessionStatePath);
+  }
+
+  const canReuseStorageState = savedStorageStateExists && metaMatches && !account.forceLogin;
   const browser = await chromium.launch({
     headless: account.headless ?? config.headless,
     slowMo: config.slowMoMs,
@@ -125,19 +245,21 @@ async function createHmilBrowserSession(account) {
 
   const context = await browser.newContext({
     acceptDownloads: true,
-    storageState: hasStorageState ? account.sessionStatePath : undefined
+    storageState: canReuseStorageState ? account.sessionStatePath : undefined
   });
   context.setDefaultTimeout(config.playwrightActionTimeoutMs);
   context.setDefaultNavigationTimeout(config.playwrightNavigationTimeoutMs);
 
   const page = await context.newPage();
-  if (hasStorageState) {
+  if (canReuseStorageState) {
     logger.info(`Loaded saved ${account.logPrefix} Playwright storage state`, {
-      path: account.sessionStatePath
+      path: account.sessionStatePath,
+      userId: account.userId
     });
   } else if (savedStorageStateExists && account.forceLogin) {
-    logger.info(`${account.logPrefix} force login enabled; saved storage state ignored for clean login`, {
-      path: account.sessionStatePath
+    logger.info(`${account.logPrefix} force login enabled; saved storage state ignored for clean OTP login`, {
+      path: account.sessionStatePath,
+      userId: account.userId
     });
   }
 
@@ -145,43 +267,119 @@ async function createHmilBrowserSession(account) {
     browser,
     context,
     page,
-    hasStorageState,
+    hasStorageState: canReuseStorageState,
     savedStorageStateExists,
     close: () => browser.close()
   };
 }
 
-async function hasExistingHmilSession(page, account) {
+async function verifyRestoredSessionUser(page, account) {
+  const expectedUserId = String(account.userId || '').trim().toUpperCase();
+  if (!expectedUserId) {
+    return true;
+  }
+
+  let bodyText = '';
   try {
-    logger.info(`Checking saved ${account.logPrefix} DMS session`, { url: account.homeUrl });
-    await page.goto(account.homeUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: Math.min(config.loginTimeoutMs, account.sessionCheckTimeoutMs)
-    });
-
-    const menuVisible = await page.locator('#gnb, li[class*="nav_"], a.menuItem').first()
-      .isVisible({ timeout: 3000 })
-      .catch(() => false);
-    if (menuVisible) {
-      logger.info(`${account.logPrefix} session restored; OTP login skipped`);
-      return true;
-    }
-
-    const loginVisible = await page.locator(HMIL_PASSWORD_SELECTORS.join(',')).first()
-      .isVisible({ timeout: 1500 })
-      .catch(() => false);
-    if (loginVisible) {
-      logger.warn(`Saved ${account.logPrefix} session is expired or not accepted`);
+    bodyText = (await page.locator('body').innerText({ timeout: 5000 })).toUpperCase();
+  } catch {
+    if (account.id?.startsWith('am-platinum')) {
+      logger.warn(`Could not read ${account.logPrefix} home page; forcing fresh OTP login`);
       return false;
     }
+    return true;
+  }
 
-    return false;
-  } catch (error) {
-    logger.warn(`Could not verify saved ${account.logPrefix} session; full login will be attempted`, {
-      message: error.message
-    });
+  if (bodyText.includes(expectedUserId)) {
+    return true;
+  }
+
+  const historicalUserId = String(config.amPlatinumHistoricalUserId || 'MIS12345').trim().toUpperCase();
+  const currentUserId = String(config.amPlatinumUserId || 'MIS1988').trim().toUpperCase();
+
+  if (account.id === 'am-platinum' && bodyText.includes(historicalUserId) && !bodyText.includes(currentUserId)) {
+    logger.warn(`Saved ${account.logPrefix} session belongs to ${historicalUserId}, not ${expectedUserId}; forcing fresh OTP login`);
     return false;
   }
+
+  if (account.id === 'am-platinum-historical' && bodyText.includes(currentUserId) && !bodyText.includes(historicalUserId)) {
+    logger.warn(`Saved ${account.logPrefix} session belongs to ${currentUserId}, not ${expectedUserId}; forcing fresh OTP login`);
+    return false;
+  }
+
+  if (account.id?.startsWith('am-platinum')) {
+    logger.info(`Could not confirm ${expectedUserId} from restored ${account.logPrefix} page text, but no other Platinum login was detected; reusing saved session`, {
+      expectedUserId
+    });
+    return true;
+  }
+
+  return true;
+}
+
+async function hasExistingHmilSession(page, account) {
+  const url = homePageUrl(account);
+  const sessionCheckTimeoutMs = Math.min(config.loginTimeoutMs, account.sessionCheckTimeoutMs);
+  const maxAttempts = account.id?.startsWith('am-platinum') ? 2 : 1;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      logger.info(`Checking saved ${account.logPrefix} DMS session`, {
+        url,
+        attempt,
+        maxAttempts,
+        timeoutMs: sessionCheckTimeoutMs
+      });
+      await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: sessionCheckTimeoutMs
+      });
+
+      const menuVisible = await page.locator('#gnb, li[class*="nav_"], a.menuItem').first()
+        .isVisible({ timeout: 3000 })
+        .catch(() => false);
+      if (menuVisible) {
+        if (!(await verifyRestoredSessionUser(page, account))) {
+          return false;
+        }
+
+        logger.info(`${account.logPrefix} session restored; OTP login skipped`, {
+          userId: account.userId
+        });
+        return true;
+      }
+
+      const loginVisible = await page.locator(HMIL_PASSWORD_SELECTORS.join(',')).first()
+        .isVisible({ timeout: 1500 })
+        .catch(() => false);
+      if (loginVisible) {
+        logger.warn(`Saved ${account.logPrefix} session is expired or not accepted`);
+        return false;
+      }
+
+      return false;
+    } catch (error) {
+      const canRetry = attempt < maxAttempts && /timeout/i.test(String(error?.message || ''));
+      if (canRetry) {
+        logger.warn(`Saved ${account.logPrefix} session check timed out; retrying before OTP fallback`, {
+          attempt,
+          maxAttempts,
+          message: error.message
+        });
+        await sleep(1500);
+        continue;
+      }
+
+      logger.warn(`Could not verify saved ${account.logPrefix} session; full login will be attempted`, {
+        attempt,
+        maxAttempts,
+        message: error.message
+      });
+      return false;
+    }
+  }
+
+  return false;
 }
 
 async function performOtpLogin(page, context, account) {
@@ -203,7 +401,9 @@ async function performOtpLogin(page, context, account) {
     timeout: 10000,
     label: 'user id'
   });
+  await userIdInput.fill('');
   await userIdInput.fill(account.userId);
+  logger.info(`${account.logPrefix} login user id set`, { userId: account.userId });
 
   const passwordInput = await firstVisibleHmil(page, HMIL_PASSWORD_SELECTORS, {
     timeout: 10000,
@@ -225,10 +425,14 @@ async function performOtpLogin(page, context, account) {
     perSelectorTimeout: config.otpTimeoutMs
   });
   logger.info(`${account.logPrefix} OTP input is ready; waiting for OTP provider`, {
-    provider: config.otpProvider,
+    provider: account.otpProvider ?? config.otpProvider,
     purpose: account.otpPurpose
   });
-  const otp = await getOtp({ notBefore: otpRequestedAt, purpose: account.otpPurpose });
+  const otp = await getOtp({
+    notBefore: otpRequestedAt,
+    purpose: account.otpPurpose,
+    provider: account.otpProvider
+  });
   await otpInput.fill(otp);
 
   logger.info(`Submitting ${account.logPrefix} OTP`);
@@ -245,11 +449,12 @@ async function performOtpLogin(page, context, account) {
     .catch(() => false);
 
   if (!menuVisible || /selectLoginAction\.json/i.test(page.url())) {
+    const resolvedHomeUrl = homePageUrl(account);
     logger.warn(`${account.logPrefix} home menu not visible after OTP submit; opening home page directly`, {
       currentUrl: page.url(),
-      homeUrl: account.homeUrl
+      homeUrl: resolvedHomeUrl
     });
-    await page.goto(account.homeUrl, {
+    await page.goto(resolvedHomeUrl, {
       waitUntil: 'domcontentloaded',
       timeout: config.loginTimeoutMs
     });
@@ -258,6 +463,28 @@ async function performOtpLogin(page, context, account) {
   }
 
   await saveSessionStateToPath(context, account.sessionStatePath);
+  await writeSessionMeta(account.sessionStatePath, account);
+  logger.info(`${account.logPrefix} session saved for user`, {
+    userId: account.userId,
+    path: account.sessionStatePath
+  });
+}
+
+async function withGdmsOtpLock(account, fn) {
+  if (!config.gdmsOtpLockEnabled) {
+    logger.info(`${account.logPrefix} GDMS OTP lock disabled; proceeding without cross-process lock`);
+    return fn();
+  }
+
+  return withDirectoryLock(
+    config.gdmsOtpLockDir,
+    fn,
+    {
+      label: `${account.logPrefix} GDMS OTP login`,
+      timeoutMs: config.gdmsOtpLockTimeoutMs,
+      staleMs: config.gdmsOtpLockStaleMs
+    }
+  );
 }
 
 export async function loginToHmilDms(account = createGdmsAccountProfile('hmil')) {
@@ -265,37 +492,35 @@ export async function loginToHmilDms(account = createGdmsAccountProfile('hmil'))
   requireSecret(account.passwordEnvName, account.password);
   logger.info(`${account.logPrefix} DMS login started`);
 
-  const session = await createHmilBrowserSession(account);
-  const { browser, context, page, hasStorageState } = session;
+  return withGdmsOtpLock(account, async () => {
+    const session = await createHmilBrowserSession(account);
+    const { browser, context, page, hasStorageState } = session;
 
-  try {
-    if (hasStorageState && await hasExistingHmilSession(page, account)) {
-      return { browser, context, page, reusedSession: true, close: session.close };
-    }
-
-    await withDirectoryLock(
-      config.gdmsOtpLockDir,
-      () => performOtpLogin(page, context, account),
-      {
-        label: `${account.logPrefix} GDMS OTP login`,
-        timeoutMs: config.gdmsOtpLockTimeoutMs,
-        staleMs: config.gdmsOtpLockStaleMs
+    try {
+      if (hasStorageState && await hasExistingHmilSession(page, account)) {
+        logger.info(`${account.logPrefix} DMS login success`, { userId: account.userId, reusedSession: true });
+        return { browser, context, page, reusedSession: true, close: session.close };
       }
-    );
-    logger.info(`${account.logPrefix} DMS login success`);
 
-    return { browser, context, page, reusedSession: false, close: session.close };
-  } catch (error) {
-    const screenshotPath = path.join(config.rootDir, `${account.id}-login-error.png`);
-    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
-    logger.error(`${account.logPrefix} DMS login failure`, error);
-    logger.info(`Saved ${account.logPrefix} failure screenshot`, { path: screenshotPath });
-    await browser.close();
-    throw error;
-  }
+      if (hasStorageState) {
+        await deleteSessionArtifacts(account.sessionStatePath);
+      }
+
+      await performOtpLogin(page, context, account);
+      logger.info(`${account.logPrefix} DMS login success`, { userId: account.userId, reusedSession: false });
+      return { browser, context, page, reusedSession: false, close: session.close };
+    } catch (error) {
+      const screenshotPath = path.join(config.rootDir, `${account.id}-login-error.png`);
+      await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+      logger.error(`${account.logPrefix} DMS login failure`, error);
+      logger.info(`Saved ${account.logPrefix} failure screenshot`, { path: screenshotPath });
+      await browser.close();
+      throw error;
+    }
+  });
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const session = await loginToHmilDms();
   await session.close();
 }

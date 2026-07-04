@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../src/config.js';
+import { historicalStartDateForReport } from '../src/am-platinum/historical-date-policy.js';
 import { analyzeAmPlatinumPerDealerCoverage } from './analyze-am-platinum-per-dealer-coverage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +38,14 @@ function operationWiseComplete(state) {
 
 function slugifyReportId(reportId) {
   return String(reportId).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
+
+function historicalOtpEnv() {
+  const otpProvider = process.env.AM_PLATINUM_HISTORICAL_OTP_PROVIDER ?? 'manual';
+  return {
+    OTP_PROVIDER: otpProvider,
+    AM_PLATINUM_HISTORICAL_OTP_PROVIDER: otpProvider
+  };
 }
 
 function runPm2(args) {
@@ -111,7 +120,8 @@ async function runOperationWiseIfNeeded() {
 
   await runNodeScript('scripts/recover-am-platinum-operation-wise.js', {
     AM_PLATINUM_HISTORICAL_HEADLESS: process.env.AM_PLATINUM_HISTORICAL_HEADLESS ?? 'false',
-    LOG_SERVICE_NAME: 'am-platinum-historical-pipeline'
+    LOG_SERVICE_NAME: 'am-platinum-historical-pipeline',
+    ...historicalOtpEnv()
   });
 
   const finalState = await readJson(OPERATION_WISE_STATE);
@@ -132,44 +142,27 @@ async function loadExistingQueueAnalysis() {
 }
 
 async function buildHistoricalQueue() {
-  console.log('\nPhase 2: Building PRIORITY-ONLY historical queue...');
-
-  const PRIORITY_REPORTS = [
-    'hyundai-repair-order-list',
-    'hyundai-ro-billing-report',
-    'hyundai-operation-wise-analysis-report'
-  ];
+  console.log('\nPhase 2: Building full historical queue from coverage analysis...');
 
   let analysis;
   try {
-    const fullAnalysis = await analyzeAmPlatinumPerDealerCoverage({ writeQueue: false });
-    const priorityRuns = fullAnalysis.groupedRuns.filter(run => 
-      PRIORITY_REPORTS.includes(run.reportId)
+    analysis = await analyzeAmPlatinumPerDealerCoverage({ writeQueue: true });
+    console.log(`  Queue size: ${analysis.queue?.length ?? 0} dealer/report pair(s)`);
+    console.log(`  Grouped runs: ${analysis.groupedRuns.length}`);
+    analysis.groupedRuns.forEach(r =>
+      console.log(`    - ${r.runner}: ${r.reportId} → ${r.dealers.join(', ')}`)
     );
-
-    console.log(`  Filtered to ${priorityRuns.length} priority report(s) out of ${fullAnalysis.groupedRuns.length} total`);
-    priorityRuns.forEach(r => console.log(`    - ${r.reportId} → ${r.dealers.join(', ')} (${r.runner})`));
-
-    analysis = {
-      queue: fullAnalysis.queue.filter(q => PRIORITY_REPORTS.includes(q.reportId)),
-      groupedRuns: priorityRuns
-    };
   } catch (error) {
     console.warn(`  Coverage analysis failed: ${error.message}`);
     analysis = await loadExistingQueueAnalysis();
     if (!analysis) throw error;
-
-    analysis.groupedRuns = analysis.groupedRuns.filter(run => 
-      PRIORITY_REPORTS.includes(run.reportId)
-    );
-    analysis.queue = analysis.queue.filter(q => PRIORITY_REPORTS.includes(q.reportId));
   }
 
   await writePipelineState({
     phase: 'queue_built',
     queueSize: analysis.queue?.length ?? 0,
     groupedRuns: analysis.groupedRuns,
-    mode: 'priority-only'
+    mode: 'full-queue'
   });
   return analysis;
 }
@@ -200,7 +193,8 @@ async function runQueuedHistoricalBackfills(groupedRuns) {
       AM_PLATINUM_HISTORICAL_DEALERS: run.dealers.join(','),
       AM_PLATINUM_HISTORICAL_HEADLESS: process.env.AM_PLATINUM_HISTORICAL_HEADLESS ?? 'false',
       AM_PLATINUM_HISTORICAL_FORCE_LOGIN: 'false',
-      LOG_SERVICE_NAME: 'am-platinum-historical-pipeline'
+      LOG_SERVICE_NAME: 'am-platinum-historical-pipeline',
+      ...historicalOtpEnv()
     };
 
     try {
@@ -213,7 +207,7 @@ async function runQueuedHistoricalBackfills(groupedRuns) {
       } else {
         await runNodeScript('scripts/run-am-platinum-historical-backfill.js', {
           ...commonEnv,
-          AM_PLATINUM_HISTORICAL_START_DATE: '2021-01-01',
+          AM_PLATINUM_HISTORICAL_START_DATE: historicalStartDateForReport(run.reportId),
           AM_PLATINUM_HISTORICAL_STOP_ON_FAILURE: 'true',
           AM_PLATINUM_HISTORICAL_RESUME_FROM_STATE: 'true',
           AM_PLATINUM_HISTORICAL_SKIP_EXISTING: 'false',
@@ -270,21 +264,13 @@ async function main() {
   const initialAnalysis = await buildHistoricalQueue();
   await runQueuedHistoricalBackfills(initialAnalysis.groupedRuns);
 
-  const PRIORITY_REPORTS = [
-    'hyundai-repair-order-list',
-    'hyundai-ro-billing-report',
-    'hyundai-operation-wise-analysis-report'
-  ];
-
   const finalAnalysis = await analyzeAmPlatinumPerDealerCoverage({ writeQueue: true });
-  const priorityQueue = finalAnalysis.queue.filter(q => PRIORITY_REPORTS.includes(q.reportId));
-  if (priorityQueue.length > 0) {
-    console.warn(`\n⚠️  ${priorityQueue.length} PRIORITY dealer/report pair(s) still missing:`);
-    priorityQueue.forEach(q => console.warn(`    - ${q.dealer} | ${q.reportId} | ${q.reason}`));
+  if (finalAnalysis.queue.length > 0) {
+    console.warn(`\n⚠️  ${finalAnalysis.queue.length} dealer/report pair(s) still missing after pipeline:`);
+    finalAnalysis.queue.forEach(q => console.warn(`    - ${q.dealer} | ${q.reportId} | ${q.reason}`));
   } else {
-    console.log('\n✅ All priority historical reports have data from Jan 2021');
+    console.log('\n✅ All historical reports have data from Jan 2021 for all dealers');
   }
-  console.log(`  (Other reports: ${finalAnalysis.queue.length - priorityQueue.length} gaps — will get current month only via cron)`);
 
   await startPlatinumCron();
 

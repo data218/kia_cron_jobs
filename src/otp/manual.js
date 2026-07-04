@@ -1,7 +1,7 @@
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 
-export async function getOtpManual({ timeoutMs }) {
+export async function getOtpManual({ timeoutMs, purpose = 'DMS' }) {
   const rl = readline.createInterface({ input, output });
 
   try {
@@ -10,7 +10,7 @@ export async function getOtpManual({ timeoutMs }) {
     });
 
     const answer = await Promise.race([
-      rl.question('Enter KIA DMS OTP: '),
+      rl.question(`Enter ${String(purpose).toUpperCase()} OTP: `),
       timeout
     ]);
 

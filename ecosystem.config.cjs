@@ -1,9 +1,8 @@
 module.exports = {
   apps: [
     {
-      name: 'kia-cron-job',
-      script: './src/cron/scheduler.js',
-      args: '--scheduler',
+      name: 'kia-worker',
+      script: './apps/kia/runner/worker.js',
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
@@ -11,10 +10,48 @@ module.exports = {
       max_memory_restart: '1G',
       time: true,
       merge_logs: true,
-      out_file: './logs/pm2-out.log',
-      error_file: './logs/pm2-error.log',
+      out_file: './apps/kia/runtime/pm2-out.log',
+      error_file: './apps/kia/runtime/pm2-error.log',
       env: {
-        NODE_ENV: 'production'
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'kia-worker',
+        KIA_WORKER_ENABLED: 'true'
+      }
+    },
+    {
+      name: 'platinum-worker',
+      script: './apps/platinum/runner/worker.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './apps/platinum/runtime/pm2-out.log',
+      error_file: './apps/platinum/runtime/pm2-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'platinum-worker',
+        PLATINUM_WORKER_ENABLED: 'false'
+      }
+    },
+    {
+      name: 'hmil-worker',
+      script: './apps/hmil/runner/worker.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './apps/hmil/runtime/pm2-out.log',
+      error_file: './apps/hmil/runtime/pm2-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'hmil-worker',
+        HMIL_WORKER_ENABLED: 'false'
       }
     },
     {
@@ -53,12 +90,41 @@ module.exports = {
         NODE_ENV: 'production',
         LOG_SERVICE_NAME: 'hmil-historical-backfill',
         HMIL_HISTORICAL_START_DATE: '2021-01-01',
-        HMIL_HISTORICAL_REPORTS: 'hyundai-repair-order-list,hyundai-ro-billing-report,hyundai-call-center-complaints,hyundai-demo-car-list,hyundai-service-appointment,hyundai-trust-package-bodyshop-sot,hyundai-trust-package-sot-super,hyundai-trust-package-package-list,hyundai-psf-yearly,hyundai-ew-report,hyundai-adv-wise-lubricants-vas,hyundai-operation-wise-analysis-report',
-        HMIL_HISTORICAL_DEALERS: 'N5203,N5701,N5804,N5806,N5D00,N6815,N6819,N6826',
+        HMIL_HISTORICAL_END_DATE: '2026-06-16',
+        HMIL_HISTORICAL_REPORTS: 'hyundai-repair-order-list,hyundai-ro-billing-report,hyundai-operation-wise-analysis-report',
+        HMIL_HISTORICAL_DEALERS: 'N5203,N5701,N5804,N5806,N6815,N6819,N6826',
         HMIL_HISTORICAL_FORCE_LOGIN: 'false',
         HMIL_HISTORICAL_HEADLESS: 'false',
-        HMIL_HISTORICAL_STOP_ON_FAILURE: 'true',
+        HMIL_HISTORICAL_OTP_PROVIDER: 'webhook',
+        HMIL_HISTORICAL_STOP_ON_FAILURE: 'false',
         HMIL_HISTORICAL_RESUME_FROM_STATE: 'true'
+      }
+    },
+    {
+      name: 'hmil-ro-billing-2008-2020-once',
+      script: './scripts/run-hmil-ro-billing-2008-2020-once.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      stop_exit_codes: [0],
+      restart_delay: 30000,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-hmil-ro-billing-2008-2020-out.log',
+      error_file: './logs/pm2-hmil-ro-billing-2008-2020-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'hmil-ro-billing-2008-2020',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_START_DATE: '2008-01-01',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_END_DATE: '2020-12-31',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_REPORTS: 'hyundai-ro-billing-report',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_OTP_PROVIDER: 'webhook',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_RESUME_FROM_STATE: 'true',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_STOP_ON_FAILURE: 'false',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_SKIP_EXISTING: 'false',
+        HMIL_RO_BILLING_2008_2020_HISTORICAL_HEADLESS: 'false'
       }
     },
     {
@@ -76,7 +142,13 @@ module.exports = {
       error_file: './logs/pm2-am-platinum-error.log',
       env: {
         NODE_ENV: 'production',
-        LOG_SERVICE_NAME: 'am-platinum-cron-job'
+        LOG_SERVICE_NAME: 'am-platinum-cron-job',
+        OTP_PROVIDER: 'webhook',
+        AM_PLATINUM_CRON_SCHEDULE: '0 10,16 * * *',
+        AM_PLATINUM_CRON_TIMEZONE: 'Asia/Kolkata',
+        AM_PLATINUM_CURRENT_MONTH_ONLY: 'true',
+        GDMS_OTP_LOCK_ENABLED: 'true',
+        AM_PLATINUM_SKIP_PHASE1: 'false'
       }
     },
     // Operation-wise is NOT a separate PM2 app — it runs inside am-platinum-historical-pipeline
@@ -133,6 +205,66 @@ module.exports = {
       }
     },
     {
+      name: 'hmil-warranty-cron-job',
+      script: './src/cron/hmil-warranty-scheduler.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-hmil-warranty-out.log',
+      error_file: './logs/pm2-hmil-warranty-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'hmil-warranty-cron-job',
+        OTP_PROVIDER: 'webhook',
+        HMIL_WARRANTY_HISTORICAL_START_DATE: '2025-01-01',
+        HMIL_WARRANTY_CRON_TIMEZONE: 'Asia/Kolkata',
+        HMIL_WARRANTY_SCHEDULED_RESUME: 'true',
+        HMIL_WARRANTY_FORCE_LOGIN: 'false',
+        GDMS_OTP_LOCK_ENABLED: 'true'
+      }
+    },
+    {
+      name: 'kia-rsa-cron-job',
+      script: './src/cron/kia-rsa-scheduler.js',
+      args: '--scheduler',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-kia-rsa-out.log',
+      error_file: './logs/pm2-kia-rsa-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'kia-rsa-cron-job',
+        HEADLESS: 'false',
+        RSA_HEADLESS: 'false'
+      }
+    },
+    {
+      name: 'kia-cron-scheduler',
+      script: './src/cron/scheduler.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-kia-cron-scheduler-out.log',
+      error_file: './logs/pm2-kia-cron-scheduler-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'kia-cron-scheduler'
+      }
+    },
+    {
       name: 'kia-otp-webhook',
       script: './src/otp/webhook-server.js',
       instances: 1,
@@ -165,20 +297,30 @@ module.exports = {
       }
     },
     {
-      name: 'dashboard-server',
-      script: './dashboard/server.js',
+      name: 'restart-db',
+      script: './scripts/restart-db.js',
       instances: 1,
       exec_mode: 'fork',
-      autorestart: true,
+      autorestart: false,
       watch: false,
-      max_memory_restart: '512M',
-      time: true,
-      merge_logs: true,
-      out_file: './logs/pm2-dashboard-out.log',
-      error_file: './logs/pm2-dashboard-error.log',
+      out_file: './logs/pm2-restart-db-out.log',
+      error_file: './logs/pm2-restart-db-error.log',
       env: {
-        NODE_ENV: 'production',
-        DASHBOARD_PORT: 3456
+        NODE_ENV: 'production'
+      }
+    },
+    {
+      name: 'clean-memory',
+      script: './scripts/clean-memory.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      cron_restart: '0 22 * * *',
+      watch: false,
+      out_file: './logs/pm2-clean-memory-out.log',
+      error_file: './logs/pm2-clean-memory-error.log',
+      env: {
+        NODE_ENV: 'production'
       }
     }
   ]

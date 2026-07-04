@@ -37,7 +37,7 @@ function normalizeRowValue(value) {
 function rowSignature(row) {
   const entries = Object.entries(row ?? {})
     .map(([key, value]) => [normalizeHeader(key), normalizeRowValue(value)])
-    .filter(([key, value]) => key && value !== '')
+    .filter(([key, value]) => key && value !== '' && key.toLowerCase() !== 'source_login_id')
     .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
 
   return JSON.stringify(entries);
@@ -128,23 +128,57 @@ export async function saveReportSheetToSupabase({
   headers,
   rows
 }) {
-  if (!Array.isArray(headers) || !headers.length) {
-    throw new Error('Cannot save report without headers');
-  }
-
   if (!Array.isArray(rows)) {
     throw new Error('Cannot save report because rows must be an array');
   }
 
-  const supabase = createSupabaseClient();
-  const table = config.supabaseReportsTable;
-  const uploadedAt = new Date().toISOString();
+  const headerCount = Array.isArray(headers) ? headers.length : 0;
+  if (!headerCount || !rows.length) {
+    logger.info('Skipping Supabase save because report has no exportable rows', {
+      brand,
+      sheetName,
+      headerCount,
+      rowCount: rows.length
+    });
+
+    return {
+      action: 'no_rows',
+      uploadedAt: new Date().toISOString(),
+      headerCount,
+      rowCount: 0
+    };
+  }
 
   const relationalResult = await saveRelationalReport({
     sheetName,
     headers,
     rows
   });
+
+  if (!config.supabaseJsonBackupEnabled) {
+    logger.info('Supabase JSON backup is disabled; skipping JSON backup save', {
+      brand,
+      sheetName,
+      relationalTable: relationalResult.tableName,
+      relationalInsertedRowCount: relationalResult.insertedRowCount,
+      relationalDuplicateRowCount: relationalResult.duplicateRowCount
+    });
+
+    return {
+      action: 'relational_saved_only',
+      uploadedAt: new Date().toISOString(),
+      headerCount: headers.length,
+      rowCount: rows.length,
+      addedRowCount: relationalResult.insertedRowCount,
+      duplicateRowCount: relationalResult.duplicateRowCount,
+      relationalResult,
+      jsonBackupSkipped: true
+    };
+  }
+
+  const supabase = createSupabaseClient();
+  const table = config.supabaseReportsTable;
+  const uploadedAt = new Date().toISOString();
 
   const { data: existingRows, error: selectError } = await supabase
     .from(table)

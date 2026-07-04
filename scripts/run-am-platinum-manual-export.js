@@ -5,6 +5,7 @@ import { createGdmsAccountProfile } from '../src/accounts/gdms-account-profile.j
 import { logger } from '../src/utils/logger.js';
 import { findContextWithVisibleSelector } from '../src/playwright/frame-resolver.js';
 import { loginToHmilDms } from '../src/auth/hmil-login.js';
+import { changeActiveDealerForDms } from '../src/navigation/dealer-change.js';
 import { openAdvWiseLubricantsVasReport } from '../src/navigation/kia-menu.js';
 import { selectKendoPagerSize, waitForKendoGridIdle } from '../src/reports/grid.js';
 import { exportAllGridPagesToFiles, mergeExcelFiles, cleanupReportExportDir } from '../src/reports/paged-export.js';
@@ -34,7 +35,7 @@ const REPORTS = [
   }
 ];
 
-const DEALERS = ['N5211', 'N6824', 'N6828'];
+const DEALERS = ['N5211', 'N6250', 'N6828'];
 
 async function resolveDateContext(page, label) {
   const context = await findContextWithVisibleSelector(page, '#startDate', {
@@ -191,7 +192,13 @@ async function runReportForDealer(page, report, dealerCode) {
 }
 
 async function main() {
-  const account = createGdmsAccountProfile('am-platinum');
+  const account = {
+    ...createGdmsAccountProfile('am-platinum'),
+    otpProvider: process.env.AM_PLATINUM_HISTORICAL_OTP_PROVIDER
+      || config.amPlatinumHistoricalOtpProvider
+      || 'manual',
+    headless: false
+  };
   let loginSession;
   const results = [];
 
@@ -224,7 +231,19 @@ async function main() {
     await sleep(2000);
     
     // Run reports for each dealer
+    let activeDealerCode = null;
     for (const dealer of DEALERS) {
+      if (activeDealerCode !== dealer) {
+        logger.info(`Switching active dealer to ${dealer}`);
+        await changeActiveDealerForDms(page, dealer, {
+          homeUrl: account.homeUrl,
+          systemLabel: account.systemLabel
+        });
+        activeDealerCode = dealer;
+        await openAdvWiseLubricantsVasReport(page);
+        await sleep(2000);
+      }
+
       for (const report of REPORTS) {
         const result = await runReportForDealer(page, report, dealer);
         results.push(result);
@@ -249,7 +268,10 @@ async function main() {
   
   for (const result of results) {
     const status = result.status === 'success' ? '✅' : '❌';
-    logger.info(`${status} ${result.report} - ${result.dealer}: ${result.rowCount} rows (${result.pageCount} pages)`);
+    const detail = result.status === 'success'
+      ? `${result.rowCount} rows (${result.pageCount} pages)`
+      : result.error ?? result.status;
+    logger.info(`${status} ${result.report} - ${result.dealer}: ${detail}`);
   }
   
   const successCount = results.filter(r => r.status === 'success').length;

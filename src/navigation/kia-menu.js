@@ -1,5 +1,9 @@
 import { logger } from '../utils/logger.js';
 
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function clickLocator(locator, label, timeout = 15000) {
   logger.info(`Opening ${label}`);
   const page = typeof locator.page === 'function' ? locator.page() : null;
@@ -33,6 +37,96 @@ async function ensureMenuTargetVisible(menuButton, targetLocator, label, timeout
   }
 
   await targetLocator.waitFor({ state: 'visible', timeout });
+}
+
+async function openSalesMisReport(page, { sectionText, reportText, label }) {
+  logger.info(`Navigating to MIS > ${sectionText} > ${reportText}`);
+
+  const salesMisMenu = page.locator('li.nav_sal_mis').first();
+  await salesMisMenu.waitFor({ state: 'visible', timeout: 15000 });
+
+  const salesMisMenuButton = page.locator('li.nav_sal_mis > a[title="MIS"], li.nav_sal_mis > a').first();
+  const sectionLink = page
+    .locator('li.nav_sal_mis a')
+    .filter({ hasText: new RegExp(`^${escapeRegex(sectionText)}$`) })
+    .first();
+  const reportLink = page
+    .locator('li.nav_sal_mis a.menuItem, li.nav_sal_mis a')
+    .filter({ hasText: new RegExp(`^${escapeRegex(reportText)}$`) })
+    .first();
+
+  await ensureMenuTargetVisible(salesMisMenuButton, sectionLink, 'Sales MIS sidebar menu');
+
+  if (!await reportLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await clickLocator(sectionLink, `${sectionText} menu`);
+  }
+
+  await clickLocator(reportLink, label, 30000);
+  logger.info('Sales MIS menu item clicked', {
+    sectionText,
+    reportText
+  });
+}
+
+async function openSalesMenuReport(page, { sectionText, reportText, label }) {
+  logger.info(`Navigating to Sales > ${sectionText} > ${reportText}`);
+
+  const salesMenu = page.locator('li.nav_sal').first();
+  await salesMenu.waitFor({ state: 'visible', timeout: 15000 });
+
+  const salesMenuButton = page.locator('li.nav_sal > a').first();
+  const sectionLink = page
+    .locator('li.nav_sal a')
+    .filter({ hasText: new RegExp(`^${escapeRegex(sectionText)}$`) })
+    .first();
+  const reportLink = page
+    .locator('li.nav_sal a.menuItem, li.nav_sal a')
+    .filter({ hasText: new RegExp(`^${escapeRegex(reportText)}$`) })
+    .first();
+
+  await ensureMenuTargetVisible(salesMenuButton, sectionLink, 'Sales sidebar menu');
+
+  if (!await reportLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await clickLocator(sectionLink, `${sectionText} menu`);
+  }
+
+  await clickLocator(reportLink, label, 30000);
+  logger.info('Sales menu item clicked', {
+    sectionText,
+    reportText
+  });
+}
+
+export async function openBookingReport(page) {
+  await openSalesMisReport(page, {
+    sectionText: 'Monthly Reports',
+    reportText: 'Booking Report',
+    label: 'Booking Report page'
+  });
+}
+
+export async function openSalesReport(page) {
+  await openSalesMisReport(page, {
+    sectionText: 'Monthly Reports',
+    reportText: 'Sales Report',
+    label: 'Sales Report page'
+  });
+}
+
+export async function openEnquiryReport(page) {
+  await openSalesMisReport(page, {
+    sectionText: 'Monthly Reports',
+    reportText: 'Enquiry Report',
+    label: 'Enquiry Report page'
+  });
+}
+
+export async function openAccessoriesCounterSalesReport(page) {
+  await openSalesMisReport(page, {
+    sectionText: 'MIS Sales',
+    reportText: 'Accessories Counter Sales Report',
+    label: 'Accessories Counter Sales Report page'
+  });
 }
 
 export async function openRoBillingReport(page) {
@@ -356,6 +450,14 @@ export async function openDemoCarListReport(page) {
   logger.info('Purchase Report menu item clicked');
 }
 
+export async function openPurchaseReport(page) {
+  await openSalesMisReport(page, {
+    sectionText: 'Monthly Reports',
+    reportText: 'Purchase Report',
+    label: 'Purchase Report page'
+  });
+}
+
 export async function openDealerChangePage(page) {
   logger.info('Navigating to Master > Personal Info > Dealer Change');
 
@@ -391,4 +493,12 @@ export async function openDealerChangePage(page) {
   await clickLocator(dealerChangeLink, 'Dealer Change page', 5000);
   await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
   logger.info('Dealer Change menu item clicked');
+}
+
+export async function openDealerVehicleStockMgtReport(page) {
+  await openSalesMenuReport(page, {
+    sectionText: 'Order/Stock',
+    reportText: 'Dealer Vehicle Stock Mgt',
+    label: 'Dealer Vehicle Stock Mgt page'
+  });
 }

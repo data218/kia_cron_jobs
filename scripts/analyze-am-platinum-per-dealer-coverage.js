@@ -1,6 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../src/config.js';
+import { historicalStartDateForReport } from '../src/am-platinum/historical-date-policy.js';
+import {
+  applyPortalAcceptancesToTableResult,
+  loadPortalEmptyAcceptances,
+  refreshPortalEmptyAcceptancesFromPriorityStates
+} from '../src/am-platinum/portal-empty-acceptance.js';
 import { quoteIdentifier, withPostgresClient } from '../src/supabase/postgres.js';
 import { toIsoDate } from '../src/utils/date-range.js';
 
@@ -8,11 +14,15 @@ const TARGET_START = '2021-01-01';
 const TARGET_END = toIsoDate(new Date());
 const CURRENT_MONTH_START = `${TARGET_END.slice(0, 7)}-01`;
 
+function targetStartForReport(reportId) {
+  return historicalStartDateForReport(reportId);
+}
+
 const QUEUE_FILE = path.join(config.logsDir, 'am-platinum-historical-queue.json');
 
 const DEALERS = config.amPlatinumDealerCodes?.length
   ? config.amPlatinumDealerCodes
-  : ['N5211', 'N6824', 'N6828'];
+  : ['N5211', 'N6250', 'N6828'];
 
 const TABLE_SPECS = [
   {
@@ -25,6 +35,7 @@ const TABLE_SPECS = [
     table: 'am_platinum_ro_billing_report',
     reportId: 'hyundai-ro-billing-report',
     dateColumns: ['bill_date'],
+    dealerColumn: 'dealer_code',
     runner: 'historical'
   },
   {
@@ -34,15 +45,21 @@ const TABLE_SPECS = [
     runner: 'historical'
   },
   {
+    table: 'am_platinum_customer_complaint_list',
+    reportId: 'hyundai-customer-complaint-list',
+    dateColumns: ['complaint_date', 'call_date', 'created_date'],
+    runner: 'historical'
+  },
+  {
     table: 'am_platinum_demo_car_list',
     reportId: 'hyundai-demo-car-list',
-    dateColumns: ['reg_date', 'registration_date', 'invoice_date'],
+    dateColumns: ['hmi_invoice_date', 'reg_date', 'registration_date', 'invoice_date'],
     runner: 'historical'
   },
   {
     table: 'am_platinum_service_appointment',
     reportId: 'hyundai-service-appointment',
-    dateColumns: ['appointment_date', 'booking_date', 'a_t_date_time'],
+    dateColumns: ['b_t_date_time', 'appointment_date', 'booking_date', 'a_t_date_time'],
     runner: 'historical'
   },
   {
@@ -71,7 +88,7 @@ const TABLE_SPECS = [
     table: 'am_platinum_adv_wise_lubricants_vas',
     reportId: 'hyundai-adv-wise-lubricants-vas',
     dateColumns: ['bill_date', 'invoice_date', 'ro_date', 'r_o_date'],
-    runner: 'optimized-historical'
+    runner: 'historical'
   },
   {
     table: 'am_platinum_operation_wise_analysis_report',
@@ -119,12 +136,12 @@ function toDateOnly(value) {
   return String(value).slice(0, 10);
 }
 
-function hasFullDateCoverage(minDate, maxDate) {
+function hasFullDateCoverage(minDate, maxDate, targetStart = TARGET_START) {
   if (!minDate || !maxDate) return false;
-  return minDate <= TARGET_START && maxDate >= CURRENT_MONTH_START;
+  return minDate <= targetStart && maxDate >= CURRENT_MONTH_START;
 }
 
-async function analyzeDealerCoverage(client, { table, dealerColumn, dateColumn, dealerCode, reportTypes }) {
+async function analyzeDealerCoverage(client, { table, dealerColumn, dateColumn, dealerCode, reportTypes, targetStart = TARGET_START }) {
   const dealerFilter = `upper(trim(${quoteIdentifier(dealerColumn)}::text)) = upper(trim($1::text))`;
 
   if (reportTypes?.length) {
@@ -154,7 +171,7 @@ async function analyzeDealerCoverage(client, { table, dealerColumn, dateColumn, 
         minDate,
         maxDate,
         monthCount,
-        complete: rowCount > 0 && hasFullDateCoverage(minDate, maxDate)
+        complete: rowCount > 0 && hasFullDateCoverage(minDate, maxDate, targetStart)
       });
     }
 
@@ -165,8 +182,8 @@ async function analyzeDealerCoverage(client, { table, dealerColumn, dateColumn, 
       if (entry.complete) continue;
       if (entry.rowCount === 0) {
         reasons.push(`${entry.reportType}: no rows`);
-      } else if (!entry.minDate || entry.minDate > TARGET_START) {
-        reasons.push(`${entry.reportType}: starts ${entry.minDate ?? 'unknown'} (need ${TARGET_START})`);
+      } else if (!entry.minDate || entry.minDate > targetStart) {
+        reasons.push(`${entry.reportType}: starts ${entry.minDate ?? 'unknown'} (need ${targetStart})`);
       } else if (!entry.maxDate || entry.maxDate < CURRENT_MONTH_START) {
         reasons.push(`${entry.reportType}: ends ${entry.maxDate ?? 'unknown'} (need through ${CURRENT_MONTH_START})`);
       } else {
@@ -198,14 +215,14 @@ async function analyzeDealerCoverage(client, { table, dealerColumn, dateColumn, 
   const minDate = toDateOnly(row.min_date);
   const maxDate = toDateOnly(row.max_date);
   const rowCount = Number(row.row_count ?? 0);
-  const complete = rowCount > 0 && hasFullDateCoverage(minDate, maxDate);
+  const complete = rowCount > 0 && hasFullDateCoverage(minDate, maxDate, targetStart);
   const reasons = [];
 
   if (!complete) {
     if (rowCount === 0) {
       reasons.push('no rows');
-    } else if (!minDate || minDate > TARGET_START) {
-      reasons.push(`starts ${minDate ?? 'unknown'} (need ${TARGET_START})`);
+    } else if (!minDate || minDate > targetStart) {
+      reasons.push(`starts ${minDate ?? 'unknown'} (need ${targetStart})`);
     } else if (!maxDate || maxDate < CURRENT_MONTH_START) {
       reasons.push(`ends ${maxDate ?? 'unknown'} (need through ${CURRENT_MONTH_START})`);
     } else {
@@ -236,7 +253,7 @@ async function analyzeTable(client, spec) {
   }
 
   const columns = await tableColumns(client, table);
-  const dealerColumn = resolveDealerColumn(columns);
+  const dealerColumn = spec.dealerColumn ?? resolveDealerColumn(columns);
   const dateColumn = resolveDateColumn(columns, dateColumns);
 
   if (!dealerColumn) {
@@ -277,19 +294,22 @@ async function analyzeTable(client, spec) {
   }
 
   const dealers = {};
+  const reportTargetStart = targetStartForReport(reportId);
   for (const dealerCode of DEALERS) {
     dealers[dealerCode] = await analyzeDealerCoverage(client, {
       table,
       dealerColumn,
       dateColumn,
       dealerCode,
-      reportTypes
+      reportTypes,
+      targetStart: reportTargetStart
     });
   }
 
   return {
     table,
     reportId,
+    targetStart: reportTargetStart,
     runner,
     exists: true,
     dateColumn,
@@ -316,7 +336,8 @@ function buildQueue(tableResults) {
         rowCount: dealer.rowCount,
         minDate: dealer.minDate,
         maxDate: dealer.maxDate,
-        reportTypes: dealer.reportTypes ?? null
+        reportTypes: dealer.reportTypes ?? null,
+        portalEmptyAccepted: Boolean(dealer.portalEmptyAccepted)
       });
     }
   }
@@ -378,18 +399,28 @@ function printReport(tableResults, queue, groupedRuns) {
 
     for (const dealerCode of DEALERS) {
       const dealer = result.dealers[dealerCode];
-      const status = dealer.complete ? '✅ COMPLETE' : '❌ NEEDS BACKFILL';
+      const status = dealer.complete
+        ? (dealer.portalEmptyAccepted ? '✅ COMPLETE (portal empty accepted)' : '✅ COMPLETE')
+        : '❌ NEEDS BACKFILL';
       const range = dealer.minDate || dealer.maxDate
         ? `${dealer.minDate ?? '?'} → ${dealer.maxDate ?? '?'}`
         : 'no data';
       console.log(`    ${dealerCode}: ${status} | rows=${dealer.rowCount} | ${range}`);
+      if (dealer.complete && dealer.portalEmptyAccepted && dealer.reasons.length) {
+        console.log(`             ${dealer.reasons.join('; ')}`);
+      }
       if (!dealer.complete && dealer.reasons.length) {
         console.log(`             ${dealer.reasons.join('; ')}`);
       }
       if (dealer.reportTypes?.length) {
         for (const typeEntry of dealer.reportTypes) {
-          const typeStatus = typeEntry.complete ? 'ok' : 'missing';
+          const typeStatus = typeEntry.complete
+            ? (typeEntry.portalEmptyAccepted ? 'ok (portal empty accepted)' : 'ok')
+            : 'missing';
           console.log(`             ${typeEntry.reportType}: ${typeStatus} (${typeEntry.minDate ?? '?'} → ${typeEntry.maxDate ?? '?'})`);
+          if (typeEntry.portalEmptyAccepted && typeEntry.acceptanceNote) {
+            console.log(`             ${typeEntry.acceptanceNote}`);
+          }
         }
       }
     }
@@ -427,8 +458,13 @@ function printReport(tableResults, queue, groupedRuns) {
   console.log('');
 }
 
-export async function analyzeAmPlatinumPerDealerCoverage({ writeQueue = true } = {}) {
-  const tableResults = await withPostgresClient(async client => {
+export async function analyzeAmPlatinumPerDealerCoverage({ writeQueue = true, refreshAcceptances = true } = {}) {
+  if (refreshAcceptances) {
+    await refreshPortalEmptyAcceptancesFromPriorityStates();
+  }
+  const acceptances = await loadPortalEmptyAcceptances();
+
+  const rawTableResults = await withPostgresClient(async client => {
     // Coverage scans aggregate large tables; Supabase default timeout (~8s) is too low.
     await client.query('SET statement_timeout = 0');
 
@@ -439,6 +475,10 @@ export async function analyzeAmPlatinumPerDealerCoverage({ writeQueue = true } =
     return results;
   });
 
+  const tableResults = rawTableResults.map(result =>
+    applyPortalAcceptancesToTableResult(result, acceptances, CURRENT_MONTH_START)
+  );
+
   const queue = buildQueue(tableResults);
   const groupedRuns = groupQueueForHistoricalRun(queue);
   const payload = {
@@ -447,6 +487,7 @@ export async function analyzeAmPlatinumPerDealerCoverage({ writeQueue = true } =
     targetEnd: TARGET_END,
     currentMonthStart: CURRENT_MONTH_START,
     dealers: DEALERS,
+    portalEmptyAcceptanceCount: acceptances.length,
     tables: tableResults,
     queue,
     groupedRuns,

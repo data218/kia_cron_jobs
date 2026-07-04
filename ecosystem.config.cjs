@@ -297,6 +297,22 @@ module.exports = {
       }
     },
     {
+      name: 'kia-safety-daily',
+      script: './src/cron/kia-safety-scheduler.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      watch: false,
+      cron_restart: '0 10 * * *',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-kia-safety-out.log',
+      error_file: './logs/pm2-kia-safety-error.log',
+      env: {
+        NODE_ENV: 'production'
+      }
+    },
+    {
       name: 'restart-db',
       script: './scripts/restart-db.js',
       instances: 1,

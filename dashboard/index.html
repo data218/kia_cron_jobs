@@ -106,11 +106,12 @@ tbody tr:hover td { background:var(--card-hover); }
 
 <div class="topbar">
   <div class="topbar-left">
-    <div class="logo">K</div>
+    <div style="width:28px;height:28px;background:#000;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 25" fill="#fff" style="width:22px;height:auto"><path d="M58.02 21.83c0 .19.06.3.17.3.09-.01.17-.05.24-.1L89.6 1.8a3 3 0 011.8-.54h6.85c1.05 0 1.76.7 1.76 1.75v13.08c0 1.58-.35 2.5-1.75 3.34l-8.31 5a.57.57 0 01-.28.1c-.1 0-.2-.08-.2-.37V8.9c0-.18-.05-.3-.17-.3a.47.47 0 00-.24.1l-22.78 14.8c-.52.35-1.13.54-1.75.53h-15.1c-1.06 0-1.76-.7-1.76-1.76V3.42c0-.14-.06-.27-.18-.27a.49.49 0 00-.24.1l-15.03 9.02c-.15.1-.19.17-.19.24 0 .06.03.12.13.23L42.9 23.47c.14.14.24.25.24.37 0 .1-.16.18-.35.18h-9.7c-.76 0-1.35-.11-1.76-.52L24.82 17a.28.28 0 00-.2-.1.43.43 0 00-.2.06L13.54 23.5c-.66.4-1.11.51-1.76.51H1.77C.7 24.02 0 23.31 0 22.26V9.43c0-1.59.35-2.5 1.76-3.34l8.36-5.02a.43.43 0 01.22-.07c.13 0 .2.13.2.42V18.6c0 .18.04.26.17.26.09-.01.17-.05.25-.1L39.2 1.77c.54-.37 1.2-.55 1.86-.52h15.2c1.05 0 1.76.7 1.76 1.75l-.01 18.83z"/></svg></div>
     <h1>KIA Insurance Panel</h1>
     <span class="ver">v1.0</span>
   </div>
   <div class="topbar-right">
+    <span id="welcomeUser" style="font-size:11px;color:var(--muted);font-weight:500"></span>
     <button class="btn-icon" id="viewToggle" onclick="toggleToolbar()" title="Toggle Toolbar" style="font-size:16px;font-weight:700">&#x2630;</button>
     <a href="/" class="btn-icon" title="Home">&#8962;</a>
     <span style="font-size:11px;color:var(--muted)" id="updatedAt"></span>
@@ -188,6 +189,8 @@ tbody tr:hover td { background:var(--card-hover); }
 </div>
 
 <script>
+(function(){var t=new URLSearchParams(location.search).get('token');if(t)localStorage.setItem('authToken',t)}());
+(function(){var t=localStorage.getItem('authToken');if(!t){location.href='/'}else{fetch('/api/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t})}).then(function(r){return r.json()}).then(function(v){if(!v.valid){localStorage.removeItem('authToken');location.href='/'}else{var el=document.getElementById('welcomeUser');if(el)el.textContent='Welcome '+v.user.username;}}).catch(function(){})}})();
 const labelPlugin = {
   id:'labelPlugin',
   afterDraw(chart) {
@@ -266,6 +269,26 @@ Chart.register(labelPlugin);
 let allData=[], vinDetail=[], charts={};
 let curView='all', curChart='trend', curYear='all', curModel='all', curCompany='all';
 
+function getYear(s) {
+  if (!s) return NaN;
+  const m = s.match(/(\d{4})/);
+  return m ? parseInt(m[1]) : NaN;
+}
+function getMonth(s) {
+  if (!s) return NaN;
+  if (/^\d{4}-\d{2}/.test(s)) return parseInt(s.substring(5,7));
+  const parts = s.split('/');
+  if (parts.length >= 2) return parseInt(parts[0]);
+  return NaN;
+}
+function getYm(s) {
+  if (!s) return '';
+  if (/^\d{4}-\d{2}/.test(s)) return s.substring(0,7);
+  const m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return m[3] + '-' + String(parseInt(m[1])).padStart(2,'0');
+  return '';
+}
+
 async function refreshAll() {
   document.getElementById('mainArea').innerHTML = '<div class="loader"><div class="spin"></div>Loading...</div>';
   await loadData();
@@ -279,14 +302,15 @@ async function loadData() {
     const d=await dR.json(), a=await aR.json(), v=await vR.json();
     if(d.error) throw Error(d.error);
     allData=d.rows; vinDetail=v.detail||[];
-    const yrs = [...new Set(allData.map(r=>r.create_date?.substring(0,4)).filter(Boolean))].sort();
+    allData = allData.filter(r => r.cancelled !== 'Yes');
+    const yrs = [...new Set(allData.map(r=>getYear(r.create_date)).filter(v=>!isNaN(v)).map(String))].sort();
     const sel = document.getElementById('yearSelect');
     sel.innerHTML = '<option value="all">All Years</option>' + yrs.map(y=>'<option value="'+y+'">'+y+'</option>').join('');
     const fromSel = document.getElementById('yearFrom'), toSel = document.getElementById('yearTo');
     const opts = yrs.map(y=>'<option value="'+y+'">'+y+'</option>').join('');
     fromSel.innerHTML = opts; toSel.innerHTML = opts;
     if(yrs.length>1) { fromSel.value=yrs[yrs.length-2]; toSel.value=yrs[yrs.length-1]; }
-    const mths = [...new Set(allData.map(r=>r.create_date?.substring(0,7)).filter(Boolean))].sort();
+    const mths = [...new Set(allData.map(r=>getYm(r.create_date)).filter(Boolean))].sort();
     const mFrom = document.getElementById('monthFrom'), mTo = document.getElementById('monthTo');
     const mOpts = mths.map(m=>'<option value="'+m+'">'+new Date(m+'-01').toLocaleString('en',{month:'short',year:'numeric'})+'</option>').join('');
     mFrom.innerHTML = mOpts; mTo.innerHTML = mOpts;
@@ -461,7 +485,7 @@ function drawState(d) {
 function drawRenewal(d) {
   const valid = d.filter(r=>r.vinno&&r.create_date);
   const yearMap = {};
-  valid.forEach(r=>{const yr=r.create_date.substring(0,4); if(!yearMap[yr])yearMap[yr]=new Set(); yearMap[yr].add(r.vinno);});
+  valid.forEach(r=>{const yr=getYear(r.create_date); if(isNaN(yr))return; const ys=String(yr); if(!yearMap[ys])yearMap[ys]=new Set(); yearMap[ys].add(r.vinno);});
   const years=Object.keys(yearMap).sort();
   const labels=years, rollover=[], renewal=[], newCust=[], lapsed=[];
   const allPrevVins = new Set();
@@ -605,7 +629,7 @@ function chartDataRows(d) {
     Object.entries(m).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>rows.push(['State: '+k, fmt(v)+' policies', '', 'count by state']));
   } else if (curChart === 'renewal') {
     const valid = allData.filter(r=>r.vinno&&r.create_date);
-    const yearMap = {}; valid.forEach(r=>{const yr=r.create_date.substring(0,4); if(!yearMap[yr])yearMap[yr]=new Set(); yearMap[yr].add(r.vinno);});
+    const yearMap = {}; valid.forEach(r=>{const yr=getYear(r.create_date); if(isNaN(yr))return; const ys=String(yr); if(!yearMap[ys])yearMap[ys]=new Set(); yearMap[ys].add(r.vinno);});
     const allPrevVins = new Set();
     Object.keys(yearMap).sort().forEach(yr=>{
       const currentVins = yearMap[yr];
@@ -709,6 +733,9 @@ function toggleToolbar() {
 }
 
 loadData();
+</script>
+<script>
+(function(){ var t=new URLSearchParams(window.location.search).get('token'); if(t) localStorage.setItem('authToken',t); t=localStorage.getItem('authToken'); if(t) fetch('/api/auth/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t,action:'view',page:'data-analysis'}),keepalive:true}).catch(function(){}); })();
 </script>
 </body>
 </html>

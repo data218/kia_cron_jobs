@@ -3,6 +3,10 @@ import express from 'express';
 import { createClient } from '@supabase/supabase-js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -43,49 +47,255 @@ app.get('/performance', (req, res) => {
 
 app.use(express.static(path.join(__dirname)));
 
-async function ensureCallLogsTable() {
-  const sql = `CREATE TABLE IF NOT EXISTS call_logs (
-    id BIGSERIAL PRIMARY KEY, policyno TEXT, vinno TEXT, customer_name TEXT,
-    model TEXT, insurancecompany TEXT, grosspremium NUMERIC,
-    policy_expiry_date TEXT, mobile_no TEXT,
-    call_date TIMESTAMPTZ DEFAULT NOW(),
-    call_outcome TEXT NOT NULL, remarks TEXT, follow_up_date DATE,
-    agent_name TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
-  )`;
+async function logDbActivity(token, action, page, details) {
+  const session = authTokens.get(token);
+  if (!session) return;
+  const entry = { user_id: session.userId, username: session.username, action, page: page || '', details: details || {}, created_at: new Date().toISOString() };
+  // Try Supabase first
   try {
-    const res = await fetch(`${SUPABASE_URL}/pg-meta/v1/query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
-      body: JSON.stringify({ query: sql })
-    });
-    if (res.ok) { console.log('call_logs table ready'); return; }
-    const t = await res.text();
-    console.warn('pg-meta query failed:', res.status, t.substring(0,200));
+    await supabase.from('auth_activities').insert(entry);
   } catch (_) {}
-  try {
-    const { error } = await supabase.from('call_logs').select('id').limit(1);
-    if (!error) {
-      console.log('call_logs table already exists');
-      try {
-        await fetch(`${SUPABASE_URL}/pg-meta/v1/query`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
-          body: JSON.stringify({ query: `ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS mobile_no TEXT;` })
-        });
-      } catch (_) {}
-      return;
-    }
-  } catch (_) {}
-  console.warn('call_logs table not found. Run the SQL from create-call-logs-table.sql in Supabase SQL editor.');
+  // Always write to file as fallback
+  const db = readAuth();
+  entry.id = db.activities.length + 1;
+  db.activities.push(entry);
+  writeAuth(db);
 }
-ensureCallLogsTable();
+
+// ── Auth (file-based store) ──────────────────────────────
+const AUTH_FILE = path.join(__dirname, 'auth-data.json');
+function readAuth() {
+  try { return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')); } catch { return { users: [], activities: [], nextId: 1 }; }
+}
+function writeAuth(d) { fs.writeFileSync(AUTH_FILE, JSON.stringify(d, null, 2)); }
+
+const authTokens = new Map();
+const TOKEN_TTL = 24 * 60 * 60 * 1000; // 24h
+
+function hashPw(pw) { return crypto.createHash('sha256').update(pw).digest('hex'); }
+function genToken() { return crypto.randomBytes(32).toString('hex'); }
+
+// POST /api/auth/setup — create/ensure default admin
+app.post('/api/auth/setup', async (req, res) => {
+  try {
+    const db = readAuth();
+    const { force } = req.body || {};
+    if (force) { db.users = []; db.activities = []; db.nextId = 1; }
+    const existing = db.users.find(u => u.username === 'admin');
+    if (existing) {
+      existing.password = hashPw('admin123');
+      writeAuth(db);
+      return res.json({ success: true, message: 'Admin password reset (admin / admin123)' });
+    }
+    db.users.push({ id: db.nextId++, username: 'admin', password: hashPw('admin123'), role: 'admin', created_at: new Date().toISOString() });
+    writeAuth(db);
+    res.json({ success: true, message: 'Default admin created (admin / admin123)' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    const db = readAuth();
+    const user = db.users.find(u => u.username === username);
+    if (!user || user.password !== hashPw(password)) return res.status(401).json({ error: 'Invalid credentials' });
+    const token = genToken();
+    const tokenData = { userId: user.id, username: user.username, role: user.role, expiry: Date.now() + TOKEN_TTL };
+    authTokens.set(token, tokenData);
+    persistToken(token, tokenData);
+    await logDbActivity(token, 'login', 'landing');
+    res.json({ success: true, token, user: { username: user.username, role: user.role } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/verify
+app.post('/api/auth/verify', (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.json({ valid: false });
+  const session = authTokens.get(token);
+  if (!session || session.expiry < Date.now()) {
+    authTokens.delete(token);
+    // Attempt file-based recovery: re-create session if token matches stored token for a user
+    try {
+      const tokensFile = path.join(__dirname, 'auth-tokens.json');
+      if (fs.existsSync(tokensFile)) {
+        const stored = JSON.parse(fs.readFileSync(tokensFile, 'utf8'));
+        const entry = stored.tokens?.[token];
+        if (entry && entry.expiry > Date.now()) {
+          authTokens.set(token, { userId: entry.userId, username: entry.username, role: entry.role, expiry: entry.expiry });
+          return res.json({ valid: true, user: { username: entry.username, role: entry.role } });
+        }
+      }
+    } catch (_) {}
+    return res.json({ valid: false });
+  }
+  res.json({ valid: true, user: { username: session.username, role: session.role } });
+});
+
+function persistToken(token, session) {
+  try {
+    const tokensFile = path.join(__dirname, 'auth-tokens.json');
+    const stored = fs.existsSync(tokensFile) ? JSON.parse(fs.readFileSync(tokensFile, 'utf8')) : { tokens: {} };
+    stored.tokens[token] = session;
+    fs.writeFileSync(tokensFile, JSON.stringify(stored, null, 2));
+  } catch (_) {}
+}
+
+// POST /api/auth/log-activity
+app.post('/api/auth/log-activity', async (req, res) => {
+  try {
+    const { token, action, page, details } = req.body;
+    if (!token) return res.status(400).json({ error: 'Token required' });
+    const session = authTokens.get(token);
+    if (!session) return res.status(401).json({ error: 'Invalid token' });
+    await logDbActivity(token, action || 'view', page, details);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/change-password
+app.post('/api/auth/change-password', async (req, res) => {
+  try {
+    const { token, currentPassword, newPassword } = req.body;
+    if (!token || !currentPassword || !newPassword) return res.status(400).json({ error: 'All fields required' });
+    if (newPassword.length < 4) return res.status(400).json({ error: 'Password min 4 characters' });
+    const session = authTokens.get(token);
+    if (!session) return res.status(401).json({ error: 'Invalid token' });
+    const db = readAuth();
+    const user = db.users.find(u => u.id === session.userId);
+    if (!user || user.password !== hashPw(currentPassword)) return res.status(401).json({ error: 'Current password incorrect' });
+    user.password = hashPw(newPassword);
+    await logDbActivity(token, 'change_password');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin endpoints ──────────────────────────────────────
+function adminGuard(req, res) {
+  const token = req.body?.token;
+  if (!token) return res.status(401).json({ error: 'No token' });
+  const session = authTokens.get(token);
+  if (!session || session.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  return session;
+}
+
+// POST /api/auth/admin/users
+app.post('/api/auth/admin/users', async (req, res) => {
+  const session = adminGuard(req, res);
+  if (!session) return;
+  const db = readAuth();
+  res.json({ users: db.users.map(u => ({ id: u.id, username: u.username, role: u.role, created_at: u.created_at })) });
+});
+
+// POST /api/auth/admin/create-user
+app.post('/api/auth/admin/create-user', async (req, res) => {
+  const session = adminGuard(req, res);
+  if (!session) return;
+  try {
+    const { username, password, role } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    const db = readAuth();
+    if (db.users.find(u => u.username === username)) return res.status(400).json({ error: 'Username already exists' });
+    db.users.push({ id: db.nextId++, username, password: hashPw(password), role: role || 'user', created_at: new Date().toISOString() });
+    await logDbActivity(req.body.token, 'admin_create_user', '', { target: username });
+    writeAuth(db);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/admin/reset-password
+app.post('/api/auth/admin/reset-password', async (req, res) => {
+  const session = adminGuard(req, res);
+  if (!session) return;
+  try {
+    const { userId, newPassword } = req.body;
+    if (!userId || !newPassword) return res.status(400).json({ error: 'userId and newPassword required' });
+    if (newPassword.length < 4) return res.status(400).json({ error: 'Password min 4 characters' });
+    const db = readAuth();
+    const user = db.users.find(u => u.id === Number(userId));
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    user.password = hashPw(newPassword);
+    await logDbActivity(req.body.token, 'admin_reset_password', '', { target: user.username, target_id: userId });
+    writeAuth(db);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/admin/update-username
+app.post('/api/auth/admin/update-username', async (req, res) => {
+  const session = adminGuard(req, res);
+  if (!session) return;
+  try {
+    const { userId, newUsername } = req.body;
+    if (!userId || !newUsername) return res.status(400).json({ error: 'userId and newUsername required' });
+    const db = readAuth();
+    if (db.users.find(u => u.username === newUsername)) return res.status(400).json({ error: 'Username already taken' });
+    const user = db.users.find(u => u.id === Number(userId));
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const old = user.username;
+    user.username = newUsername;
+    await logDbActivity(req.body.token, 'admin_update_username', '', { from: old, to: newUsername, target_id: userId });
+    writeAuth(db);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/admin/delete-user
+app.post('/api/auth/admin/delete-user', async (req, res) => {
+  const session = adminGuard(req, res);
+  if (!session) return;
+  try {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    if (Number(userId) === session.userId) return res.status(400).json({ error: 'Cannot delete yourself' });
+    const db = readAuth();
+    const idx = db.users.findIndex(u => u.id === Number(userId));
+    if (idx === -1) return res.status(404).json({ error: 'User not found' });
+    const u = db.users[idx];
+    db.users.splice(idx, 1);
+    await logDbActivity(req.body.token, 'admin_delete_user', '', { target: u.username, target_id: userId });
+    writeAuth(db);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/admin/activity
+app.post('/api/auth/admin/activity', async (req, res) => {
+  const session = adminGuard(req, res);
+  if (!session) return;
+  const db = readAuth();
+  const activities = db.activities.slice().reverse().slice(0, 200);
+  res.json({ activities });
+});
 
 async function fetchAll(table) {
   const all = [];
   let from = 0;
   const size = 1000;
   while (true) {
-    const { data, error } = await supabase.from(table).select('*').range(from, from + size - 1);
+    const result = await Promise.race([
+      supabase.from(table).select('*').range(from, from + size - 1),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Supabase query timed out after 8s')), 8000))
+    ]);
+    const { data, error } = result;
     if (error) throw error;
     if (!data?.length) break;
     all.push(...data);
@@ -255,6 +465,40 @@ app.get('/api/call-center/due', async (req, res) => {
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     })();
     const rows = await fetchAll('kia_insurance');
+
+    // Parse selected month → look at last year same month
+    const [selYear, selMonth] = month.split('-').map(Number);
+    const lastYear = selYear - 1;
+    const lastYearMonthPrefix = `${lastYear}-${String(selMonth).padStart(2, '0')}`;
+    const currentYearPrefix = String(selYear);
+
+    // Index VINs by year
+    const vinsByYear = {};
+    for (const r of rows) {
+      if (!r.vinno || !r.create_date) continue;
+      const yr = r.create_date.substring(0, 4);
+      if (!vinsByYear[yr]) vinsByYear[yr] = new Set();
+      vinsByYear[yr].add(r.vinno);
+    }
+
+    // Latest record per VIN for last year's month (exclude cancelled)
+    const candidateVins = new Set();
+    const vinLatest = {};
+    for (const r of rows) {
+      if (!r.vinno || !r.create_date) continue;
+      if (r.cancelled === 'Yes') continue;
+      if (!r.create_date.startsWith(lastYearMonthPrefix)) continue;
+      candidateVins.add(r.vinno);
+      if (!vinLatest[r.vinno] || r.create_date > vinLatest[r.vinno].create_date) {
+        vinLatest[r.vinno] = r;
+      }
+    }
+
+    // Filter: present in last year's month but NOT in current year
+    const currentYearVins = vinsByYear[currentYearPrefix] || new Set();
+    const pendingVins = [...candidateVins].filter(v => !currentYearVins.has(v));
+
+    // Fetch call logs
     let allLogs = [];
     try { allLogs = await fetchAll('call_logs'); } catch (_) {}
     const logMap = {}, logCount = {}, logsByPolicy = {};
@@ -268,17 +512,14 @@ app.get('/api/call-center/due', async (req, res) => {
     for (const key of Object.keys(logsByPolicy)) {
       logsByPolicy[key].sort((a,b)=>new Date(b.call_date)-new Date(a.call_date));
     }
+
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const [y, m] = month.split('-').map(Number);
-    const monthName = months[m - 1];
+    const monthName = months[selMonth - 1];
     const due = [];
-    for (const r of rows) {
-      // Filter by create_date month (since policy_expiry_date is not available)
-      if (!r.create_date) continue;
-      const cd = r.create_date;
-      let match = false;
-      if (cd.startsWith(`${y}-${String(m).padStart(2, '0')}`)) match = true;
-      if (!match) continue;
+
+    for (const vin of pendingVins) {
+      const r = vinLatest[vin];
+      if (!r) continue;
       const pno = r.policyno || '';
       const lastLog = logMap[pno];
       const history = (logsByPolicy[pno] || []).map(l => ({
@@ -293,13 +534,12 @@ app.get('/api/call-center/due', async (req, res) => {
         insurancecompany: r.insurancecompany || '-',
         grosspremium: Number(r.grosspremium) || 0,
         policy_expiry_date: r.create_date || '',
-        policy_effective_date: '',
+        policy_effective_date: r.policy_effective_date || '',
         state: r.state || '',
         location: r.location || '',
         dealer: r.dealer || '',
         mobile: lastLog ? (lastLog.mobile_no || extractMobileFromRemarks(lastLog.remarks || '')) : '',
         create_date: r.create_date || '',
-        policy_effective_date: r.policy_effective_date || '',
         call_status: lastLog ? lastLog.call_outcome : 'Pending',
         last_call_date: lastLog ? lastLog.call_date : null,
         last_remarks: lastLog ? sanitizeRemarks(lastLog.remarks || '') : '',
@@ -310,6 +550,7 @@ app.get('/api/call-center/due', async (req, res) => {
         history
       });
     }
+
     res.json({ due, total: due.length, month });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -348,26 +589,75 @@ app.post('/api/call-center/log', async (req, res) => {
     if (error) {
       if (error.message?.includes('relation') || error.code === '42P01') {
         return res.status(400).json({
-          error: 'call_logs table does not exist. Run the SQL from create-call-logs-table.sql in Supabase SQL editor first.',
+          error: 'call_logs table does not exist. Run create-call-logs-table.sql in Supabase SQL editor first.',
           sql: `CREATE TABLE IF NOT EXISTS call_logs (id BIGSERIAL PRIMARY KEY, policyno TEXT, vinno TEXT, customer_name TEXT, model TEXT, insurancecompany TEXT, grosspremium NUMERIC, policy_expiry_date TEXT, mobile_no TEXT, call_date TIMESTAMPTZ DEFAULT NOW(), call_outcome TEXT NOT NULL, remarks TEXT, follow_up_date DATE, agent_name TEXT, created_at TIMESTAMPTZ DEFAULT NOW());`
         });
-      }
-      if (error.message?.includes('mobile_no')) {
-        // mobile_no column doesn't exist — embed mobile into remarks
-        const mergedRemarks = mobile_no ? `[Mobile: ${mobile_no}] ${remarks || ''}`.trim() : (remarks || '');
-        const { data: d2, error: e2 } = await supabase.from('call_logs').insert({
-          policyno, vinno, customer_name, model, insurancecompany,
-          grosspremium: grosspremium ? Number(grosspremium) : null,
-          policy_expiry_date, call_outcome, remarks: mergedRemarks, follow_up_date: follow_up_date || null,
-          agent_name: agent_name || '',
-          call_date: new Date().toISOString()
-        }).select().single();
-        if (e2) throw e2;
-        return res.json({ success: true, log: d2 });
       }
       throw error;
     }
     res.json({ success: true, log: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manual trigger: fetch KIA Safety data (D-1 or custom date range)
+app.post('/api/fetch-kia-data', async (req, res) => {
+  const { token, from, to } = req.body || {};
+  if (!token) return res.status(401).json({ error: 'No token' });
+  const session = authTokens.get(token);
+  if (!session) return res.status(401).json({ error: 'Invalid token' });
+
+  // Count rows before fetch
+  let countBefore = 0;
+  try {
+    const { count } = await supabase.from('insurance_kia').select('*', { count: 'exact', head: true });
+    countBefore = count || 0;
+  } catch (_) {}
+
+  const cwd = path.join(__dirname, '..');
+  const env = { ...process.env };
+  if (from) env.KIA_SAFETY_FROM_DATE = from;
+  if (to) env.KIA_SAFETY_TO_DATE = to;
+  const timeout = from && to ? 600000 : 120000;
+
+  execFile('node', ['src/cron/scheduler.js', '--once', '--mode=kia-safety-daily'], { cwd, timeout, shell: true, env }, async (error, stdout, stderr) => {
+    if (error) {
+      console.error('Fetch KIA data error:', error.message, 'stderr:', stderr?.substring(0, 1000));
+      const msg = (error.message + ' ' + (stderr || '')).toLowerCase();
+      const isUrlError = /err_|timeout|econnrefused|enotfound|navigation|net::|could not|failed to connect/i.test(msg);
+      const errMsg = stderr ? stderr.split('\n').filter(l => l.includes('"msg"')).map(l => { try { return JSON.parse(l).msg; } catch { return null; } }).filter(Boolean).pop() || 'Command failed' : 'Command failed';
+      return res.status(500).json({ urlError: !!isUrlError, error: errMsg });
+    }
+
+    // Count rows after fetch
+    let countAfter = 0;
+    try {
+      const { count } = await supabase.from('insurance_kia').select('*', { count: 'exact', head: true });
+      countAfter = count || 0;
+    } catch (_) {}
+
+    const insertedRowCount = countAfter - countBefore;
+    res.json({ success: true, insertedRowCount: Math.max(0, insertedRowCount), duplicateRowCount: countBefore > 0 && insertedRowCount === 0 ? countAfter : -1 });
+  });
+});
+
+// Admin: verify credentials and delete all KIA insurance data
+app.post('/api/delete-all-kia-data', async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const db = readAuth();
+  const user = db.users.find(u => u.username === username && u.password === hashPw(password) && u.role === 'admin');
+  if (!user) return res.status(403).json({ error: 'Invalid admin credentials' });
+  try {
+    const { error } = await supabase.from('insurance_kia').delete().neq('id', 0);
+    if (error) return res.status(500).json({ error: 'Delete failed' });
+    // Log to file directly
+    const entry = { id: db.activities.length + 1, user_id: user.id, username: user.username, action: 'delete_all_kia_data', page: 'performance', details: {}, created_at: new Date().toISOString() };
+    db.activities.push(entry);
+    writeAuth(db);
+    try { await supabase.from('auth_activities').insert({ user_id: user.id, username: user.username, action: 'delete_all_kia_data', page: 'performance', details: {}, created_at: new Date().toISOString() }); } catch (_) {}
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -612,8 +612,17 @@ export async function downloadKiaSafetyReport(page, { mode = 'kia-safety' } = {}
   await humanPause('on policy report page', 2);
 
   let startDate, endDate;
-  
-  if (config.kiaSafetyHistoricalBackfillEnabled) {
+  const customFrom = process.env.KIA_SAFETY_FROM_DATE;
+  const customTo = process.env.KIA_SAFETY_TO_DATE;
+
+  if (customFrom && customTo) {
+    startDate = new Date(customFrom);
+    endDate = new Date(customTo);
+    logger.info('Custom date range for Kia Safety', {
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: endDate.toISOString().split('T')[0]
+    });
+  } else if (config.kiaSafetyHistoricalBackfillEnabled) {
     startDate = new Date(config.kiaSafetyBackfillStartDate);
     endDate = new Date(config.kiaSafetyBackfillEndDate);
     logger.info('Historical backfill enabled for Kia Safety', { 

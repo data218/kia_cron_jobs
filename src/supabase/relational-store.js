@@ -338,6 +338,19 @@ function parseDateValue(value, slashFormat = 'dmy') {
     }
   }
 
+  // DD Mon YYYY — Kia Safety portal date format (e.g. "09 Jan 2025", "08 Jan 2026")
+  const monDate = text.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);
+  if (monDate) {
+    const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+    const mi = months.indexOf(monDate[2].toLowerCase());
+    if (mi >= 0) {
+      const dd = String(parseInt(monDate[1])).padStart(2,'0');
+      const mm = String(mi + 1).padStart(2,'0');
+      const yyyy = monDate[3];
+      return [yyyy, mm, dd].join('-');
+    }
+  }
+
   const slashDate = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
   if (slashDate) {
     const [, first, second, yyyy] = slashDate;

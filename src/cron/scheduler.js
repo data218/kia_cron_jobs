@@ -492,7 +492,8 @@ if (shouldRunFromCli && process.argv.includes('--once')) {
     cron: config.rsaReportCronSchedule,
     mode: 'rsa-report'
   });
-  cron.schedule(config.rsaReportCronSchedule, () => runKiaDmsJob('rsa-report'));
+  // RSA Report cron disabled - not needed
+  // cron.schedule(config.rsaReportCronSchedule, () => runKiaDmsJob('rsa-report'));
 
   logger.info('Scheduling Kia Safety VISOF automation job', {
     cron: config.kiaSafetyCronSchedule,

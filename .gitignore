@@ -8,3 +8,4 @@ otp-inbox.json
 playwright-report/
 test-results/
 *.log
+.vercel

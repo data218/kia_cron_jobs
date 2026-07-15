@@ -22,7 +22,7 @@ async function login(page) {
   await sleep(500);
 
   await page.locator('#txtPassword').waitFor({ state: 'visible', timeout: 10000 });
-  await page.locator('#txtPassword').fill('Singh@4327');
+  await page.locator('#txtPassword').fill('Abhi@123');
   await sleep(500);
 
   await page.locator('#btnLogin').click();

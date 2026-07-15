@@ -36,7 +36,7 @@ async function loginAndNavigate(page) {
 
   await page.locator('#txtUserName').fill('JK40202');
   await sleep(400);
-  await page.locator('#txtPassword').fill('Singh@4327');
+  await page.locator('#txtPassword').fill('Abhi@123');
   await sleep(400);
   await page.locator('#btnLogin').click();
   await sleep(4000);

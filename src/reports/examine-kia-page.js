@@ -39,7 +39,7 @@ async function main() {
 
     const passwordInput = page.locator('#txtPassword');
     await passwordInput.waitFor({ state: 'visible', timeout: 10000 });
-    await passwordInput.fill('Singh@4327');
+    await passwordInput.fill('Abhi@123');
     await sleep(500);
 
     const loginButton = page.locator('#btnLogin');

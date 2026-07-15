@@ -278,7 +278,7 @@ export const config = {
   kiaSafetyUrl: env('KIA_SAFETY_URL', 'https://www.kiasafety.com/VISOF/Policy/VSAddPolDealerApproval.aspx'),
   kiaSafetyLoginUrl: env('KIA_SAFETY_LOGIN_URL', 'https://www.kiasafety.com/VISOF/Login.aspx'),
   kiaSafetyUserId: env('KIA_SAFETY_USER_ID', 'JK40202'),
-  kiaSafetyPassword: env('KIA_SAFETY_PASSWORD', 'Singh@4327'),
+  kiaSafetyPassword: env('KIA_SAFETY_PASSWORD', 'Abhi@123'),
   kiaSafetySessionStatePath: path.resolve(rootDir, env('KIA_SAFETY_SESSION_STATE_PATH', './storage/kia-safety-state.json')),
   kiaSafetySheetName: env('KIA_SAFETY_SHEET_NAME', 'Kia Insurance'),
   kiaSafetyTableHeaders: envList('KIA_SAFETY_TABLE_HEADERS', 'Sno,BRAND,State,Location,DealerCode,Dealer,policy_effective_date,Policy_expiry_date,InsuranceCompany,PolicyNo,PolicyType,Class,ProductType,Model,FuelType,Variant,VinNo,EngineNo,Create_Date,PaymentGenerated,PaymentNo,PaymentMode,ODDiscount,Cancelled,Cancelled_Date,Endorsed,ChequeNo,TotalIDV,NetODPremiumA,NetPremium,IGST,CGST,SGST,UGST,GrossPremium,CUSTOMER_NAME,Package_Name,NCB_SLAB_PER,VEH_REGIST_NO,MFG_YEAR,ACH_CC_Status,Prev_POLICY_NO,Prev_IC_NAME,Quotation_No,IS_LONGTERM,IS_CRP'),

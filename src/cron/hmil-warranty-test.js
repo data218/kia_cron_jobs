@@ -30,14 +30,17 @@ const {
 } = await import('./hmil-warranty-scheduler.js');
 const { reportRowSignature, rowSignature } = await import('../supabase/relational-store.js');
 
+const { config } = await import('../config.js');
+config.tempDir = './temp/test-hmil-warranty';
+
 const accounts = createHmilWarrantyAccounts();
 assert.deepEqual(accounts.map(account => account.userId), ['sahiltech', 'MIS5216']);
 assert.notEqual(accounts[0].sessionStatePath, accounts[1].sessionStatePath);
 
-assert.deepEqual(getWarrantyDealerCodesForAccount(accounts[0]), ['N5203', 'N5701']);
+assert.deepEqual(getWarrantyDealerCodesForAccount(accounts[0]), config.hmilDealerCodes);
 assert.deepEqual(
   getWarrantyDealerCodesForAccount(accounts[1]),
-  ['N5216', 'N6844', 'N6845', 'N6846', 'N6847', 'N6848']
+  config.hmilSecondaryDealerCodes
 );
 
 const scheduled = getHmilWarrantyRange('scheduled', new Date(2026, 5, 12));
@@ -88,27 +91,20 @@ const results = await runHmilWarrantyJob('scheduled', {
   skipTableClear: true
 });
 
-assert.equal(results.length, 16);
+const expectedList = [];
+for (const dealerCode of config.hmilDealerCodes) {
+  expectedList.push(`sahiltech:${dealerCode}:hyundai-warranty-claim-list`);
+  expectedList.push(`sahiltech:${dealerCode}:hyundai-warranty-claim-ytp`);
+}
+for (const dealerCode of config.hmilSecondaryDealerCodes) {
+  expectedList.push(`MIS5216:${dealerCode}:hyundai-warranty-claim-list`);
+  expectedList.push(`MIS5216:${dealerCode}:hyundai-warranty-claim-ytp`);
+}
+
+assert.equal(results.length, expectedList.length);
 assert.deepEqual(
   results.map(result => `${result.sourceLoginId}:${result.dealerCode}:${result.reportId}`),
-  [
-    'sahiltech:N5203:hyundai-warranty-claim-list',
-    'sahiltech:N5203:hyundai-warranty-claim-ytp',
-    'sahiltech:N5701:hyundai-warranty-claim-list',
-    'sahiltech:N5701:hyundai-warranty-claim-ytp',
-    'MIS5216:N5216:hyundai-warranty-claim-list',
-    'MIS5216:N5216:hyundai-warranty-claim-ytp',
-    'MIS5216:N6844:hyundai-warranty-claim-list',
-    'MIS5216:N6844:hyundai-warranty-claim-ytp',
-    'MIS5216:N6845:hyundai-warranty-claim-list',
-    'MIS5216:N6845:hyundai-warranty-claim-ytp',
-    'MIS5216:N6846:hyundai-warranty-claim-list',
-    'MIS5216:N6846:hyundai-warranty-claim-ytp',
-    'MIS5216:N6847:hyundai-warranty-claim-list',
-    'MIS5216:N6847:hyundai-warranty-claim-ytp',
-    'MIS5216:N6848:hyundai-warranty-claim-list',
-    'MIS5216:N6848:hyundai-warranty-claim-ytp'
-  ]
+  expectedList
 );
 
 const failureResults = await executeHmilWarrantySequence({

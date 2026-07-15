@@ -332,8 +332,15 @@ export async function runHmilWarrantyJob(mode = 'scheduled', {
       })
     : accounts;
 
+  const activeAccounts = filteredAccounts.filter(account => {
+    if (account.userId && account.userId.toLowerCase() === 'sahiltech' && !config.dryRunReports && !dryRun) {
+      return false;
+    }
+    return true;
+  });
+
   const lockDir = path.join(config.tempDir, 'hmil-warranty-scheduler.lock');
-  const effectiveAccounts = filteredAccounts.map(account => ({
+  const effectiveAccounts = activeAccounts.map(account => ({
     ...account,
     headless: mode === 'historical' ? false : account.headless,
     otpProvider: mode === 'historical'

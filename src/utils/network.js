@@ -51,6 +51,28 @@ export async function checkConnectivity({
   return false;
 }
 
+function getTargetPortalUrl(label = '') {
+  const lower = label.toLowerCase();
+  if (lower.includes('rsa')) {
+    return config.rsaPortalUrl || 'https://kia.awpassistance.in/report';
+  }
+  if (lower.includes('kia')) {
+    return config.loginUrl || 'https://dms.kiaindia.net/cmm/cmmi/selectLoginMain.dms';
+  }
+  if (
+    lower.includes('hyundai') ||
+    lower.includes('hmil') ||
+    lower.includes('platinum') ||
+    lower.includes('sahiltech') ||
+    lower.includes('mis5216') ||
+    lower.includes('mis1988') ||
+    lower.includes('mis12345')
+  ) {
+    return config.hmilLoginUrl || 'https://ndms.hmil.net/cmm/cmmi/selectLoginMain.dms';
+  }
+  return null;
+}
+
 export async function waitForConnectivity({
   label = 'network',
   timeoutMs = config.networkWaitTimeoutMs,
@@ -60,9 +82,12 @@ export async function waitForConnectivity({
   const startedAt = Date.now();
   let attempt = 0;
 
+  const portalUrl = getTargetPortalUrl(label);
+  const checkUrls = portalUrl ? [portalUrl] : networkCheckUrls();
+
   while (Date.now() - startedAt <= timeoutMs) {
     attempt += 1;
-    if (await checkConnectivity()) {
+    if (await checkConnectivity({ urls: checkUrls })) {
       if (attempt > 1) {
         logger.info('Network connectivity restored', {
           label,
@@ -77,7 +102,7 @@ export async function waitForConnectivity({
       label,
       attempt,
       retryInMs: intervalMs,
-      checkUrls: networkCheckUrls()
+      checkUrls
     });
     await sleep(intervalMs);
   }
@@ -86,7 +111,7 @@ export async function waitForConnectivity({
     logger.warn('Network probe timed out; continuing anyway', {
       label,
       timeoutMs,
-      checkUrls: networkCheckUrls()
+      checkUrls
     });
     return false;
   }

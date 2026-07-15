@@ -14,7 +14,12 @@ const secondaryScheduler = createGdmsAccountScheduler(secondaryAccount);
 let running = false;
 
 function selectedAccounts() {
-  return [primaryAccount, secondaryAccount].filter(account => account.dealerCodes.length > 0);
+  return [primaryAccount, secondaryAccount].filter(account => {
+    if (account.userId && account.userId.toLowerCase() === 'sahiltech' && !config.dryRunReports) {
+      return false;
+    }
+    return account.dealerCodes.length > 0;
+  });
 }
 
 function modeFromArgs() {

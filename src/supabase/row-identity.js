@@ -256,6 +256,16 @@ export const TABLE_IDENTITY_COLUMNS = {
     ['bill_no', 'part_no'],
     ['bill_no', 'part_number']
   ],
+  kia_receipt_report: [
+    ['dealer_code', 'receipt_no'],
+    ['dealer_code', 'receipt_number'],
+    ['dealer_code', 'receipt_id'],
+    ['receipt_no'],
+    ['receipt_number'],
+    ['receipt_id'],
+    ['dealer_code', 'receipt_date', 'customer_name'],
+    ['receipt_date', 'customer_name', 'amount']
+  ],
   psf_yearly: [
     ['ro_no'],
     ['vin', 'ro_date', 'visit_type']
@@ -372,6 +382,7 @@ export const EXACT_ROW_DEDUPE_TABLES = new Set([
   'kia_enquiry_report',
   'kia_accessories_counter_sales_report',
   'kia_purchase_report',
+  'kia_receipt_report',
   'kia_stock_management'
 ]);
 

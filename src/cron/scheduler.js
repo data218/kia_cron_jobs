@@ -731,6 +731,7 @@ if (shouldRunFromCli && process.argv.includes('--once')) {
     'kia-accessories-counter-sales-report'
   );
   scheduleCronJob(config.kiaPurchaseReportCronSchedule, () => runKiaDmsJob('kia-purchase-report'), 'kia-purchase-report');
+  scheduleCronJob(config.kiaReceiptReportCronSchedule, () => runKiaDmsJob('kia-receipt-report'), 'kia-receipt-report');
   scheduleCronJob(config.kiaStockManagementCronSchedule, () => runKiaDmsJob('kia-stock-management'), 'kia-stock-management');
 
   await writeHealthStatus({

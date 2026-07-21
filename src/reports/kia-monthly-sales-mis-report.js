@@ -59,8 +59,8 @@ function getChunkPlan({ reportId, backfillEnabled, backfillStartDate }) {
     };
   }
 
-  // Daily rolling 3-month fetch for booking, enquiry and purchase reports
-  if (reportId === 'kia-booking-report' || reportId === 'kia-enquiry-report' || reportId === 'kia-purchase-report') {
+  // Daily rolling 3-month fetch for booking, enquiry, purchase and receipt reports
+  if (reportId === 'kia-booking-report' || reportId === 'kia-enquiry-report' || reportId === 'kia-purchase-report' || reportId === 'kia-receipt-report') {
     const rollingRange = getRollingThreeMonthRange(endDate);
     return {
       mode: 'rolling-three-months',

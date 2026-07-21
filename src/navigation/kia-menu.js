@@ -458,6 +458,14 @@ export async function openPurchaseReport(page) {
   });
 }
 
+export async function openReceiptReport(page) {
+  await openSalesMisReport(page, {
+    sectionText: 'Monthly Reports',
+    reportText: 'Receipt Report',
+    label: 'Receipt Report page'
+  });
+}
+
 export async function openDealerChangePage(page) {
   logger.info('Navigating to Master > Personal Info > Dealer Change');
 

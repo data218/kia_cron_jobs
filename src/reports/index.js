@@ -9,6 +9,7 @@ import { downloadKiaSalesReport } from './kia-sales-report.js';
 import { downloadKiaEnquiryReport } from './kia-enquiry-report.js';
 import { downloadKiaAccessoriesCounterSalesReport } from './kia-accessories-counter-sales-report.js';
 import { downloadKiaPurchaseReport } from './kia-purchase-report.js';
+import { downloadKiaReceiptReport } from './kia-receipt-report.js';
 import { downloadKiaStockManagementReport } from './kia-stock-management.js';
 import { downloadPsfYearlyReport } from './psf-yearly.js';
 import { downloadEwReport } from './ew-report.js';
@@ -95,6 +96,13 @@ export const reportDefinitions = [
     run: downloadKiaPurchaseReport
   },
   {
+    id: 'kia-receipt-report',
+    name: 'Receipt Report',
+    requiresKiaDms: true,
+    noDealerSwitch: true,
+    run: downloadKiaReceiptReport
+  },
+  {
     id: 'kia-stock-management',
     name: 'Kia Stock Management',
     requiresKiaDms: true,
@@ -158,6 +166,7 @@ const regularReportDefinitions = defaultReportDefinitions.filter(report =>
     'kia-enquiry-report',
     'kia-accessories-counter-sales-report',
     'kia-purchase-report',
+    'kia-receipt-report',
     'kia-stock-management',
     'rsa-report',
     'ro-billing'
@@ -182,6 +191,8 @@ const MODE_REPORT_IDS = new Map([
   ['kia-accessories-counter-sales-report-historical', 'kia-accessories-counter-sales-report'],
   ['kia-purchase-report', 'kia-purchase-report'],
   ['kia-purchase-report-historical', 'kia-purchase-report'],
+  ['kia-receipt-report', 'kia-receipt-report'],
+  ['kia-receipt-report-historical', 'kia-receipt-report'],
   ['kia-stock-management', 'kia-stock-management']
 ]);
 

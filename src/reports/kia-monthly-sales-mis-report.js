@@ -229,11 +229,10 @@ export async function downloadKiaMonthlySalesMisReport(page, {
   }
 
   const rawMerged = exportFiles.length ? await mergeExcelFiles(exportFiles) : { headers: [], rows: [] };
-  // Only inject dealer_code column when doing multi-dealer runs.
-  // For single-dealer (default) runs the report already contains both dealer codes.
-  const merged = (dealerCode && dealerCode !== 'active')
-    ? addDealerCodeToDataset(rawMerged, dealerCode)
-    : rawMerged;
+  const effectiveDealerCode = (!dealerCode || dealerCode === 'active')
+    ? (config.primaryDealerCode || 'JK402')
+    : dealerCode;
+  const merged = addDealerCodeToDataset(rawMerged, effectiveDealerCode);
 
   if (clearTableBeforeSave && merged.rows.length > 0) {
     logger.info('Clearing existing relational table before saving fresh data', {

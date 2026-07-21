@@ -99,7 +99,6 @@ export const reportDefinitions = [
     id: 'kia-receipt-report',
     name: 'Receipt Report',
     requiresKiaDms: true,
-    noDealerSwitch: true,
     run: downloadKiaReceiptReport
   },
   {

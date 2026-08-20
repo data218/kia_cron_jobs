@@ -78,7 +78,7 @@ export const config = {
   otpWebhookHost: envScoped('OTP_WEBHOOK_HOST', '0.0.0.0'),
   otpWebhookPort: envInt('OTP_WEBHOOK_PORT', envInt('PORT', 3333)),
   otpWebhookDebug: envBool('OTP_WEBHOOK_DEBUG', false),
-  otpFreshnessGraceMs: envInt('OTP_FRESHNESS_GRACE_MS', 15000),
+  otpFreshnessGraceMs: envInt('OTP_FRESHNESS_GRACE_MS', 0),
   cronSchedule: env('CRON_SCHEDULE', '0 9-18 * * *'),
   regularReportsCronSchedule: env('REGULAR_REPORTS_CRON_SCHEDULE', env('CRON_SCHEDULE', '0 9-18 * * *')),
   rsaReportCronSchedule: env('RSA_REPORT_CRON_SCHEDULE', '5 10 * * *'),
@@ -208,6 +208,33 @@ export const config = {
   kiaSalesReportBackfillStartDate: env('KIA_SALES_REPORT_BACKFILL_START_DATE', '2025-01-01'),
   kiaSalesReportPostSearchDelayMs: envDelayMs('KIA_SALES_REPORT_POST_SEARCH_DELAY_MS', 5000),
   kiaSalesReportBetweenChunksDelayMs: envDelayMs('KIA_SALES_REPORT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  hyundaiSalesReportSheetName: env('HYUNDAI_SALES_REPORT_SHEET_NAME', 'hyundai_sales_report'),
+  hyundaiSalesReportPageSize: env('HYUNDAI_SALES_REPORT_PAGE_SIZE', '1000'),
+  hyundaiSalesReportBackfillStartDate: env('HYUNDAI_SALES_REPORT_BACKFILL_START_DATE', '2021-01-01'),
+  hyundaiSalesReportPostSearchDelayMs: envDelayMs('HYUNDAI_SALES_REPORT_POST_SEARCH_DELAY_MS', 5000),
+  hyundaiSalesReportBetweenChunksDelayMs: envDelayMs('HYUNDAI_SALES_REPORT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  hyundaiPurchaseReportSheetName: env('HYUNDAI_PURCHASE_REPORT_SHEET_NAME', 'hyundai_purchase_report'),
+  hyundaiPurchaseReportPageSize: env('HYUNDAI_PURCHASE_REPORT_PAGE_SIZE', '300'),
+  hyundaiPurchaseReportBackfillStartDate: env('HYUNDAI_PURCHASE_REPORT_BACKFILL_START_DATE', '2021-01-01'),
+  hyundaiPurchaseReportPostSearchDelayMs: envDelayMs('HYUNDAI_PURCHASE_REPORT_POST_SEARCH_DELAY_MS', 5000),
+  hyundaiPurchaseReportBetweenChunksDelayMs: envDelayMs('HYUNDAI_PURCHASE_REPORT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  hyundaiReceiptReportSheetName: env('HYUNDAI_RECEIPT_REPORT_SHEET_NAME', 'hyundai_receipt_report'),
+  hyundaiReceiptReportPageSize: env('HYUNDAI_RECEIPT_REPORT_PAGE_SIZE', '1000'),
+  hyundaiReceiptReportBackfillStartDate: env('HYUNDAI_RECEIPT_REPORT_BACKFILL_START_DATE', '2021-01-01'),
+  hyundaiReceiptReportPostSearchDelayMs: envDelayMs('HYUNDAI_RECEIPT_REPORT_POST_SEARCH_DELAY_MS', 5000),
+  hyundaiReceiptReportBetweenChunksDelayMs: envDelayMs('HYUNDAI_RECEIPT_REPORT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  hyundaiBookingReportPageSize: env('HYUNDAI_BOOKING_REPORT_PAGE_SIZE', '300'),
+  hyundaiBookingReportPostSearchDelayMs: envDelayMs('HYUNDAI_BOOKING_REPORT_POST_SEARCH_DELAY_MS', 5000),
+  hyundaiBookingReportBetweenChunksDelayMs: envDelayMs('HYUNDAI_BOOKING_REPORT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  hyundaiEnquiryReportSheetName: env('HYUNDAI_ENQUIRY_REPORT_SHEET_NAME', 'hyundai_enquiry_report'),
+  hyundaiEnquiryReportPageSize: env('HYUNDAI_ENQUIRY_REPORT_PAGE_SIZE', '1000'),
+  hyundaiEnquiryReportBackfillStartDate: env('HYUNDAI_ENQUIRY_REPORT_BACKFILL_START_DATE', '2021-01-01'),
+  hyundaiEnquiryReportPostSearchDelayMs: envDelayMs('HYUNDAI_ENQUIRY_REPORT_POST_SEARCH_DELAY_MS', 5000),
+  hyundaiEnquiryReportBetweenChunksDelayMs: envDelayMs('HYUNDAI_ENQUIRY_REPORT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+
+
+
+
   kiaEnquiryReportSheetName: env('KIA_ENQUIRY_REPORT_SHEET_NAME', 'kia_enquiry_report'),
   kiaEnquiryReportPageSize: env('KIA_ENQUIRY_REPORT_PAGE_SIZE', '300'),
   kiaEnquiryReportBackfillStartDate: env('KIA_ENQUIRY_REPORT_BACKFILL_START_DATE', '2025-01-01'),
@@ -330,6 +357,16 @@ export const config = {
   hmilRepairOrderPostSearchDelayMs: envDelayMs('HMIL_REPAIR_ORDER_POST_SEARCH_DELAY_MS', 0),
   hmilSecondaryUserId: env('HMIL_SECONDARY_USER_ID', 'MIS5216'),
   hmilSecondaryPassword: env('HMIL_SECONDARY_PASSWORD'),
+  // HMIL DMS login used ONLY by the Booking Report. Deliberately no password default —
+  // it must come from .env so the credential never lives in source.
+  hmilBookingUserId: env('HMIL_BOOKING_USER_ID', 'AMMIS'),
+  hmilBookingPassword: env('HMIL_BOOKING_PASSWORD'),
+  hmilBookingSessionStatePath: path.resolve(
+    rootDir,
+    env('HMIL_BOOKING_SESSION_STATE_PATH', './storage/hmil-booking-dms-state.json')
+  ),
+  hmilBookingDealerCodes: envList('HMIL_BOOKING_DEALER_CODES', '')
+    .map(value => value.toUpperCase()),
   hmilWarrantyCronSchedule: env('HMIL_WARRANTY_CRON_SCHEDULE', '0 15 * * *'),
   hmilWarrantyCronTimezone: env('HMIL_WARRANTY_CRON_TIMEZONE', 'Asia/Kolkata'),
   hmilWarrantyHistoricalOtpProvider: env('HMIL_WARRANTY_HISTORICAL_OTP_PROVIDER', 'manual'),
@@ -395,8 +432,74 @@ export const config = {
   amPlatinumRepairOrderStartDate: env('AM_PLATINUM_REPAIR_ORDER_START_DATE', env('HMIL_REPAIR_ORDER_START_DATE', '2026-05-01')),
   amPlatinumRepairOrderEndDate: env('AM_PLATINUM_REPAIR_ORDER_END_DATE', env('HMIL_REPAIR_ORDER_END_DATE', '2026-05-31')),
   amPlatinumRepairOrderPostSearchDelayMs: envDelayMs('AM_PLATINUM_REPAIR_ORDER_POST_SEARCH_DELAY_MS', envInt('HMIL_REPAIR_ORDER_POST_SEARCH_DELAY_MS', 0)),
-  amPlatinumHistoricalOtpProvider: env('AM_PLATINUM_HISTORICAL_OTP_PROVIDER', 'manual')
+  amPlatinumHistoricalOtpProvider: env('AM_PLATINUM_HISTORICAL_OTP_PROVIDER', 'manual'),
+
+  // Interakt — WhatsApp inbox (app.interakt.ai) used for social-media leads.
+  // No password default: it must come from .env so the credential never lives in source.
+  interaktLoginUrl: env('INTERAKT_LOGIN_URL', 'https://app.interakt.ai/login'),
+  interaktUserId: env('INTERAKT_USER_ID', 'data@amgroupind.com'),
+  interaktPassword: env('INTERAKT_PASSWORD'),
+  interaktSessionStatePath: path.resolve(rootDir, env('INTERAKT_SESSION_STATE_PATH', './storage/interakt-state.json')),
+  interaktInboxUrl: env('INTERAKT_INBOX_URL', 'https://app.interakt.ai/inbox'),
+  interaktLeadMaxAgeDays: envInt('INTERAKT_LEAD_MAX_AGE_DAYS', 7),
+  interaktLeadsSheetName: env('INTERAKT_LEADS_SHEET_NAME', 'social_media_leads'),
+  interaktCronSchedule: env('INTERAKT_CRON_SCHEDULE', '*/10 9-18 * * *'),
+
+  // HIIB — Hyundai insurance broker portal (MISP at ha.hiib.in).
+  // Separate portal from HMIL DMS: its own login form, its own captcha, its own session.
+  hiibBaseUrl: env('HIIB_BASE_URL', 'https://ha.hiib.in'),
+  hiibLoginUrl: env('HIIB_LOGIN_URL', 'https://ha.hiib.in/'),
+  hiibDashboardUrl: env('HIIB_DASHBOARD_URL', 'https://ha.hiib.in/Dashboard/Welcome'),
+  hiibPolicySummaryReportUrl: env(
+    'HIIB_POLICY_SUMMARY_REPORT_URL',
+    'https://ha.hiib.in/Report/Report/policysummaryreport'
+  ),
+  // No hardcoded fallbacks: this file is tracked by git, and a committed credential
+  // pair that used to sit here is rejected by the portal anyway.
+  hiibUserId: env('HIIB_USER_ID'),
+  hiibPassword: env('HIIB_PASSWORD'),
+  // Second portal login, locked server-side to dealer N5211 (AM Platinum).
+  hiibPlatinumUserId: env('HIIB_PLATINUM_USER_ID'),
+  hiibPlatinumPassword: env('HIIB_PLATINUM_PASSWORD'),
+  hiibPlatinumSessionStatePath: path.resolve(
+    rootDir,
+    env('HIIB_PLATINUM_SESSION_STATE_PATH', './storage/hiib-platinum-state.json')
+  ),
+  // Platinum lands in its own table, separate from the N5203 Hyundai data.
+  hiibPlatinumSheetName: env('HIIB_PLATINUM_SHEET_NAME', 'am_platinum_insurance_policy_summary'),
+  // Dealer logins are locked to one dealer server-side; leave blank to read it off the page.
+  hiibDealerCode: env('HIIB_DEALER_CODE', '').trim().toUpperCase(),
+  // 'auto' reads the captcha answer the portal exposes client-side; 'manual' waits for a human to type it.
+  hiibCaptchaMode: env('HIIB_CAPTCHA_MODE', 'auto').trim().toLowerCase(),
+  hiibManualCaptchaWaitMs: envInt('HIIB_MANUAL_CAPTCHA_WAIT_MS', 60000),
+  hiibManualCaptchaPollMs: envInt('HIIB_MANUAL_CAPTCHA_POLL_MS', 1000),
+  hiibHeadless: envBool('HIIB_HEADLESS', envBool('HEADLESS', false)),
+  hiibForceLogin: envBool('HIIB_FORCE_LOGIN', false),
+  hiibLoginRetries: envInt('HIIB_LOGIN_RETRIES', 2),
+  hiibSessionCheckTimeoutMs: envInt('HIIB_SESSION_CHECK_TIMEOUT_MS', 20000),
+  hiibOtpProvider: env('HIIB_OTP_PROVIDER', env('OTP_PROVIDER', 'manual')),
+  hiibOtpWaitMs: envInt('HIIB_OTP_WAIT_MS', 120000),
+  hiibSessionStatePath: path.resolve(rootDir, env('HIIB_SESSION_STATE_PATH', './storage/hiib-insurance-state.json')),
+  hiibDownloadDir: path.resolve(rootDir, env('HIIB_DOWNLOAD_DIR', './downloads/hiib-insurance')),
+  hiibReportChunksDir: path.resolve(rootDir, env('HIIB_REPORT_CHUNKS_DIR', './downloads/report-chunks/hiib-insurance')),
+  hiibDateFormat: env('HIIB_DATE_FORMAT', 'DD/MM/YYYY'),
+  hiibCronSchedule: env('HIIB_CRON_SCHEDULE', '30 18 * * *'),
+  hiibCronTimezone: env('HIIB_CRON_TIMEZONE', env('KIA_CRON_TIMEZONE', 'Asia/Kolkata')),
+  hyundaiInsuranceReportSheetName: env('HYUNDAI_INSURANCE_REPORT_SHEET_NAME', 'hyundai_insurance_policy_summary'),
+  hyundaiInsuranceReportBackfillStartDate: env('HYUNDAI_INSURANCE_REPORT_BACKFILL_START_DATE', '2024-04-01'),
+  // The portal's own Validate() rejects ranges wider than 62 days; stay just under it.
+  hyundaiInsuranceReportChunkDays: envInt('HYUNDAI_INSURANCE_REPORT_CHUNK_DAYS', 60),
+  hyundaiInsuranceReportPostSearchDelayMs: envDelayMs('HYUNDAI_INSURANCE_REPORT_POST_SEARCH_DELAY_MS', 5000),
+  hyundaiInsuranceReportBetweenChunksDelayMs: envDelayMs('HYUNDAI_INSURANCE_REPORT_BETWEEN_CHUNKS_DELAY_MS', 4000),
+  // Successful exports return in 1-2s; a long wait here just stalls the run before
+  // the grid-scraping fallback takes over.
+  hyundaiInsuranceReportDownloadTimeoutMs: envInt('HYUNDAI_INSURANCE_REPORT_DOWNLOAD_TIMEOUT_MS', 60000),
+  hyundaiInsuranceReportExportAttempts: envInt('HYUNDAI_INSURANCE_REPORT_EXPORT_ATTEMPTS', 2),
+  // The portal allows only ~3 CSV exports per day, so rows are read from the
+  // DataTables grid instead. The grid exposes the same ~79 columns.
+  hyundaiInsuranceReportUseCsvExport: envBool('HYUNDAI_INSURANCE_REPORT_USE_CSV_EXPORT', false)
 };
+
 
 export function requireSecret(name, value) {
   if (!value) {

@@ -8,3 +8,14 @@ node_modules/
 downloads/
 logs/
 storage/
+temp/
+otp-inbox.json
+playwright-report/
+test-results/
+apps/*/runtime/
+
+# Env backups — these are copies of .env and carry live portal credentials.
+.env.*
+!.env.example
+# Login-failure screenshots can capture the sign-in form, including the user id.
+*-login-error.png

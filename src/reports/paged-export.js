@@ -420,9 +420,28 @@ export async function exportCurrentGridPageToFile(page, filePath, {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
 
   const eventPage = typeof page.page === 'function' ? page.page() : page;
-  const downloadPromise = eventPage.waitForEvent('download', { timeout: downloadTimeoutMs });
-  await exportButton.click();
-  const download = await downloadPromise;
+  let download = null;
+  let attempts = 0;
+
+  while (attempts < 3) {
+    attempts += 1;
+    try {
+      const downloadPromise = eventPage.waitForEvent('download', { timeout: downloadTimeoutMs });
+      await exportButton.click({ force: true });
+      download = await downloadPromise;
+      break;
+    } catch (err) {
+      logger.warn('Grid page export download wait timed out; retrying download click', {
+        attempt: attempts,
+        filePath,
+        error: err.message
+      });
+      await dismissKendoCommonMessages(page).catch(() => {});
+      if (attempts >= 3) throw err;
+      await sleep(3000);
+    }
+  }
+
   await download.saveAs(filePath);
   await download.delete().catch(() => {});
 
@@ -438,7 +457,8 @@ export async function exportAllGridPagesToFiles(page, {
   outputDir,
   filenameBase,
   pageSize,
-  downloadTimeoutMs = 120000,
+  downloadTimeoutMs = 300000,
+
   maxPages = 500,
   exportSelector,
   exportWhenEmpty = false,

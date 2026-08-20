@@ -338,6 +338,133 @@ module.exports = {
       env: {
         NODE_ENV: 'production'
       }
+    },
+    // AM Platinum Sales Report -> am_platinum_sales_report, daily at 19:10.
+    //
+    // Window fixed at 2025-01-01 -> today; chunks already uploaded are skipped via their
+    // .saved.json markers, so each night only re-exports the trailing chunk.
+    //
+    // 19:10 keeps it clear of am-platinum-cron-job (10:00/16:00), which drives the SAME
+    // AM Platinum login — the active dealer is server-side session state, so two dealer-
+    // switching automations must never overlap.
+    {
+      name: 'platinum-sales-report',
+      script: './scripts/run-platinum-sales-report.js',
+      args: '--start=2025-01-01 --headless',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      cron_restart: '10 19 * * *',
+      watch: false,
+      out_file: './logs/pm2-platinum-sales-report-out.log',
+      error_file: './logs/pm2-platinum-sales-report-error.log',
+      env: {
+        NODE_ENV: 'production',
+        TZ: 'Asia/Kolkata'
+      }
+    },
+    // Interakt social-media leads, every 10 minutes across the working day.
+    //
+    // Standard cron cannot express "every 10 min from 09:00 to 18:30" in one expression, so
+    // this is split: 09:00-17:50 on the ten-minute mark, plus the 18:00-18:30 tail.
+    //
+    // Headless is safe ONLY because the session state is reused; a fresh login needs the
+    // WhatsApp OTP typed in, which requires one visible run first:
+    //   node scripts/run-interakt-leads-once.js
+    {
+      name: 'interakt-leads',
+      script: './scripts/run-interakt-leads-once.js',
+      args: '--headless',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      cron_restart: '*/10 9-17 * * *',
+      watch: false,
+      out_file: './logs/pm2-interakt-leads-out.log',
+      error_file: './logs/pm2-interakt-leads-error.log',
+      env: { NODE_ENV: 'production', TZ: 'Asia/Kolkata' }
+    },
+    {
+      name: 'interakt-leads-evening',
+      script: './scripts/run-interakt-leads-once.js',
+      args: '--headless',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      cron_restart: '0,10,20,30 18 * * *',
+      watch: false,
+      out_file: './logs/pm2-interakt-leads-out.log',
+      error_file: './logs/pm2-interakt-leads-error.log',
+      env: { NODE_ENV: 'production', TZ: 'Asia/Kolkata' }
+    },
+    // Booking Report (MIS > Booking Reports > Booking Report), daily at 17:20.
+    //
+    // Covers BOTH GDMS logins sequentially and every dealer under each:
+    //   hmil-booking (AMMIS) -> hyundai_booking_report
+    //   am-platinum    -> am_platinum_booking_report
+    //
+    // Scheduled before the 18:10 HIIB jobs and clear of hmil-cron-job (12:00/15:45/20:00),
+    // because it drives the same HMIL login and the active dealer is server-side state —
+    // two automations switching dealers at once would cross-contaminate each other.
+    {
+      name: 'hyundai-booking-report',
+      script: './scripts/run-hyundai-booking-report.js',
+      args: '--headless',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      cron_restart: '20 17 * * *',
+      watch: false,
+      out_file: './logs/pm2-hyundai-booking-report-out.log',
+      error_file: './logs/pm2-hyundai-booking-report-error.log',
+      env: {
+        NODE_ENV: 'production',
+        TZ: 'Asia/Kolkata'
+      }
+    },
+    // HIIB insurance portal (ha.hiib.in), daily at 18:10 local time.
+    //
+    // One-shot scripts, not long-lived schedulers: autorestart:false + cron_restart is the
+    // same pattern as clean-memory above. PM2 launches them once when the ecosystem file is
+    // started, then again on each cron tick.
+    //
+    // The two accounts are safe to run at the same minute — createHiibAccountProfile gives
+    // each its own session state, download dir and chunk dir.
+    //
+    // --days=90 keeps the nightly run to a rolling window. Without it the script defaults to
+    // HYUNDAI_INSURANCE_REPORT_BACKFILL_START_DATE (2024-04-01) and would re-scrape the
+    // entire backfill every night. Full history is loaded by running the script by hand.
+    {
+      name: 'hiib-insurance-hyundai',
+      script: './scripts/run-hyundai-insurance-report-once.js',
+      args: '--account=hiib --days=90 --headless',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      cron_restart: '10 18 * * *',
+      watch: false,
+      out_file: './logs/pm2-hiib-insurance-hyundai-out.log',
+      error_file: './logs/pm2-hiib-insurance-hyundai-error.log',
+      env: {
+        NODE_ENV: 'production',
+        TZ: 'Asia/Kolkata'
+      }
+    },
+    {
+      name: 'hiib-insurance-platinum',
+      script: './scripts/run-hyundai-insurance-report-once.js',
+      args: '--account=platinum --days=90 --headless',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      cron_restart: '10 18 * * *',
+      watch: false,
+      out_file: './logs/pm2-hiib-insurance-platinum-out.log',
+      error_file: './logs/pm2-hiib-insurance-platinum-error.log',
+      env: {
+        NODE_ENV: 'production',
+        TZ: 'Asia/Kolkata'
+      }
     }
   ]
 };

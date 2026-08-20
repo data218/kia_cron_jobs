@@ -337,36 +337,191 @@ export async function openHmilPurchaseReport(page) {
   logger.info('Navigating to Hyundai MIS > Monthly Reports > Purchase Report');
   await dismissBlockingMessages(page);
 
-  const reportLink = page.locator([
-    'li.nav_sal_mis a.menuItem[data-viewid="VIEW-D-00565"]',
-    'li.nav_sal_mis a.menuItem[data-url*="selectPurchaseReportMain.dms"]',
-    'li.nav_sal_mis a.menuItem[data-title="Purchase Report"]',
-    'li.nav_sal_mis a.menuItem:has-text("Purchase Report")',
-    'a.menuItem[data-viewid="VIEW-D-00565"]',
-    'a.menuItem[data-url*="selectPurchaseReportMain.dms"]',
-    'a.menuItem[data-title="Purchase Report"]',
-    'a.menuItem:has-text("Purchase Report")'
+  // 1. Click top menu: <li class="nav_sal_mis"><a title="MIS">MIS</a>
+  const misTopMenu = page.locator([
+    'li.nav_sal_mis > a[title="MIS"]',
+    'li.nav_sal_mis > a:has-text("MIS")',
+    'li.nav_sal_mis > a'
   ].join(',')).first();
+  logger.info('Clicking Sales MIS top menu (li.nav_sal_mis)');
+  await clickLocator(page, misTopMenu, 'Hyundai Sales MIS top menu');
+  await sleep(1000);
 
-  if (!await reportLink.isVisible({ timeout: 1000 }).catch(() => false)) {
-    await openRootMenu(page, [
-      'li.nav_sal_mis.active > a[title="MIS"]',
-      'li.nav_sal_mis > a[title="MIS"]',
-      'li.nav_sal_mis > a:has-text("MIS")',
-      'li.nav_sal_mis > a',
-      'a[title="MIS"]'
-    ], 'Hyundai Sales MIS menu');
-  }
-
+  // 2. Click "Monthly Reports" section parent under li.nav_sal_mis
   const monthlyReportsParent = page
     .locator('li.nav_sal_mis a')
     .filter({ hasText: /^Monthly Reports$/ })
     .first();
-  await openParentIfNeeded(page, monthlyReportsParent, reportLink, 'Hyundai Monthly Reports menu');
+  logger.info('Expanding Sales Monthly Reports menu group');
+  await clickLocator(page, monthlyReportsParent, 'Hyundai Monthly Reports menu');
+  await sleep(1000);
 
+  // 3. Click "Purchase Report" menuItem (VIEW-D-00565)
+  const reportLink = page.locator([
+    'li.nav_sal_mis a.menuItem[data-viewid="VIEW-D-00565"]',
+    'li.nav_sal_mis a.menuItem[data-url*="selectPurchaseReportMain.dms"]',
+    'li.nav_sal_mis a.menuItem[data-title="Purchase Report"]',
+    'a.menuItem[data-viewid="VIEW-D-00565"]',
+    'a.menuItem[data-url*="selectPurchaseReportMain.dms"]'
+  ].join(',')).first();
+  logger.info('Clicking Purchase Report menu item');
   await clickLocator(page, reportLink, 'Purchase Report page');
   await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
   logger.info('Purchase Report menu item clicked');
+}
+
+export async function openHmilSalesReport(page) {
+  logger.info('Navigating to Hyundai MIS > Monthly Reports > Sales Report');
+  await dismissBlockingMessages(page);
+
+  // 1. Click top menu: <li class="nav_sal_mis"><a title="MIS">MIS</a>
+  const misTopMenu = page.locator([
+    'li.nav_sal_mis > a[title="MIS"]',
+    'li.nav_sal_mis > a:has-text("MIS")',
+    'li.nav_sal_mis > a'
+  ].join(',')).first();
+  logger.info('Clicking Sales MIS top menu (li.nav_sal_mis)');
+  await clickLocator(page, misTopMenu, 'Hyundai Sales MIS top menu');
+  await sleep(1000);
+
+  // 2. Click "Monthly Reports" section parent under li.nav_sal_mis
+  const monthlyReportsParent = page
+    .locator('li.nav_sal_mis a')
+    .filter({ hasText: /^Monthly Reports$/ })
+    .first();
+  logger.info('Expanding Sales Monthly Reports menu group');
+  await clickLocator(page, monthlyReportsParent, 'Hyundai Monthly Reports menu');
+  await sleep(1000);
+
+  // 3. Click "Sales Report" menuItem (VIEW-D-00568)
+  const reportLink = page.locator([
+    'li.nav_sal_mis a.menuItem[data-viewid="VIEW-D-00568"]',
+    'li.nav_sal_mis a.menuItem[data-url*="selectSalesReportMain.dms"]',
+    'li.nav_sal_mis a.menuItem[data-title="Sales Report"]',
+    'a.menuItem[data-viewid="VIEW-D-00568"]'
+  ].join(',')).first();
+  logger.info('Clicking Sales Report menu item');
+  await clickLocator(page, reportLink, 'Sales Report page');
+  await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
+  logger.info('Sales Report menu item clicked');
+}
+
+export async function openHmilReceiptReport(page) {
+  logger.info('Navigating to Hyundai MIS > Monthly Reports > Receipt Report');
+  await dismissBlockingMessages(page);
+
+  // 1. Click top menu: <li class="nav_sal_mis"><a title="MIS">MIS</a>
+  const misTopMenu = page.locator([
+    'li.nav_sal_mis > a[title="MIS"]',
+    'li.nav_sal_mis > a:has-text("MIS")',
+    'li.nav_sal_mis > a'
+  ].join(',')).first();
+  logger.info('Clicking Sales MIS top menu (li.nav_sal_mis)');
+  await clickLocator(page, misTopMenu, 'Hyundai Sales MIS top menu');
+  await sleep(1000);
+
+  // 2. Click "Monthly Reports" section parent under li.nav_sal_mis
+  const monthlyReportsParent = page
+    .locator('li.nav_sal_mis a')
+    .filter({ hasText: /^Monthly Reports$/ })
+    .first();
+  logger.info('Expanding Sales Monthly Reports menu group');
+  await clickLocator(page, monthlyReportsParent, 'Hyundai Monthly Reports menu');
+  await sleep(1000);
+
+  // 3. Click "Receipt Report" menuItem (VIEW-D-00566)
+  const reportLink = page.locator([
+    'li.nav_sal_mis a.menuItem[data-viewid="VIEW-D-00566"]',
+    'li.nav_sal_mis a.menuItem[data-url*="selectReceiptReportMain.dms"]',
+    'li.nav_sal_mis a.menuItem[data-title="Receipt Report"]',
+    'a.menuItem[data-viewid="VIEW-D-00566"]',
+    'a.menuItem[data-url*="selectReceiptReportMain.dms"]'
+  ].join(',')).first();
+  logger.info('Clicking Receipt Report menu item');
+  await clickLocator(page, reportLink, 'Receipt Report page');
+  await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
+  logger.info('Receipt Report menu item clicked');
+}
+
+export async function openHmilEnquiryReport(page) {
+  logger.info('Navigating to Hyundai MIS > Monthly Reports > Enquiry Report');
+  await dismissBlockingMessages(page);
+
+  // 1. Click top menu: <li class="nav_sal_mis"><a title="MIS">MIS</a>
+  const misTopMenu = page.locator([
+    'li.nav_sal_mis > a[title="MIS"]',
+    'li.nav_sal_mis > a:has-text("MIS")',
+    'li.nav_sal_mis > a'
+  ].join(',')).first();
+  logger.info('Clicking Sales MIS top menu (li.nav_sal_mis)');
+  await clickLocator(page, misTopMenu, 'Hyundai Sales MIS top menu');
+  await sleep(1000);
+
+  // 2. Click "Monthly Reports" section parent under li.nav_sal_mis
+  const monthlyReportsParent = page
+    .locator('li.nav_sal_mis a')
+    .filter({ hasText: /^Monthly Reports$/ })
+    .first();
+  logger.info('Expanding Sales Monthly Reports menu group');
+  await clickLocator(page, monthlyReportsParent, 'Hyundai Monthly Reports menu');
+  await sleep(1000);
+
+  // 3. Click "Enquiry Report" menuItem (VIEW-D-00563)
+  const reportLink = page.locator([
+    'li.nav_sal_mis a.menuItem[data-viewid="VIEW-D-00563"]',
+    'li.nav_sal_mis a.menuItem[data-url*="selectEnquiryReportMain.dms"]',
+    'li.nav_sal_mis a.menuItem[data-title="Enquiry Report"]',
+    'a.menuItem[data-viewid="VIEW-D-00563"]',
+    'a.menuItem[data-url*="selectEnquiryReportMain.dms"]'
+  ].join(',')).first();
+  logger.info('Clicking Enquiry Report menu item');
+  await clickLocator(page, reportLink, 'Enquiry Report page');
+  await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
+  logger.info('Enquiry Report menu item clicked');
+}
+
+
+
+
+
+
+
+export async function openHmilBookingReport(page) {
+  logger.info('Navigating to Hyundai MIS > Booking Reports > Booking Report');
+  await dismissBlockingMessages(page);
+
+  // 1. Sales MIS top menu.
+  const misTopMenu = page.locator([
+    'li.nav_sal_mis > a[title="MIS"]',
+    'li.nav_sal_mis > a:has-text("MIS")',
+    'li.nav_sal_mis > a'
+  ].join(',')).first();
+  logger.info('Clicking Sales MIS top menu (li.nav_sal_mis)');
+  await clickLocator(page, misTopMenu, 'Hyundai Sales MIS top menu');
+  await sleep(1000);
+
+  // 2. Expand the "Booking Reports" group (sibling of "Monthly Reports").
+  const bookingReportsParent = page
+    .locator('li.nav_sal_mis a')
+    .filter({ hasText: /^Booking Reports$/ })
+    .first();
+  logger.info('Expanding Sales Booking Reports menu group');
+  await clickLocator(page, bookingReportsParent, 'Hyundai Booking Reports menu');
+  await sleep(1000);
+
+  // 3. "Booking Report" (VIEW-D-01069). Matched on viewid/url first because the group also
+  // contains "Pending Customer Booking Detail", whose label starts with the same words.
+  const reportLink = page.locator([
+    'li.nav_sal_mis a.menuItem[data-viewid="VIEW-D-01069"]',
+    'li.nav_sal_mis a.menuItem[data-url*="selectBookingReportMain.dms"]',
+    'li.nav_sal_mis a.menuItem[data-title="Booking Report"]',
+    'a.menuItem[data-viewid="VIEW-D-01069"]',
+    'a.menuItem[data-url*="selectBookingReportMain.dms"]'
+  ].join(',')).first();
+  logger.info('Clicking Booking Report menu item');
+  await clickLocator(page, reportLink, 'Booking Report page');
+  await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
+  logger.info('Booking Report menu item clicked');
 }
 
 export async function openHmilOperationWiseAnalysisReport(page) {

@@ -237,20 +237,27 @@ async function createHmilBrowserSession(account) {
   }
 
   const canReuseStorageState = savedStorageStateExists && metaMatches && !account.forceLogin;
+  const isHeadless = account.headless ?? config.headless;
   const browser = await chromium.launch({
-    headless: account.headless ?? config.headless,
+    headless: isHeadless,
     slowMo: config.slowMoMs,
-    downloadsPath: account.downloadDir
+    downloadsPath: account.downloadDir,
+    args: isHeadless ? [] : ['--start-maximized']
   });
 
   const context = await browser.newContext({
     acceptDownloads: true,
+    viewport: isHeadless ? undefined : null,
     storageState: canReuseStorageState ? account.sessionStatePath : undefined
   });
   context.setDefaultTimeout(config.playwrightActionTimeoutMs);
   context.setDefaultNavigationTimeout(config.playwrightNavigationTimeoutMs);
 
   const page = await context.newPage();
+  if (!isHeadless) {
+    await page.bringToFront().catch(() => {});
+  }
+
   if (canReuseStorageState) {
     logger.info(`Loaded saved ${account.logPrefix} Playwright storage state`, {
       path: account.sessionStatePath,

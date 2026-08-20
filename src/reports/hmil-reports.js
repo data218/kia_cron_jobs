@@ -15,12 +15,20 @@ import {
   openHmilOperationWiseAnalysisReport,
   openHmilPurchaseReport,
   openHmilRepairOrderListReport,
+  openHmilSalesReport,
   openHmilServiceRepairOrderListReport,
   openHmilServiceBookingListReport,
   openHmilTrustPackageSection
 } from '../navigation/hmil-menu.js';
 import { downloadHyundaiRepairOrderListReport } from './hyundai-repair-order-list.js';
+import { downloadHyundaiSalesReport } from './hyundai-sales-report.js';
+import { downloadHyundaiPurchaseReport } from './hyundai-purchase-report.js';
+import { downloadHyundaiReceiptReport } from './hyundai-receipt-report.js';
+import { downloadHyundaiEnquiryReport } from './hyundai-enquiry-report.js';
 import { runAmPlatinumOperationWiseForDealer } from './am-platinum-operation-wise-export.js';
+
+
+
 import { createHyundaiKiaCloneReport } from './hyundai-kia-clone.js';
 
 const COMPLAINT_EXPORT_HEADERS = [
@@ -107,7 +115,8 @@ const DEFAULT_HMIL_REPORT_IDS = new Set([
   'hyundai-ew-report',
   'hyundai-adv-wise-lubricants-vas',
   'hyundai-operation-wise-analysis-report',
-  'hyundai-open-ro-yearly'
+  'hyundai-open-ro-yearly',
+  'hyundai-sales-report'
 ]);
 
 function trustPackageReport({ id, name, sectionTitle }, account) {
@@ -311,8 +320,39 @@ export function createHmilReportDefinitions(account = defaultAccount()) {
       { inputId: 'dateType', value: 'Billing Date', timeout: 10000 }
     ]
   }, account),
-    operationWiseReport(account)
+    operationWiseReport(account),
+    {
+      id: 'hyundai-sales-report',
+      name: 'Hyundai Sales Report',
+      sheetName: account.sheetName('hyundai_sales_report'),
+      dealerCodes: account.dealerCodes.length ? account.dealerCodes : ['active'],
+      run: (page, options = {}) => downloadHyundaiSalesReport(page, { ...options, account })
+    },
+    {
+      id: 'hyundai-purchase-report',
+      name: 'Hyundai Purchase Report',
+      sheetName: account.sheetName('hyundai_purchase_report'),
+      dealerCodes: account.dealerCodes.length ? account.dealerCodes : ['active'],
+      run: (page, options = {}) => downloadHyundaiPurchaseReport(page, { ...options, account })
+    },
+    {
+      id: 'hyundai-receipt-report',
+      name: 'Hyundai Receipt Report',
+      sheetName: account.sheetName('hyundai_receipt_report'),
+      dealerCodes: account.dealerCodes.length ? account.dealerCodes : ['active'],
+      run: (page, options = {}) => downloadHyundaiReceiptReport(page, { ...options, account })
+    },
+    {
+      id: 'hyundai-enquiry-report',
+      name: 'Hyundai Enquiry Report',
+      sheetName: account.sheetName('hyundai_enquiry_report'),
+      dealerCodes: account.dealerCodes.length ? account.dealerCodes : ['active'],
+      run: (page, options = {}) => downloadHyundaiEnquiryReport(page, { ...options, account })
+    }
   ];
+
+
+
 }
 
 export const hmilReportDefinitions = createHmilReportDefinitions();

@@ -158,6 +158,72 @@ export const TABLE_IDENTITY_COLUMNS = {
     ['r_o_no', 'claim_type', 'claim_date'],
     ['r_o_no', 'claim_date']
   ],
+  // Insurance policies are identified by their policy number. Without this the store
+  // hashed every column, so a policy re-scraped after any field changed (status, premium)
+  // inserted a second row instead of updating — 191 redundant rows on the platinum table.
+  //
+  // am_platinum_insurance_policy_summary inherits this automatically: resolveIdentityColumns
+  // strips the am_platinum_ prefix and looks up hyundai_<suffix>.
+  hyundai_insurance_policy_summary: [
+    ['source_dealer_code', 'policy_no'],
+    ['dealer_code', 'policy_no'],
+    ['policy_no']
+  ],
+  hyundai_sales_report: [
+    ['source_dealer_code', 'invoice_no'],
+    ['source_dealer_code', 'invoice_number'],
+    ['source_dealer_code', 'confirm_no'],
+    ['dealer_code', 'invoice_no'],
+    ['dealer_code', 'invoice_number'],
+    ['dealer_code', 'confirm_no'],
+    ['invoice_no'],
+    ['invoice_number'],
+    ['confirm_no'],
+    ['vin', 'confirm_date'],
+    ['chassis_no', 'confirm_date'],
+    ['vin', 'invoice_date'],
+    ['chassis_no', 'invoice_date']
+  ],
+  hyundai_purchase_report: [
+    ['source_dealer_code', 'invoice_no'],
+    ['source_dealer_code', 'invoice_number'],
+    ['source_dealer_code', 'purchase_no'],
+    ['dealer_code', 'invoice_no'],
+    ['dealer_code', 'invoice_number'],
+    ['dealer_code', 'purchase_no'],
+    ['invoice_no'],
+    ['invoice_number'],
+    ['purchase_no'],
+    ['vin', 'invoice_date'],
+    ['chassis_no', 'invoice_date']
+  ],
+  hyundai_receipt_report: [
+    ['source_dealer_code', 'receipt_no'],
+    ['source_dealer_code', 'receipt_number'],
+    ['dealer_code', 'receipt_no'],
+    ['dealer_code', 'receipt_number'],
+    ['receipt_no'],
+    ['receipt_number'],
+    ['source_dealer_code', 'invoice_no'],
+    ['source_dealer_code', 'customer_id', 'receipt_date'],
+    ['source_dealer_code', 'customerid', 'receipt_date']
+  ],
+  // hyundai_enquiry_report deliberately has NO natural key and dedupes on row_hash alone.
+  //
+  // The portal's Enquiry Report exposes no per-enquiry identifier: order_ref_no is blank on
+  // ~98% of rows, customer_id identifies a customer (one customer legitimately raises many
+  // enquiries, even same-day for the same model), and rows that match on every stable field
+  // still differ by booking_date/lost_reason because a CTB cancellation spawns a fresh
+  // enquiry record. Any natural key built from these columns collapses genuinely distinct
+  // enquiries into one and loses data.
+  //
+  // Do not add candidates here without first confirming against live data that they do not
+  // group distinct order_ref_no values together.
+
+
+
+
+
   trust_package: [
     ['trust_package_section', 'source_dealer_code', 'cert_no'],
     ['trust_package_section', 'source_dealer_code', 'certi_no'],

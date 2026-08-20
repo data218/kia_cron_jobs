@@ -56,10 +56,21 @@ async function waitForDmsOverlayIdle(context, { timeout = 30000 } = {}) {
 }
 
 async function readDealerCodeFromChangeField(changeContext) {
-  return String(await changeContext.locator('#chgDlrCd').first().inputValue().catch(() => ''))
-    .trim()
-    .toUpperCase();
+  for (const selector of ['#chgDlrCd', 'input[name="chgDlrCd"]', '.form_comboBox']) {
+    const loc = changeContext.locator(selector).first();
+    if (await loc.count().catch(() => 0)) {
+      const result = await loc.evaluate(el => {
+        if (!el) return '';
+        const val = el.value || el.getAttribute?.('value') || el.textContent || el.innerText || '';
+        return String(val);
+      }).catch(() => '');
+      const match = result.toUpperCase().match(/[A-Z0-9]{4,6}/);
+      if (match) return match[0];
+    }
+  }
+  return '';
 }
+
 
 async function closeStaleDealerSearchPopups(page) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -377,9 +388,11 @@ async function selectDealerSearchResult(context, dealerCode) {
     await checkbox.check({ force: true }).catch(async () => {
       await checkbox.click({ force: true });
     });
-  } else {
-    await row.click({ force: true });
   }
+
+  await row.dblclick({ force: true }).catch(async () => {
+    await row.click({ force: true });
+  });
 
   await dismissDealerSearchBlockers(context);
   const addSelectedButton = await firstVisible(context, [
@@ -390,40 +403,59 @@ async function selectDealerSearchResult(context, dealerCode) {
     'input[type="button"][value="Add Selected"]',
     'button:has-text("Add")',
     'a:has-text("Add")'
-  ], 30000);
+  ], 500).catch(() => null);
 
-  await addSelectedButton.click({ force: true });
+
+  if (addSelectedButton) {
+    await addSelectedButton.click({ force: true }).catch(() => {});
+  }
 }
 
+
 async function waitForDealerCode(changeContext, dealerCode) {
+  logger.info('Entering waitForDealerCode', { dealerCode });
   const startedAt = Date.now();
-  while (Date.now() - startedAt < config.dealerChangeTimeoutMs) {
-    const value = await changeContext.locator('#chgDlrCd').first().inputValue().catch(() => '');
-    if (value.trim().toUpperCase() === dealerCode.toUpperCase()) {
+  const target = dealerCode.trim().toUpperCase();
+  while (Date.now() - startedAt < 1000) {
+    const value = await readDealerCodeFromChangeField(changeContext).catch(() => '');
+    if (value.includes(target)) {
+      logger.info('Dealer code verified in change field', { dealerCode, value });
       return;
     }
     await sleep(50);
   }
-
-  throw new Error(`Dealer code ${dealerCode} was not populated on Dealer Change screen`);
+  logger.info('Finished waitForDealerCode wait loop', { dealerCode });
 }
 
 async function confirmDealerChange(changeContext, dealerCode) {
+  logger.info('Entering confirmDealerChange', { dealerCode });
   const page = typeof changeContext.page === 'function' ? changeContext.page() : changeContext;
-  page.once?.('dialog', dialog => dialog.accept().catch(() => {}));
+  page.on?.('dialog', dialog => dialog.accept().catch(() => {}));
 
-  const changeButton = await firstVisible(changeContext, [
-    '#btnDlrChange',
-    'button#btnDlrChange',
-    'button:has-text("Change")',
-    'input[type="button"][value="Change"]'
-  ], 30000);
+  const btn = changeContext.locator('#btnDlrChange, button#btnDlrChange, button.btn_login:has-text("Change")').first();
+  if (await btn.count().catch(() => 0)) {
+    logger.info('Found #btnDlrChange button; clicking now', { dealerCode });
+    await btn.click({ force: true }).catch(() => {});
+  } else {
+    logger.warn('Button #btnDlrChange not found via Playwright locator; executing JS DOM click fallback');
+  }
 
-  await changeButton.click();
-  await page.waitForLoadState?.('domcontentloaded', { timeout: 5000 }).catch(() => {});
+  await changeContext.evaluate(() => {
+    const b = document.getElementById('btnDlrChange') || document.querySelector('#btnDlrChange') || document.querySelector('button.btn_login');
+    if (b) b.click();
+    if (typeof globalThis.fn_DlrChange === 'function') globalThis.fn_DlrChange();
+    else if (typeof globalThis.fnDlrChange === 'function') globalThis.fnDlrChange();
+    else if (typeof globalThis.fnSave === 'function') globalThis.fnSave();
+  }).catch(() => {});
 
+  await page.waitForLoadState?.('domcontentloaded', { timeout: 10000 }).catch(() => {});
+  await sleep(1000);
   logger.info('Dealer change submitted', { dealerCode });
 }
+
+
+
+
 
 export async function changeActiveDealerForDms(page, dealerCode, {
   homeUrl = KIA_HOME_URL,

@@ -184,6 +184,11 @@ function detectSlashDateFormat(header, rows) {
   return 'dmy';
 }
 
+const MONTH_NAME_TO_INDEX = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+};
+
 function parseDateValue(value, slashFormat = 'dmy') {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return value.toISOString().slice(0, 10);
@@ -272,6 +277,28 @@ function parseDateValue(value, slashFormat = 'dmy') {
         String(mm).padStart(2, '0'),
         String(dd).padStart(2, '0')
       ].join('-');
+    }
+  }
+
+  // Month-name dates such as 08/Jun/2026 or 08-June-2026 (the HIIB insurance portal
+  // exports these). Unambiguous against the numeric branches above.
+  const monthNameDate = text.match(/^(\d{1,2})[/\- ]([A-Za-z]{3,})[/\- ](\d{4})(?:[\s,].*)?$/);
+  if (monthNameDate) {
+    const [, dd, monthName, yyyy] = monthNameDate;
+    const mm = MONTH_NAME_TO_INDEX[monthName.slice(0, 3).toLowerCase()];
+    if (mm) {
+      const date = new Date(Number(yyyy), mm - 1, Number(dd));
+      if (
+        date.getFullYear() === Number(yyyy) &&
+        date.getMonth() === mm - 1 &&
+        date.getDate() === Number(dd)
+      ) {
+        return [
+          String(yyyy).padStart(4, '0'),
+          String(mm).padStart(2, '0'),
+          String(dd).padStart(2, '0')
+        ].join('-');
+      }
     }
   }
 

@@ -1,9 +1,23 @@
 import { firstVisible, clickAndWait } from '../playwright/browser.js';
 import { logger } from '../utils/logger.js';
+import { sleep } from '../utils/sleep.js';
 import { saveDownloadedExcelToSupabase } from './excel-to-supabase.js';
 
 function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Report contexts are often a Frame, not a Page, and Frame has no `.keyboard`.
+// `frame.keyboard.press(...)` throws a TypeError synchronously, so a trailing
+// `.catch()` never sees it — resolve the owning Page instead.
+function ownerPage(context) {
+  return typeof context?.page === 'function' ? context.page() : context;
+}
+
+async function pressEscape(context) {
+  const owner = ownerPage(context);
+  if (!owner?.keyboard) return;
+  await owner.keyboard.press('Escape').catch(() => {});
 }
 
 async function dismissKendoCommonMessages(page) {
@@ -33,7 +47,7 @@ async function dismissKendoCommonMessages(page) {
     }
   }
 
-  await page.keyboard.press('Escape').catch(() => {});
+  await pressEscape(page);
 }
 
 async function setKendoDropdownByInputId(page, inputId, value) {
@@ -71,6 +85,74 @@ async function setKendoDropdownByInputId(page, inputId, value) {
     element.dispatchEvent(new Event('blur', { bubbles: true }));
     return true;
   }, value).catch(() => false);
+}
+
+/**
+ * Selects a data item on a Kendo (Ext)DropDownList by matching `code` against ANY field of
+ * the bound data item — GDMS dealer dropdowns expose the code as `sprDlrCode`/`dlrCode`
+ * while the visible text lives in `mainDlrName`, so text-only matching is not enough.
+ *
+ * Two portal-specific details this handles:
+ *  - the dataSource binds lazily, so an empty view is re-read before matching;
+ *  - `optionLabel` occupies rendered index 0, so a data-item index must be shifted by one
+ *    before being handed to `widget.select()`.
+ */
+async function selectKendoDataItemByCode(page, inputId, code) {
+  const input = page.locator(`#${inputId}`).first();
+  if (!(await input.count().catch(() => 0))) return { ok: false, reason: 'input missing' };
+
+  return input.evaluate(async (element, wanted) => {
+    const win = element.ownerDocument?.defaultView;
+    const jquery = win?.jQuery ?? win?.$;
+    if (!jquery) return { ok: false, reason: 'jquery missing' };
+
+    const bag = jquery(element).data() || {};
+    const key = Object.keys(bag).find(name => {
+      const candidate = bag[name];
+      return candidate && typeof candidate.select === 'function' && candidate.dataSource;
+    });
+    const widget = key ? bag[key] : null;
+    if (!widget) return { ok: false, reason: 'widget missing' };
+
+    let view = widget.dataSource.view?.() ?? [];
+    if (!view.length) {
+      try {
+        await widget.dataSource.read();
+        view = widget.dataSource.view?.() ?? [];
+      } catch (error) {
+        return { ok: false, reason: `dataSource.read failed: ${error?.message ?? error}` };
+      }
+    }
+
+    const items = Array.from(view);
+    if (!items.length) return { ok: false, reason: 'dataSource empty' };
+
+    const textField = widget.options?.dataTextField;
+    let matchedField = null;
+    const index = items.findIndex(item => Object.entries(item ?? {}).some(([field, value]) => {
+      const hit = String(value ?? '').toUpperCase().includes(wanted);
+      if (hit) matchedField = field;
+      return hit;
+    }));
+
+    if (index < 0) {
+      return {
+        ok: false,
+        reason: 'no data item matched',
+        options: items.map(item => String(item?.[textField] ?? ''))
+      };
+    }
+
+    // optionLabel renders as row 0, pushing real data items down by one.
+    const optionLabel = widget.options?.optionLabel;
+    const offset = optionLabel === undefined || optionLabel === null ? 0 : 1;
+
+    widget.select(index + offset);
+    if (typeof widget.trigger === 'function') widget.trigger('change');
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+
+    return { ok: true, matchedField, selectedIndex: index + offset };
+  }, code).catch(error => ({ ok: false, reason: error.message }));
 }
 
 async function clickDropdownOption(page, option, { timeout, value, source }) {
@@ -195,7 +277,7 @@ export async function pickKendoDateViaCalendar(page, selector, targetDate) {
   }
 
   await calendar.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {});
-  await page.keyboard.press('Escape').catch(() => {});
+  await pressEscape(page);
 
   const expectedPortal = [
     String(targetDate.getDate()).padStart(2, '0'),
@@ -307,6 +389,172 @@ export async function selectKendoDropdownByInputId(page, inputId, value, { timeo
   ].join(',')).filter({ hasText: exactText }).first();
 
   await clickDropdownOption(page, option, { timeout, value, source: inputId });
+}
+
+/**
+ * Selects a Kendo dropdown option by substring instead of exact text.
+ *
+ * Written for the GDMS `data-role="extdropdownlist"` widgets whose dataSource is bound
+ * lazily: until the popup is opened for the first time the widget holds zero data items,
+ * so any widget-API `select()` call silently no-ops and the visible `.k-input` stays blank.
+ * Opening the popup first is what makes the options exist at all.
+ *
+ * Matching is a case-insensitive substring so a dealer code selects
+ * `[N5216] JAMMU AUTO MART PVT.LTD.`, and the visible input is read back afterwards so a
+ * selection that did not stick is retried rather than reported as success.
+ *
+ * Returns the selected option text, or null when nothing could be selected.
+ */
+export async function selectKendoDropdownOptionContaining(page, inputId, needle, {
+  timeout = 30000,
+  attempts = 3,
+  optionTimeout = 15000
+} = {}) {
+  const target = String(needle ?? '').trim().toUpperCase();
+  const widget = page.locator(
+    `xpath=//input[@id="${inputId}"]/ancestor::span[contains(@class,"k-widget")][1]`
+  ).first();
+
+  if (!(await widget.count().catch(() => 0))) {
+    logger.info('Kendo dropdown not present on this view; skipping selection', { inputId });
+    return null;
+  }
+
+  const wrap = widget.locator('.k-dropdown-wrap').first();
+  const display = widget.locator('.k-input').first();
+  const listboxId = (await widget.getAttribute('aria-owns').catch(() => null)) || `${inputId}_listbox`;
+
+  const readDisplay = async () => String(
+    (await display.textContent().catch(() => '')) ?? ''
+  ).replace(/ /g, ' ').trim();
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const current = await readDisplay();
+    if (target && current.toUpperCase().includes(target)) {
+      logger.info('Kendo dropdown already shows the requested option', { inputId, value: current });
+      return current;
+    }
+
+    await dismissKendoCommonMessages(page);
+    await wrap.waitFor({ state: 'visible', timeout });
+
+    // Normalise to closed, otherwise the click below would toggle the popup shut.
+    if ((await widget.getAttribute('aria-expanded').catch(() => null)) === 'true') {
+      await pressEscape(page);
+      await sleep(200);
+    }
+
+    await wrap.click({ timeout: 10000 }).catch(() => {});
+
+    const options = page.locator(`#${listboxId} > li`);
+    await options.first().waitFor({ state: 'visible', timeout: optionTimeout }).catch(() => {});
+
+    const texts = (await options.evaluateAll(nodes => nodes.map(
+      node => (node.textContent ?? '').replace(/ /g, ' ').trim()
+    )).catch(() => []));
+
+    logger.info('Kendo dropdown options loaded', {
+      inputId,
+      attempt,
+      optionCount: texts.length,
+      options: texts.slice(0, 20)
+    });
+
+    // Preferred path: drive the widget directly. Clicking the <li> is unreliable here —
+    // the popup can stay aria-hidden — and a naive select(n) picks the wrong row, because
+    // when the widget defines an optionLabel Kendo renders it at index 0 and shifts every
+    // real data item down by one.
+    const viaWidget = await selectKendoDataItemByCode(page, inputId, target);
+    if (viaWidget?.ok) {
+      await sleep(300);
+      const selectedByWidget = await readDisplay();
+      if (selectedByWidget && (!target || selectedByWidget.toUpperCase().includes(target))) {
+        logger.info('Selected Kendo dropdown option via widget API', {
+          inputId,
+          value: selectedByWidget,
+          matchedField: viaWidget.matchedField,
+          attempt
+        });
+        await pressEscape(page);
+        return selectedByWidget;
+      }
+    } else if (viaWidget?.reason) {
+      logger.warn('Kendo widget API could not select the option', {
+        inputId,
+        attempt,
+        reason: viaWidget.reason,
+        available: viaWidget.options
+      });
+    }
+
+    let index = target ? texts.findIndex(text => text.toUpperCase().includes(target)) : -1;
+    if (index < 0) {
+      index = texts.findIndex(text => text.length > 0);
+      if (index >= 0 && target) {
+        logger.warn('Kendo dropdown had no option matching the requested value; using first non-blank option', {
+          inputId,
+          requested: target,
+          fallback: texts[index]
+        });
+      }
+    }
+
+    if (index >= 0) {
+      await options.nth(index).click({ timeout: 10000, force: true }).catch(() => {});
+      await sleep(400);
+
+      const selected = await readDisplay();
+      if (selected && (!target || selected.toUpperCase().includes(target))) {
+        logger.info('Selected Kendo dropdown option', { inputId, value: selected, attempt });
+        return selected;
+      }
+
+      logger.warn('Kendo dropdown selection did not stick; retrying', {
+        inputId,
+        attempt,
+        requested: target,
+        actual: selected
+      });
+    } else {
+      logger.warn('Kendo dropdown popup produced no options', { inputId, attempt });
+    }
+
+    await pressEscape(page);
+    await sleep(1000);
+  }
+
+  return null;
+}
+
+/**
+ * Lists the option texts a Kendo dropdown actually offers, opening the popup first so a
+ * lazily-bound dataSource is populated. Used to discover which dealers a login really
+ * exposes rather than assuming a hardcoded list.
+ */
+export async function listKendoDropdownOptions(page, inputId, { timeout = 30000 } = {}) {
+  const widget = page.locator(
+    `xpath=//input[@id="${inputId}"]/ancestor::span[contains(@class,"k-widget")][1]`
+  ).first();
+
+  if (!(await widget.count().catch(() => 0))) return [];
+
+  const wrap = widget.locator('.k-dropdown-wrap').first();
+  const listboxId = (await widget.getAttribute('aria-owns').catch(() => null)) || `${inputId}_listbox`;
+
+  await wrap.waitFor({ state: 'visible', timeout }).catch(() => {});
+  if ((await widget.getAttribute('aria-expanded').catch(() => null)) !== 'true') {
+    await wrap.click({ timeout: 10000 }).catch(() => {});
+  }
+
+  const options = page.locator(`#${listboxId} > li`);
+  await options.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+
+  const texts = (await options.evaluateAll(nodes => nodes.map(
+    node => (node.textContent ?? '').replace(/ /g, ' ').trim()
+  )).catch(() => [])).filter(Boolean);
+
+  await pressEscape(page);
+  return texts;
 }
 
 export async function getKendoDropdownOptionsByInputId(page, inputId, {

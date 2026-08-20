@@ -130,7 +130,51 @@ function hmilSecondaryProfile() {
   };
 }
 
+/**
+ * HMIL DMS login reserved for the Booking Report (AMMIS).
+ *
+ * Separate from hmil-secondary (MIS5216) on purpose: only the Booking Report runs under this
+ * login, so it gets its own session state and download dirs and never shares a session with
+ * the reports MIS5216 drives.
+ */
+function hmilBookingProfile() {
+  return {
+    id: 'hmil-booking',
+    brand: 'hyundai',
+    displayName: 'HMIL Booking',
+    serviceName: 'hyundai-booking-report',
+    systemLabel: 'HMIL DMS',
+    logPrefix: 'HMIL Booking',
+    defaultMode: 'hyundai-regular',
+    cronSchedule: config.hmilCronSchedule,
+    loginUrl: config.hmilLoginUrl,
+    homeUrl: config.hmilHomeUrl,
+    userId: config.hmilBookingUserId,
+    password: config.hmilBookingPassword,
+    userIdEnvName: 'HMIL_BOOKING_USER_ID',
+    passwordEnvName: 'HMIL_BOOKING_PASSWORD',
+    forceLogin: config.hmilForceLogin,
+    loginRetries: config.hmilLoginRetries,
+    sessionCheckTimeoutMs: config.hmilSessionCheckTimeoutMs,
+    sessionStatePath: config.hmilBookingSessionStatePath,
+    downloadDir: path.resolve(config.rootDir, './downloads/hmil-booking'),
+    reportChunksDir: path.resolve(config.rootDir, './downloads/report-chunks/hmil-booking'),
+    dealerCodes: config.hmilBookingDealerCodes.length
+      ? config.hmilBookingDealerCodes
+      : config.hmilSecondaryDealerCodes,
+    reportsToRun: 'hyundai-booking-report',
+    headless: config.headless,
+    healthFileName: 'hmil-booking-health.json',
+    otpPurpose: 'hmil',
+    sheetName: sheetName => prefixSheetName({ sheetPrefix: '' }, sheetName)
+  };
+}
+
 export function createGdmsAccountProfile(accountId = 'hmil') {
+  if (accountId === 'hmil-booking') {
+    return hmilBookingProfile();
+  }
+
   if (accountId === 'am-platinum') {
     return amPlatinumProfile();
   }

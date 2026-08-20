@@ -21,7 +21,22 @@ export async function withPostgresClient(fn) {
     connectionString: config.databaseUrl,
     ssl: {
       rejectUnauthorized: false
-    }
+    },
+    // The socket sits idle for the whole of a long scrape before the first query, and the
+    // server/pooler drops it. Keepalives hold it open; the timeouts stop a wedged query
+    // from hanging a cron forever.
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
+    connectionTimeoutMillis: 30000,
+    statement_timeout: 300000,
+    query_timeout: 300000
+  });
+
+  // pg emits 'error' on the Client when the connection drops. Node treats an unhandled
+  // 'error' event as fatal, so without this listener an ECONNRESET mid-run killed the whole
+  // process — throwing away a scrape that had already completed successfully.
+  client.on('error', error => {
+    console.warn('[postgres] client connection error: ' + (error?.message ?? error));
   });
 
   await client.connect();

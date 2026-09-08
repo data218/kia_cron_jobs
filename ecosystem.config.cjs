@@ -426,7 +426,7 @@ module.exports = {
     {
       name: 'hyundai-booking-report',
       script: './scripts/run-hyundai-booking-report.js',
-      args: '--headless',
+      args: '--accounts=hmil-booking --headless',
       instances: 1,
       exec_mode: 'fork',
       autorestart: false,

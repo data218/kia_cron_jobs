@@ -49,15 +49,6 @@ function envList(name, fallback = '') {
     .filter(Boolean);
 }
 
-function todayIsoLocal() {
-  const today = new Date();
-  return [
-    today.getFullYear(),
-    String(today.getMonth() + 1).padStart(2, '0'),
-    String(today.getDate()).padStart(2, '0')
-  ].join('-');
-}
-
 const defaultHmilPrimaryDealers = 'N5203,N5701,N5804,N5806,N6815,N6819,N6826';
 const defaultHmilSecondaryDealers = 'N5216,N6844,N6845,N6846,N6847,N6848';
 
@@ -78,7 +69,7 @@ export const config = {
   otpWebhookHost: envScoped('OTP_WEBHOOK_HOST', '0.0.0.0'),
   otpWebhookPort: envInt('OTP_WEBHOOK_PORT', envInt('PORT', 3333)),
   otpWebhookDebug: envBool('OTP_WEBHOOK_DEBUG', false),
-  otpFreshnessGraceMs: envInt('OTP_FRESHNESS_GRACE_MS', 0),
+  otpFreshnessGraceMs: envInt('OTP_FRESHNESS_GRACE_MS', 90000),
   cronSchedule: env('CRON_SCHEDULE', '0 9-18 * * *'),
   regularReportsCronSchedule: env('REGULAR_REPORTS_CRON_SCHEDULE', env('CRON_SCHEDULE', '0 9-18 * * *')),
   rsaReportCronSchedule: env('RSA_REPORT_CRON_SCHEDULE', '5 10 * * *'),
@@ -355,11 +346,17 @@ export const config = {
   hmilRepairOrderPageSize: env('HMIL_REPAIR_ORDER_PAGE_SIZE', '5000'),
   hmilRepairOrderUseActiveDealerOnly: envBool('HMIL_REPAIR_ORDER_USE_ACTIVE_DEALER_ONLY', true),
   hmilRepairOrderStartDate: env('HMIL_REPAIR_ORDER_START_DATE', '2025-01-01'),
-  hmilRepairOrderEndDate: env('HMIL_REPAIR_ORDER_END_DATE', todayIsoLocal()),
+  // Repair-order end dates stay null when the operator sets no env var. The default
+  // used to be an import-time "today", which froze at process start: the PM2
+  // schedulers stay up for days, the frozen date fell behind the current month and
+  // hyundai_repair_order_list / am_platinum_repair_order_list then skipped every run
+  // as out of range. hyundai-repair-order-list.js resolves the missing end date to
+  // today per run instead.
+  hmilRepairOrderEndDate: env('HMIL_REPAIR_ORDER_END_DATE') || null,
   hmilPrimaryRepairOrderStartDate: env('HMIL_PRIMARY_REPAIR_ORDER_START_DATE', env('HMIL_REPAIR_ORDER_START_DATE', '2025-01-01')),
   hmilPrimaryRepairOrderEndDate: env('HMIL_PRIMARY_REPAIR_ORDER_END_DATE', '2026-04-25'),
   hmilSecondaryRepairOrderStartDate: env('HMIL_SECONDARY_REPAIR_ORDER_START_DATE', '2026-04-25'),
-  hmilSecondaryRepairOrderEndDate: env('HMIL_SECONDARY_REPAIR_ORDER_END_DATE', env('HMIL_REPAIR_ORDER_END_DATE', todayIsoLocal())),
+  hmilSecondaryRepairOrderEndDate: env('HMIL_SECONDARY_REPAIR_ORDER_END_DATE', env('HMIL_REPAIR_ORDER_END_DATE')) || null,
   hmilRepairOrderPostSearchDelayMs: envDelayMs('HMIL_REPAIR_ORDER_POST_SEARCH_DELAY_MS', 0),
   hmilSecondaryUserId: env('HMIL_SECONDARY_USER_ID', 'MIS5216'),
   hmilSecondaryPassword: env('HMIL_SECONDARY_PASSWORD'),
@@ -436,7 +433,8 @@ export const config = {
   amPlatinumRepairOrderSheetName: env('AM_PLATINUM_REPAIR_ORDER_SHEET_NAME', 'AM Platinum Repair Order List'),
   amPlatinumRepairOrderPageSize: env('AM_PLATINUM_REPAIR_ORDER_PAGE_SIZE', env('HMIL_REPAIR_ORDER_PAGE_SIZE', '5000')),
   amPlatinumRepairOrderStartDate: env('AM_PLATINUM_REPAIR_ORDER_START_DATE', env('HMIL_REPAIR_ORDER_START_DATE', '2026-05-01')),
-  amPlatinumRepairOrderEndDate: env('AM_PLATINUM_REPAIR_ORDER_END_DATE', env('HMIL_REPAIR_ORDER_END_DATE', todayIsoLocal())),
+  // Null when unset, same as hmilRepairOrderEndDate above: resolved to today per run.
+  amPlatinumRepairOrderEndDate: env('AM_PLATINUM_REPAIR_ORDER_END_DATE', env('HMIL_REPAIR_ORDER_END_DATE')) || null,
   amPlatinumRepairOrderPostSearchDelayMs: envDelayMs('AM_PLATINUM_REPAIR_ORDER_POST_SEARCH_DELAY_MS', envInt('HMIL_REPAIR_ORDER_POST_SEARCH_DELAY_MS', 0)),
   amPlatinumHistoricalOtpProvider: env('AM_PLATINUM_HISTORICAL_OTP_PROVIDER', 'manual'),
 

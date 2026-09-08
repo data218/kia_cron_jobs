@@ -307,6 +307,34 @@ async function run(mode = 'am-platinum-regular') {
 
     const reportResults = [];
 
+    // Each phase gets its own try/catch: on 2026-09-03 MIS12345's password expired, its login
+    // threw, and because both phases shared one try block Phase 2 never ran — one dead account
+    // took down the entire Platinum feed, including the healthy MIS1988 dealer.
+    let phaseFailureCount = 0;
+    const runPhase = async (phaseLabel, account, dealerCodes) => {
+      try {
+        await runSessionForDealers(account, dealerCodes, mode, reportResults);
+      } catch (error) {
+        phaseFailureCount += 1;
+        logger.error(`AM Platinum ${phaseLabel} failed; continuing with the remaining phases`, {
+          mode,
+          userId: account.userId,
+          dealerCodes,
+          err: serializeError(error)
+        });
+        for (const dealerCode of dealerCodes) {
+          reportResults.push({
+            status: 'failed',
+            phase: 'session',
+            reportId: account.id,
+            report: `${phaseLabel} (${account.userId})`,
+            dealerCode,
+            error: serializeError(error)
+          });
+        }
+      }
+    };
+
     // ── Phase 1: MIS12345 → N5211, N6828 ──────────────────────────────────────
     // Skip Phase 1 if --phase2-only flag is set (used for manual resume)
     const skipPhase1 = process.argv.includes('--phase2-only') || process.env.AM_PLATINUM_SKIP_PHASE1 === 'true';
@@ -314,12 +342,12 @@ async function run(mode = 'am-platinum-regular') {
       logger.info('AM Platinum Phase 1 skipped (--phase2-only / AM_PLATINUM_SKIP_PHASE1 flag)');
     } else {
       logger.info('AM Platinum Phase 1: logging in as MIS12345 for N5211, N6828');
-      await runSessionForDealers(historicalAccount, HISTORICAL_DEALERS, mode, reportResults);
+      await runPhase('Phase 1', historicalAccount, HISTORICAL_DEALERS);
     }
 
     // ── Phase 2: MIS1988 → N6250 ──────────────────────────────────────────────
     logger.info('AM Platinum Phase 2: logging in as MIS1988 for N6250');
-    await runSessionForDealers(currentAccount, CURRENT_DEALERS, mode, reportResults);
+    await runPhase('Phase 2', currentAccount, CURRENT_DEALERS);
 
     // ── Materialized views ─────────────────────────────────────────────────────
     const failedReports = reportResults.filter(r => r.status === 'failed');
@@ -335,10 +363,17 @@ async function run(mode = 'am-platinum-regular') {
       });
     }
 
+    if (phaseFailureCount) {
+      // A phase blowing up used to reach the outer catch and exit non-zero; keep that signal
+      // now that one failing phase no longer aborts the run.
+      process.exitCode = 1;
+    }
+
     logger.info('AM Platinum report automation job finished', {
       status: failedReports.length ? 'completed_with_failures' : 'success',
       successCount: successfulReports.length,
-      failureCount: failedReports.length
+      failureCount: failedReports.length,
+      phaseFailureCount
     });
     await writeHealthStatus({
       status: failedReports.length ? 'completed_with_failures' : 'success',
@@ -348,7 +383,8 @@ async function run(mode = 'am-platinum-regular') {
       durationMs: Date.now() - startedAt,
       dealerCodes: [...HISTORICAL_DEALERS, ...CURRENT_DEALERS],
       reports: reportResults,
-      failedReports
+      failedReports,
+      phaseFailureCount
     });
   } catch (error) {
     logger.error('AM Platinum report automation job failed', {

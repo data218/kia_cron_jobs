@@ -10,7 +10,8 @@ import { retry } from '../utils/retry.js';
 import { logger } from '../utils/logger.js';
 import { executeWithRetry } from '../utils/execute-with-retry.js';
 import { waitForConnectivity } from '../utils/network.js';
-import { clearCheckpoint, readCheckpoint, writeCheckpoint } from '../utils/checkpoint.js';
+import { checkpointRetryIndexes, checkpointStaleReason, clearCheckpoint, readCheckpoint, writeCheckpoint } from '../utils/checkpoint.js';
+import { toIsoDate } from '../utils/date-range.js';
 import { isBrowserClosedError } from '../utils/failure.js';
 
 function getCliMode(defaultMode) {
@@ -206,15 +207,35 @@ export function createGdmsAccountScheduler(account) {
       const checkpointName = checkpointNameForRun(account, mode);
       const checkpoint = await readCheckpoint(checkpointName);
       const taskKeys = tasks.map(task => task.taskKey);
-      const canResume = checkpoint?.mode === mode
-        && JSON.stringify(checkpoint?.taskKeys ?? []) === JSON.stringify(taskKeys)
-        && Number.isInteger(checkpoint?.nextIndex)
-        && checkpoint.nextIndex >= 0
-        && checkpoint.nextIndex < tasks.length;
-      const startIndex = canResume ? checkpoint.nextIndex : 0;
+      const runDate = toIsoDate(new Date());
+      const staleReason = checkpointStaleReason(checkpoint, { mode, runDate, taskKeys });
+      const canResume = !staleReason;
+      const resumeIndex = canResume ? checkpoint.nextIndex : 0;
+      // A task that failed is not a task that is done: it stays recorded below the resume frontier
+      // and is re-run first. Before this, the frontier moved past failures and they were skipped
+      // forever - three feeds sat stale for days after the 2026-09-01 run.
+      const retryIndexes = canResume
+        ? checkpointRetryIndexes(checkpoint, tasks.length).filter(index => index < resumeIndex)
+        : [];
+      const pendingIndexes = [
+        ...retryIndexes,
+        ...Array.from({ length: tasks.length - resumeIndex }, (_, offset) => resumeIndex + offset)
+      ];
+      const failedIndexes = new Set(retryIndexes);
       const reportResults = [];
       let activeDealerCode = null;
-      let firstFailureIndex = null;
+      let nextIndex = resumeIndex;
+
+      async function saveCheckpoint(failedTask) {
+        await writeCheckpoint(checkpointName, {
+          mode,
+          runDate,
+          nextIndex,
+          failedIndexes: [...failedIndexes].sort((a, b) => a - b),
+          taskKeys,
+          failedTask
+        });
+      }
 
       logger.info(`${account.logPrefix} reports selected`, {
         mode,
@@ -223,25 +244,43 @@ export function createGdmsAccountScheduler(account) {
         dealerCodes: account.dealerCodes,
         taskCount: tasks.length,
         resumed: canResume,
-        startIndex
+        startIndex: resumeIndex,
+        tasksToRun: pendingIndexes.length
       });
 
-      for (let index = startIndex; index < tasks.length; index += 1) {
+      if (checkpoint && staleReason) {
+        logger.info(`${account.logPrefix} ignoring stale checkpoint; running the full task list`, {
+          mode,
+          checkpoint: checkpointName,
+          reason: staleReason,
+          runDate,
+          checkpointRunDate: checkpoint.runDate ?? null,
+          checkpointUpdatedAt: checkpoint.updatedAt ?? null,
+          checkpointNextIndex: checkpoint.nextIndex ?? null,
+          tasksToRun: tasks.length
+        });
+      } else if (canResume) {
+        logger.info(`${account.logPrefix} resuming from checkpoint`, {
+          mode,
+          checkpoint: checkpointName,
+          runDate,
+          resumeIndex,
+          retryTaskCount: retryIndexes.length,
+          retryTasks: retryIndexes.map(index => taskKeys[index]),
+          tasksToRun: pendingIndexes.length,
+          alreadyCompletedTaskCount: tasks.length - pendingIndexes.length
+        });
+      }
+
+      for (let position = 0; position < pendingIndexes.length; position += 1) {
+        const index = pendingIndexes[position];
         const { report, dealerCode } = tasks[index];
-        if (index === startIndex || tasks[index - 1]?.report.id !== report.id) {
+        if (position === 0 || tasks[pendingIndexes[position - 1]]?.report.id !== report.id) {
           const dealerCodes = dealerCodesForReport(report, account);
           logger.info(`${account.logPrefix} report batch started`, {
             reportId: report.id,
             report: report.name,
             dealerCodes
-          });
-        }
-
-        if (firstFailureIndex == null) {
-          await writeCheckpoint(checkpointName, {
-            mode,
-            nextIndex: index,
-            taskKeys
           });
         }
 
@@ -265,18 +304,12 @@ export function createGdmsAccountScheduler(account) {
             error: serializeError(error)
           });
           activeDealerCode = null;
-          if (firstFailureIndex == null) {
-            firstFailureIndex = index;
-          }
-          await writeCheckpoint(checkpointName, {
-            mode,
-            nextIndex: firstFailureIndex,
-            taskKeys,
-            failedTask: {
-              reportId: report.id,
-              dealerCode,
-              phase: 'dealer-change'
-            }
+          failedIndexes.add(index);
+          nextIndex = Math.max(nextIndex, index + 1);
+          await saveCheckpoint({
+            reportId: report.id,
+            dealerCode,
+            phase: 'dealer-change'
           });
           if (isBrowserClosedError(error)) {
             logger.error(`${account.logPrefix} browser/session closed during dealer change; aborting remaining tasks`, {
@@ -290,19 +323,13 @@ export function createGdmsAccountScheduler(account) {
 
         const result = await runReportForDealer(session.page, report, dealerCode);
         reportResults.push(result);
+        nextIndex = Math.max(nextIndex, index + 1);
         if (result.status === 'failed') {
-          if (firstFailureIndex == null) {
-            firstFailureIndex = index;
-          }
-          await writeCheckpoint(checkpointName, {
-            mode,
-            nextIndex: firstFailureIndex,
-            taskKeys,
-            failedTask: {
-              reportId: report.id,
-              dealerCode,
-              phase: result.phase ?? 'report-run'
-            }
+          failedIndexes.add(index);
+          await saveCheckpoint({
+            reportId: report.id,
+            dealerCode,
+            phase: result.phase ?? 'report-run'
           });
           if (isBrowserClosedError(result.error)) {
             logger.error(`${account.logPrefix} browser/session closed during report execution; aborting remaining tasks`, {
@@ -311,19 +338,12 @@ export function createGdmsAccountScheduler(account) {
             });
             break;
           }
-        } else if (firstFailureIndex == null) {
-          if (index + 1 < tasks.length) {
-            await writeCheckpoint(checkpointName, {
-              mode,
-              nextIndex: index + 1,
-              taskKeys
-            });
-          } else {
-            await clearCheckpoint(checkpointName);
-          }
+        } else {
+          failedIndexes.delete(index);
+          await saveCheckpoint();
         }
 
-        if (index === tasks.length - 1 || tasks[index + 1]?.report.id !== report.id) {
+        if (position === pendingIndexes.length - 1 || tasks[pendingIndexes[position + 1]]?.report.id !== report.id) {
           logger.info(`${account.logPrefix} report batch finished`, {
           reportId: report.id,
           report: report.name,
@@ -336,8 +356,21 @@ export function createGdmsAccountScheduler(account) {
       const failedReports = reportResults.filter(result => result.status === 'failed');
       const successfulReports = reportResults.filter(result => result.status === 'success');
 
-      if (!failedReports.length) {
+      const unattemptedTaskCount = Math.max(0, tasks.length - nextIndex);
+
+      // Cleared whenever the loop reached the end of the task list, failures included - a spent
+      // checkpoint must not narrow the next scheduled run of the same day to a retry-only pass.
+      if (!unattemptedTaskCount) {
         await clearCheckpoint(checkpointName);
+      } else {
+        logger.info(`${account.logPrefix} checkpoint kept so the next run retries what did not finish`, {
+          mode,
+          checkpoint: checkpointName,
+          runDate,
+          failedTaskCount: failedIndexes.size,
+          unattemptedTaskCount,
+          failedTasks: [...failedIndexes].sort((a, b) => a - b).map(index => taskKeys[index])
+        });
       }
 
       if (account.id === 'am-platinum' && failedReports.length === 0) {

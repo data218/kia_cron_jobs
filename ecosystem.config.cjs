@@ -388,32 +388,35 @@ module.exports = {
     // Headless is safe ONLY because the session state is reused; a fresh login needs the
     // WhatsApp OTP typed in, which requires one visible run first:
     //   node scripts/run-interakt-leads-once.js
-    {
-      name: 'interakt-leads',
-      script: './scripts/run-interakt-leads-once.js',
-      args: '--headless',
-      instances: 1,
-      exec_mode: 'fork',
-      autorestart: false,
-      cron_restart: '*/10 9-17 * * *',
-      watch: false,
-      out_file: './logs/pm2-interakt-leads-out.log',
-      error_file: './logs/pm2-interakt-leads-error.log',
-      env: { NODE_ENV: 'production', TZ: 'Asia/Kolkata' }
-    },
-    {
-      name: 'interakt-leads-evening',
-      script: './scripts/run-interakt-leads-once.js',
-      args: '--headless',
-      instances: 1,
-      exec_mode: 'fork',
-      autorestart: false,
-      cron_restart: '0,10,20,30 18 * * *',
-      watch: false,
-      out_file: './logs/pm2-interakt-leads-out.log',
-      error_file: './logs/pm2-interakt-leads-error.log',
-      env: { NODE_ENV: 'production', TZ: 'Asia/Kolkata' }
-    },
+    // DISABLED 2026-09-04 on request. Both cron_restart entries are commented out so a
+    // pm2 resurrect or a reboot cannot bring them back; scripts/run-interakt-leads-once.js
+    // also refuses to run unless INTERAKT_ENABLED=true.
+    // {
+    // name: 'interakt-leads',
+    // script: './scripts/run-interakt-leads-once.js',
+    // args: '--headless',
+    // instances: 1,
+    // exec_mode: 'fork',
+    // autorestart: false,
+    // cron_restart: '*/10 9-17 * * *',
+    // watch: false,
+    // out_file: './logs/pm2-interakt-leads-out.log',
+    // error_file: './logs/pm2-interakt-leads-error.log',
+    // env: { NODE_ENV: 'production', TZ: 'Asia/Kolkata' }
+    // },
+    // {
+    // name: 'interakt-leads-evening',
+    // script: './scripts/run-interakt-leads-once.js',
+    // args: '--headless',
+    // instances: 1,
+    // exec_mode: 'fork',
+    // autorestart: false,
+    // cron_restart: '0,10,20,30 18 * * *',
+    // watch: false,
+    // out_file: './logs/pm2-interakt-leads-out.log',
+    // error_file: './logs/pm2-interakt-leads-error.log',
+    // env: { NODE_ENV: 'production', TZ: 'Asia/Kolkata' }
+    // },
     // Booking Report (MIS > Booking Reports > Booking Report), daily at 17:20.
     //
     // Covers BOTH GDMS logins sequentially and every dealer under each:

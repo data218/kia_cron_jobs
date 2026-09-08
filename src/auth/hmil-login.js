@@ -71,6 +71,11 @@ const HMIL_SUBMIT_SELECTORS = [
   ...selectors.submit
 ];
 
+// GDMS never redirects to a stable reset path, so match the family of names it has used.
+const HMIL_CHANGE_PASSWORD_URL_PATTERN = /(change|chg|update|reset)[-_]?(password|pswd|pwd)|(password|pswd|pwd)[-_]?(change|chg|expiry|expired)/i;
+const HMIL_PASSWORD_EXPIRED_TEXT_SELECTOR = 'text=/password\\s+has\\s+expired/i';
+const HMIL_CHANGE_PASSWORD_TEXT_SELECTOR = 'text=/change\\s+password/i';
+
 async function firstVisibleHmil(page, candidates, { timeout = 10000, label = 'HMIL control', perSelectorTimeout = 300 } = {}) {
   const startedAt = Date.now();
 
@@ -389,6 +394,77 @@ async function hasExistingHmilSession(page, account) {
   return false;
 }
 
+/**
+ * An expired GDMS password never surfaces as a login error: the portal silently serves its
+ * Change Password page instead of the home menu, so the nav-menu wait died with a bare
+ * Playwright TimeoutError. That is why the MIS5216 (2026-09-01) and MIS12345 (2026-09-03)
+ * expiries went undiagnosed for days while the crons kept reporting success.
+ *
+ * "Password has Expired" is conclusive on its own; a bare "Change Password" heading only counts
+ * when the URL agrees, because that label also exists as an ordinary menu link on a healthy home
+ * page and must never fail a good login.
+ */
+async function detectHmilPasswordExpiry(page) {
+  const url = page.url();
+
+  const expiredTextVisible = await page.locator(HMIL_PASSWORD_EXPIRED_TEXT_SELECTOR).first()
+    .isVisible({ timeout: 200 })
+    .catch(() => false);
+  if (expiredTextVisible) {
+    return { url, evidence: 'page reads "Password has Expired"' };
+  }
+
+  if (!HMIL_CHANGE_PASSWORD_URL_PATTERN.test(url)) {
+    return null;
+  }
+
+  const changePasswordTextVisible = await page.locator(HMIL_CHANGE_PASSWORD_TEXT_SELECTOR).first()
+    .isVisible({ timeout: 200 })
+    .catch(() => false);
+  return changePasswordTextVisible
+    ? { url, evidence: 'redirected to a Change Password page' }
+    : null;
+}
+
+async function assertHmilPasswordNotExpired(page, account) {
+  const expiry = await detectHmilPasswordExpiry(page);
+  if (!expiry) {
+    return;
+  }
+
+  const error = new Error(
+    `${account.userId} password has EXPIRED - portal is forcing a password reset. ` +
+    `Reset it on the portal and update ${account.passwordEnvName} in .env.`
+  );
+  logger.error(`${account.logPrefix} DMS password expired`, {
+    userId: account.userId,
+    passwordEnvName: account.passwordEnvName,
+    evidence: expiry.evidence,
+    url: expiry.url
+  });
+  throw error;
+}
+
+/**
+ * Races the home menu against the forced password reset so an expired account fails within a
+ * second instead of burning the whole nav-menu timeout on a meaningless TimeoutError.
+ */
+async function waitForHmilHomeMenu(page, account, timeoutMs) {
+  const menu = page.locator('#gnb, li[class*="nav_"], a.menuItem').first();
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (await menu.isVisible({ timeout: 200 }).catch(() => false)) {
+      return true;
+    }
+    await assertHmilPasswordNotExpired(page, account);
+    await sleep(500);
+  }
+
+  await assertHmilPasswordNotExpired(page, account);
+  return false;
+}
+
 async function performOtpLogin(page, context, account) {
   const url = loginPageUrl(account);
   logger.info(`Opening ${account.logPrefix} DMS login page`, { url });
@@ -450,10 +526,7 @@ async function performOtpLogin(page, context, account) {
   });
   await clickAndWait(page, submitButton, config.loginTimeoutMs);
 
-  const menuVisible = await page.locator('#gnb, li[class*="nav_"], a.menuItem').first()
-    .waitFor({ state: 'visible', timeout: 30000 })
-    .then(() => true)
-    .catch(() => false);
+  const menuVisible = await waitForHmilHomeMenu(page, account, 30000);
 
   if (!menuVisible || /selectLoginAction\.json/i.test(page.url())) {
     const resolvedHomeUrl = homePageUrl(account);
@@ -465,8 +538,9 @@ async function performOtpLogin(page, context, account) {
       waitUntil: 'domcontentloaded',
       timeout: config.loginTimeoutMs
     });
-    await page.locator('#gnb, li[class*="nav_"], a.menuItem').first()
-      .waitFor({ state: 'visible', timeout: config.loginTimeoutMs });
+    if (!(await waitForHmilHomeMenu(page, account, config.loginTimeoutMs))) {
+      throw new Error(`${account.logPrefix} home menu never became visible after login (url: ${page.url()})`);
+    }
   }
 
   await saveSessionStateToPath(context, account.sessionStatePath);

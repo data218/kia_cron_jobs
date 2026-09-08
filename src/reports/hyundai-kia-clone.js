@@ -8,6 +8,7 @@ import {
   formatDateForPortal,
   getCurrentMonthToDateRange,
   getReportDateOverrideRange,
+  getThirtyDayChunks,
   parseIsoLocalDate,
   toIsoDate
 } from '../utils/date-range.js';
@@ -138,6 +139,19 @@ function getRange(rangeType, account) {
   }
 
   return getCurrentMonthToDateRange();
+}
+
+// Open RO covers ~18 months from openRoYearlyStartDate. Asked for in one query the portal grid
+// never rendered: it stalled past 60s and came back with totalItems null, so the sheet only ever
+// advanced on a narrow manual override. Chunk it like the Kia sibling does in open-ro-yearly.js,
+// newest chunk first so a run that dies part way through has still refreshed the recent months.
+function buildExportRanges(rangeType, range) {
+  if (rangeType !== 'open-ro-yearly' || !range.startDate || !range.endDate) {
+    return [range];
+  }
+
+  const chunks = getThirtyDayChunks(range.startDate, range.endDate).reverse();
+  return chunks.length ? chunks : [range];
 }
 
 async function cleanupHyundaiExportDir(exportDir, account = createGdmsAccountProfile('hmil')) {
@@ -315,13 +329,27 @@ export function createHyundaiKiaCloneReport(report) {
     }
 
     const loopValues = await getLoopValues(reportContext, report);
+    const exportRanges = buildExportRanges(report.rangeType, range);
+    const runUnits = loopValues.flatMap(loopValue => (
+      exportRanges.map(exportRange => ({ loopValue, exportRange }))
+    ));
+
+    if (exportRanges.length > 1) {
+      logger.info(`${account.logPrefix} mirrored report date chunks prepared`, {
+        reportId: report.id,
+        dealerCode,
+        range: `${range.startIso} to ${range.endIso}`,
+        chunkCount: exportRanges.length
+      });
+    }
+
     const results = [];
     const failedLoops = [];
     let totalRows = 0;
     let totalHeaders = 0;
     let totalPages = 0;
 
-    for (const loopValue of loopValues) {
+    for (const { loopValue, exportRange } of runUnits) {
       const loopLabel = loopValue ?? '';
 
       try {
@@ -332,9 +360,9 @@ export function createHyundaiKiaCloneReport(report) {
         }
 
         if (optimizedNoSearch) {
-          await fillStartDateOnly(reportContext, report, range);
+          await fillStartDateOnly(reportContext, report, exportRange);
         } else {
-          await fillDateRange(reportContext, report, range);
+          await fillDateRange(reportContext, report, exportRange);
         }
 
         for (const dropdown of report.preSearchDropdowns ?? []) {
@@ -346,14 +374,14 @@ export function createHyundaiKiaCloneReport(report) {
             reportId: report.id,
             dealerCode,
             loopValue,
-            range: `${range.startIso} to ${range.endIso}`
+            range: `${exportRange.startIso} to ${exportRange.endIso}`
           });
         } else if (optimizedNoSearch) {
           logger.info(`${account.logPrefix} optimized historical export: skipping Search and selecting pager size`, {
             reportId: report.id,
             dealerCode,
             loopValue,
-            startDate: range.startPortal,
+            startDate: exportRange.startPortal,
             requestedPageSize: suppliedPageSize ?? report.pageSize ?? '1000'
           });
         } else {
@@ -379,7 +407,7 @@ export function createHyundaiKiaCloneReport(report) {
             reportId: report.id,
             dealerCode,
             loopValue,
-            range: `${range.startIso} to ${range.endIso}`,
+            range: `${exportRange.startIso} to ${exportRange.endIso}`,
             totalItems: emptyCheck.totalItems,
             visibleRowCount: emptyCheck.visibleRowCount,
             hasNoDataMessage: emptyCheck.hasNoDataMessage
@@ -441,7 +469,7 @@ export function createHyundaiKiaCloneReport(report) {
               reportId: report.id,
               dealerCode,
               loopValue,
-              range: `${range.startIso} to ${range.endIso}`
+              range: `${exportRange.startIso} to ${exportRange.endIso}`
             });
 
             const emptyResult = {
@@ -474,8 +502,8 @@ export function createHyundaiKiaCloneReport(report) {
           pageSize: pagerState.pageSize
         });
 
-        const outputDir = buildRunDir(account, report.id, range, dealerCode, loopLabel);
-        const baseName = filenameBase(report.id, range, dealerCode, loopLabel);
+        const outputDir = buildRunDir(account, report.id, exportRange, dealerCode, loopLabel);
+        const baseName = filenameBase(report.id, exportRange, dealerCode, loopLabel);
         const pageFiles = await exportAllGridPagesToFiles(reportContext, {
           outputDir,
           filenameBase: baseName,
@@ -496,7 +524,7 @@ export function createHyundaiKiaCloneReport(report) {
             : {})
         };
         const merged = Object.keys(metadata).length
-          ? addMetadataToDataset(withDealer, metadata, { range, loopValue })
+          ? addMetadataToDataset(withDealer, metadata, { range: exportRange, loopValue })
           : withDealer;
 
         if (!merged.rows.length && !report.saveEmptyDataset) {

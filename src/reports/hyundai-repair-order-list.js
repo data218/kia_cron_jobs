@@ -70,14 +70,21 @@ function configuredRange(account) {
     return overrideRange;
   }
 
+  // An unset end date means "run through today", resolved here on every call. It used
+  // to come from config as an import-time "today", which froze at process start: the
+  // PM2 schedulers stay up for days, so the frozen date fell behind the current month
+  // and every run skipped as out of range.
+  const currentMonthRange = getCurrentMonthToDateRange();
+  const configuredEndDate = account.repairOrderEndDate
+    ? parseIsoLocalDate(account.repairOrderEndDate)
+    : currentMonthRange.endDate;
+
   if (account.currentMonthOnly) {
-    const currentMonthRange = getCurrentMonthToDateRange();
-    if (!account.repairOrderStartDate || !account.repairOrderEndDate) {
+    if (!account.repairOrderStartDate) {
       return currentMonthRange;
     }
 
     const configuredStartDate = parseIsoLocalDate(account.repairOrderStartDate);
-    const configuredEndDate = parseIsoLocalDate(account.repairOrderEndDate);
     const startDate = currentMonthRange.startDate > configuredStartDate
       ? currentMonthRange.startDate
       : configuredStartDate;
@@ -100,7 +107,7 @@ function configuredRange(account) {
   }
 
   const startDate = parseIsoLocalDate(account.repairOrderStartDate);
-  const endDate = parseIsoLocalDate(account.repairOrderEndDate);
+  const endDate = configuredEndDate;
 
   return {
     startDate,

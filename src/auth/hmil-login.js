@@ -431,8 +431,8 @@ async function detectHmilLoginError(page) {
   if (/account\s+is\s+locked/i.test(pageText)) {
     return 'Your account is locked. Please reset your password on the portal.';
   }
-  if (/invalid\s+(user\s*id|user\s*name|password)/i.test(pageText)) {
-    return 'Invalid User ID or Password on the portal.';
+  if (/invalid\s+(user\s*id|user\s*name|password)|please\s+check\s+user\s*id\s+or\s+password|check\s+user\s*id/i.test(pageText)) {
+    return 'Please check User ID or Password (incorrect credentials on the portal).';
   }
   return null;
 }

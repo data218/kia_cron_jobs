@@ -426,6 +426,17 @@ async function detectHmilPasswordExpiry(page) {
     : null;
 }
 
+async function detectHmilLoginError(page) {
+  const pageText = await page.evaluate(() => document.body.innerText).catch(() => '');
+  if (/account\s+is\s+locked/i.test(pageText)) {
+    return 'Your account is locked. Please reset your password on the portal.';
+  }
+  if (/invalid\s+(user\s*id|user\s*name|password)/i.test(pageText)) {
+    return 'Invalid User ID or Password on the portal.';
+  }
+  return null;
+}
+
 async function assertHmilPasswordNotExpired(page, account) {
   const expiry = await detectHmilPasswordExpiry(page);
   if (!expiry) {
@@ -501,6 +512,16 @@ async function performOtpLogin(page, context, account) {
   });
   const otpRequestedAt = new Date();
   await sendOtpButton.click();
+  await sleep(1500);
+
+  const loginErr = await detectHmilLoginError(page);
+  if (loginErr) {
+    logger.error(`${account.logPrefix} DMS login blocked: ${loginErr}`, {
+      userId: account.userId,
+      reason: loginErr
+    });
+    throw new Error(`${account.userId} (${account.logPrefix}) login failed: ${loginErr}`);
+  }
 
   const otpInput = await firstVisibleHmil(page, HMIL_OTP_SELECTORS, {
     timeout: config.otpTimeoutMs,

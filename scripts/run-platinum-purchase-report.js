@@ -42,14 +42,19 @@ async function ensureSession(sessionRef, account) {
 }
 
 async function main() {
-  const accountGroups = [
-    { accountKey: 'am-platinum', dealerCodes: ['N6250'] },
-    { accountKey: 'am-platinum-historical', dealerCodes: ['N5211', 'N6828'] }
-  ];
+  const NO_DEALER_SWITCH = !process.argv.includes('--switch-dealers');
+  const accountGroups = NO_DEALER_SWITCH
+    ? [{ accountKey: 'am-platinum', dealerCodes: ['N6250'] }]
+    : [
+        { accountKey: 'am-platinum', dealerCodes: ['N6250'] },
+        { accountKey: 'am-platinum-historical', dealerCodes: ['N5211', 'N6828'] }
+      ];
 
   if (DEALER_OVERRIDE) {
     accountGroups[0].dealerCodes = DEALER_OVERRIDE.filter(d => d === 'N6250');
-    accountGroups[1].dealerCodes = DEALER_OVERRIDE.filter(d => d !== 'N6250');
+    if (!NO_DEALER_SWITCH && accountGroups[1]) {
+      accountGroups[1].dealerCodes = DEALER_OVERRIDE.filter(d => d !== 'N6250');
+    }
   }
 
   const summary = [];
@@ -64,6 +69,7 @@ async function main() {
       accountKey: group.accountKey,
       userId: account.userId,
       dealerCodes: group.dealerCodes,
+      noDealerSwitch: NO_DEALER_SWITCH,
       startDate: START_DATE,
       endDate: END_DATE,
       headless: account.headless
@@ -81,24 +87,26 @@ async function main() {
 
         let currentSession = await ensureSession(sessionRef, account);
 
-        try {
-          if (activeDealerCode !== dealerCode) {
-            logger.info('Switching active AM Platinum dealer...', { from: activeDealerCode, to: dealerCode });
-            await changeActiveDealerForDms(currentSession.page, dealerCode, {
-              homeUrl: account.homeUrl,
-              systemLabel: account.systemLabel
+        if (!NO_DEALER_SWITCH) {
+          try {
+            if (activeDealerCode !== dealerCode) {
+              logger.info('Switching active AM Platinum dealer...', { from: activeDealerCode, to: dealerCode });
+              await changeActiveDealerForDms(currentSession.page, dealerCode, {
+                homeUrl: account.homeUrl,
+                systemLabel: account.systemLabel
+              });
+              activeDealerCode = dealerCode;
+              logger.info('Active AM Platinum dealer set', { activeDealerCode });
+            }
+          } catch (switchError) {
+            logger.error('Failed to switch AM Platinum dealer; skipping dealer', {
+              dealerCode,
+              error: switchError.message
             });
-            activeDealerCode = dealerCode;
-            logger.info('Active AM Platinum dealer set', { activeDealerCode });
+            summary.push({ dealerCode, status: 'dealer_switch_failed', error: switchError.message });
+            activeDealerCode = null;
+            continue;
           }
-        } catch (switchError) {
-          logger.error('Failed to switch AM Platinum dealer; skipping dealer', {
-            dealerCode,
-            error: switchError.message
-          });
-          summary.push({ dealerCode, status: 'dealer_switch_failed', error: switchError.message });
-          activeDealerCode = null;
-          continue;
         }
 
         currentSession = await ensureSession(sessionRef, account);

@@ -44,7 +44,11 @@ async function runAccount(accountId, summary) {
   // so anything derived from it would silently be headless.
   account.headless = RUN_HEADLESS;
 
-  const dealerCodes = DEALER_OVERRIDE ?? account.dealerCodes;
+  const NO_DEALER_SWITCH = !process.argv.includes('--switch-dealers');
+  const dealerCodes = NO_DEALER_SWITCH 
+    ? [DEALER_OVERRIDE ? DEALER_OVERRIDE[0] : (account.dealerCode || 'default')]
+    : (DEALER_OVERRIDE ?? account.dealerCodes);
+
   if (!dealerCodes.length) {
     logger.warn('Account has no dealer codes configured; skipping', { accountId });
     summary.push({ accountId, status: 'no_dealers' });
@@ -54,7 +58,8 @@ async function runAccount(accountId, summary) {
   logger.info('########## ACCOUNT ##########', {
     accountId,
     userId: account.userId,
-    dealerCodes,
+    dealerCode: dealerCodes[0],
+    noDealerSwitch: NO_DEALER_SWITCH,
     sheetName: account.sheetName('Hyundai Booking Report')
   });
 
@@ -71,22 +76,24 @@ async function runAccount(accountId, summary) {
         activeDealerCode = null;
       }
 
-      try {
-        if (activeDealerCode !== dealerCode) {
-          await changeActiveDealerForDms(session.page, dealerCode, {
-            homeUrl: account.homeUrl,
-            systemLabel: account.systemLabel
+      if (!NO_DEALER_SWITCH) {
+        try {
+          if (activeDealerCode !== dealerCode) {
+            await changeActiveDealerForDms(session.page, dealerCode, {
+              homeUrl: account.homeUrl,
+              systemLabel: account.systemLabel
+            });
+            activeDealerCode = dealerCode;
+            logger.info('Active dealer set', { accountId, activeDealerCode });
+          }
+        } catch (switchError) {
+          logger.error('Dealer switch failed; skipping dealer', {
+            accountId, dealerCode, error: switchError.message
           });
-          activeDealerCode = dealerCode;
-          logger.info('Active dealer set', { accountId, activeDealerCode });
+          summary.push({ accountId, dealerCode, status: 'dealer_switch_failed', error: switchError.message });
+          activeDealerCode = null;
+          continue;
         }
-      } catch (switchError) {
-        logger.error('Dealer switch failed; skipping dealer', {
-          accountId, dealerCode, error: switchError.message
-        });
-        summary.push({ accountId, dealerCode, status: 'dealer_switch_failed', error: switchError.message });
-        activeDealerCode = null;
-        continue;
       }
 
       try {

@@ -101,10 +101,14 @@ async function main() {
     return [];
   });
 
-  const dealerCodes = ALL_DEALER_CODES.length ? ALL_DEALER_CODES : FALLBACK_DEALER_CODES;
+  const NO_DEALER_SWITCH = !process.argv.includes('--switch-dealers');
+  const dealerCodes = NO_DEALER_SWITCH
+    ? [flag('dealers') ? flag('dealers').split(',')[0].trim().toUpperCase() : 'N5216']
+    : (ALL_DEALER_CODES.length ? ALL_DEALER_CODES : FALLBACK_DEALER_CODES);
 
-  logger.info('Dealers to back-fill, one at a time', {
+  logger.info('Dealers to back-fill', {
     dealerCodes,
+    noDealerSwitch: NO_DEALER_SWITCH,
     mainDealerOptionsOnPortal: discovered.map(dealer => dealer.code),
     enforceScope: !ALLOW_UNSCOPED
   });
@@ -115,24 +119,26 @@ async function main() {
 
       let session = await ensureSession(sessionRef, account);
 
-      try {
-        if (activeDealerCode !== dealerCode) {
-          logger.info('Switching active HMIL dealer code...', { from: activeDealerCode, to: dealerCode });
-          await changeActiveDealerForDms(session.page, dealerCode, {
-            homeUrl: account.homeUrl,
-            systemLabel: account.systemLabel
+      if (!NO_DEALER_SWITCH) {
+        try {
+          if (activeDealerCode !== dealerCode) {
+            logger.info('Switching active HMIL dealer code...', { from: activeDealerCode, to: dealerCode });
+            await changeActiveDealerForDms(session.page, dealerCode, {
+              homeUrl: account.homeUrl,
+              systemLabel: account.systemLabel
+            });
+            activeDealerCode = dealerCode;
+            logger.info('Active HMIL dealer code set', { activeDealerCode });
+          }
+        } catch (switchError) {
+          logger.error('Failed to switch HMIL dealer code; skipping dealer', {
+            dealerCode,
+            error: switchError.message
           });
-          activeDealerCode = dealerCode;
-          logger.info('Active HMIL dealer code set', { activeDealerCode });
+          summary.push({ dealerCode, status: 'dealer_switch_failed', error: switchError.message });
+          activeDealerCode = null;
+          continue;
         }
-      } catch (switchError) {
-        logger.error('Failed to switch HMIL dealer code; skipping dealer', {
-          dealerCode,
-          error: switchError.message
-        });
-        summary.push({ dealerCode, status: 'dealer_switch_failed', error: switchError.message });
-        activeDealerCode = null;
-        continue;
       }
 
       session = await ensureSession(sessionRef, account);

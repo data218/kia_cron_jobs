@@ -1,11 +1,6 @@
-﻿#!/usr/bin/env node
-// Channi / GK (N6819) Remaining Sales Report Fetcher (Sept 2025 -> June 2026)
-// Login: N681900 / Jammu@6819 | Dealer: N6819 (Preserves active portal dealer)
-// OTP: Manual prompt in terminal
-
+#!/usr/bin/env node
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { config } from '../src/config.js';
 import { openHmilSalesReport } from '../src/navigation/hmil-menu.js';
@@ -17,7 +12,6 @@ import { sleep } from '../src/utils/sleep.js';
 import { getOtpManual } from '../src/otp/manual.js';
 import { selectKendoPagerSizeWithPreferredFallback, waitForKendoGridIdle } from '../src/reports/grid.js';
 import { exportAllGridPagesToFiles, mergeExcelFiles } from '../src/reports/paged-export.js';
-import { addSourceDealerCodeToDataset } from '../src/reports/report-metadata.js';
 import { clickSearch, fillDate } from '../src/reports/report-actions.js';
 
 function getArg(name, defaultValue = null) {
@@ -28,12 +22,11 @@ function getArg(name, defaultValue = null) {
 const USER_ID = getArg('user', 'N681900');
 const PASSWORD = getArg('password', 'Jammu@6819');
 const DEALER_CODE = getArg('dealer', 'N6819').toUpperCase();
-const START_DATE = getArg('start', '2025-09-01');
+const START_DATE = getArg('start', '2017-01-01');
 const END_DATE = getArg('end', '2026-06-30');
 const RUN_HEADLESS = process.argv.includes('--headless');
 
 const HMIL_LOGIN_URL = 'https://ndms.hmil.net/cmm/cmmi/selectLoginMain.dms';
-const HMIL_HOME_URL = 'https://ndms.hmil.net/cmm/cmmd/selectHome.dms';
 
 const USER_SELECTORS = ['#usrId', '#userId', '#loginId', 'input[name="usrId"]', 'input[name="userId"]'];
 const PASSWORD_SELECTORS = ['#usrPswdNo', '#password', '#pwd', 'input[name="usrPswdNo"]', 'input[type="password"]'];
@@ -52,7 +45,7 @@ async function firstVisible(page, selectors, { timeout = 15000, label = 'control
       return loc;
     } catch {}
   }
-  throw new Error(`Could not find visible ${label}`);
+  throw new Error(`Could not find visible ${label} (tried: ${selectors.join(', ')})`);
 }
 
 function chunkFileName(chunk) {
@@ -78,115 +71,62 @@ async function selectInvoiceDateRadio(context) {
 }
 
 async function applyDateRangeAndSearch(reportContext, chunk) {
-  await fillDate(reportContext, '#sDateFromDate', chunk.startPortal, {
-    label: 'Hyundai Sales Report Date From'
-  });
-  await fillDate(reportContext, '#sDateToDate', chunk.endPortal, {
-    label: 'Hyundai Sales Report Date To'
-  });
+  await fillDate(reportContext, '#sDateFromDate', chunk.startPortal, { label: 'Hyundai Sales Report Date From' });
+  await fillDate(reportContext, '#sDateToDate', chunk.endPortal, { label: 'Hyundai Sales Report Date To' });
   await selectInvoiceDateRadio(reportContext);
   await clickSearch(reportContext, { label: 'Hyundai Sales Report Search' });
 
   const postSearchDelay = config.hyundaiSalesReportPostSearchDelayMs || 5000;
-  await waitForKendoGridIdle(reportContext, {
-    delayAfterIdleMs: postSearchDelay,
-    timeoutMs: 60000
-  });
-
+  await waitForKendoGridIdle(reportContext, { delayAfterIdleMs: postSearchDelay, timeoutMs: 60000 });
   await selectKendoPagerSizeWithPreferredFallback(reportContext, '1000', ['1000', '300']);
   await waitForKendoGridIdle(reportContext, { timeoutMs: 60000 });
 }
 
 function dropGridTotalRows(dataset) {
-  if (!dataset || !Array.isArray(dataset.rows)) return dataset;
-  const filteredRows = dataset.rows.filter(row => {
-    const rawValues = Object.values(row).map(v => String(v ?? '').trim().toUpperCase());
-    const isTotalRow = rawValues.some(v => v === 'TOTAL' || v === 'GRAND TOTAL');
-    const hasData = row.invoice_no || row.vin_number || row.vin || row.model;
-    return !(isTotalRow && !hasData);
+  if (!dataset?.rows?.length) return dataset;
+  const rows = dataset.rows.filter(row => {
+    const values = Object.values(row).map(v => String(v ?? '').trim().toUpperCase());
+    const isTotal = values.some(v => v === 'TOTAL' || v.startsWith('TOTAL '));
+    const regName = String(row['Registration Name'] || row['registration_name'] || row['Customer Name'] || row['customer_name'] || '').trim().toUpperCase();
+    if (regName === 'TOTAL' || regName.startsWith('TOTAL')) return false;
+    const invNo = String(row['Invoice No'] || row['invoice_no'] || row['Invoice No.'] || '').trim();
+    if (!invNo && isTotal) return false;
+    return true;
   });
-  return { ...dataset, rows: filteredRows };
+  return { ...dataset, rows };
 }
 
-async function exportAndSaveChunk(reportContext, chunk, chunkDir) {
-  const baseName = chunkFileName(chunk);
-  const markerFile = path.join(chunkDir, `${baseName}.saved.json`);
-
-  try {
-    const stat = await fs.stat(markerFile);
-    if (stat.isFile()) {
-      console.log(`[SKIP] Chunk ${chunk.startIso} -> ${chunk.endIso} already downloaded and saved.`);
-      return { skipped: true, rowCount: 0 };
-    }
-  } catch {}
-
-  console.log(`\n-----------------------------------------------------------`);
-  console.log(`[FETCHING] Date Range: ${chunk.startPortal} -> ${chunk.endPortal}`);
-  console.log(`-----------------------------------------------------------`);
-
-  await applyDateRangeAndSearch(reportContext, chunk);
-
-  const exportResult = await exportAllGridPagesToFiles(reportContext, {
-    downloadDir: chunkDir,
-    filenameBase: baseName,
-    pageSize: 1000,
-    preferredPagerSizes: ['1000', '300'],
-    exportWhenEmpty: false,
-    reportId: 'hyundai-sales-report'
-  });
-
-  if (!exportResult.exportedFiles || exportResult.exportedFiles.length === 0) {
-    console.log(`[INFO] No sales records found for ${chunk.startPortal} -> ${chunk.endPortal} (0 rows).`);
-    await fs.writeFile(markerFile, JSON.stringify({
-      dealerCode: DEALER_CODE,
-      start: chunk.startIso,
-      end: chunk.endIso,
-      rowCount: 0,
-      savedAt: new Date().toISOString()
-    }, null, 2));
-    return { skipped: false, rowCount: 0 };
+function enrichDataset(merged, fallbackDealerCode = 'N6819') {
+  const value = String(fallbackDealerCode || 'N6819').trim().toUpperCase();
+  const headers = [...merged.headers];
+  for (const header of ['source_dealer_code', 'dealer_code']) {
+    if (!headers.includes(header)) headers.unshift(header);
   }
-
-  const merged = await mergeExcelFiles(exportResult.exportedFiles);
-  addSourceDealerCodeToDataset(merged, DEALER_CODE);
-  const cleanDataset = dropGridTotalRows(merged);
-
-  console.log(`[INFO] Downloaded ${cleanDataset.rows.length} sales rows. Saving to Supabase/Postgres...`);
-
-  const dbResult = await saveReportSheetToSupabase({
-    sheetName: 'hyundai_sales_report',
-    dataset: cleanDataset,
-    dealerCode: DEALER_CODE,
-    uploadedAt: new Date(),
-    tableName: 'hyundai_sales_report'
+  const rows = merged.rows.map(row => {
+    const existingCode = String(row.dealer_code || row.dealer_code_2 || row.main_dealer_code || '').trim().toUpperCase();
+    return {
+      ...row,
+      source_dealer_code: value,
+      dealer_code: existingCode || value
+    };
   });
-
-  console.log(`[SUCCESS] Database upload complete: ${cleanDataset.rows.length} rows stored.`);
-
-  await fs.writeFile(markerFile, JSON.stringify({
-    dealerCode: DEALER_CODE,
-    start: chunk.startIso,
-    end: chunk.endIso,
-    rowCount: cleanDataset.rows.length,
-    savedAt: new Date().toISOString()
-  }, null, 2));
-
-  return { skipped: false, rowCount: cleanDataset.rows.length };
+  return { headers, rows };
 }
 
 async function main() {
-  console.log('===============================================================');
-  console.log('  HYUNDAI SALES REPORT - CHANNI / GK (N6819) REMAINING RUNNER');
+  console.log('\n===============================================================');
+  console.log('  HYUNDAI SALES REPORT - HISTORICAL FETCH (CHANNI / GK - N6819)');
   console.log('===============================================================');
   console.log(`  User ID      : ${USER_ID}`);
   console.log(`  Dealer Code  : ${DEALER_CODE}`);
   console.log(`  Date Range   : ${START_DATE}  -->  ${END_DATE}`);
   console.log(`  Headless     : ${RUN_HEADLESS ? 'YES' : 'NO (Visible Browser)'}`);
   console.log(`  OTP Input    : MANUAL ON TERMINAL`);
+  console.log(`  Dealer Mode  : Active portal dealer (NO dealer change)`);
   console.log('===============================================================\n');
 
   const downloadDir = path.resolve(`./downloads/hmil-n6819-sales`);
-  const chunkDir = path.join(downloadDir, `chunks_2010-01-01_to_2026-06-30`);
+  const chunkDir = path.join(downloadDir, `chunks_${START_DATE}_to_${END_DATE}`);
   await fs.mkdir(chunkDir, { recursive: true });
 
   const sDate = parseIsoLocalDate(START_DATE);
@@ -231,57 +171,135 @@ async function main() {
     await firstVisible(page, OTP_INPUT_SELECTORS, { timeout: 30000, label: 'OTP Input Field' });
     console.log('\n>>> OTP SENT TO REGISTERED MOBILE NUMBER <<<');
 
-    const otp = await getOtpManual({
-      timeoutMs: 180000,
-      purpose: `HMIL (${USER_ID})`
-    });
+    const otp = await getOtpManual({ timeoutMs: 180000, purpose: `HMIL (${USER_ID})` });
 
     console.log(`\n[INFO] Submitting OTP: ${otp}`);
-    const otpField = await firstVisible(page, OTP_INPUT_SELECTORS, { label: 'OTP Field' });
-    await otpField.fill('');
-    await otpField.fill(otp);
+    const otpInput = await firstVisible(page, OTP_INPUT_SELECTORS, { label: 'OTP Input Field' });
+    await otpInput.fill(otp);
 
     const submitBtn = await firstVisible(page, SUBMIT_SELECTORS, { label: 'Login Button' });
     await submitBtn.click();
-    await sleep(5000);
 
-    console.log('[4/4] Opening Sales Report menu...');
-    await openHmilSalesReport(page, { timeoutMs: 60000 });
+    console.log('[INFO] Waiting for dashboard navigation...');
+    await page.waitForURL(/selectHome\.dms|selectLoginAction|ndms\.hmil\.net/i, { timeout: 45000 });
+    await page.waitForLoadState('domcontentloaded');
+    await sleep(3000);
+    console.log('[SUCCESS] Logged in successfully to HMIL GDMS!\n');
 
-    const reportContext = await findContextWithVisibleSelector(
-      page,
-      ['#sDateFromDate', '#sDateToDate', '#btnSearch', '.k-grid'],
-      { timeoutMs: 60000, label: 'Hyundai Sales Report Form' }
-    );
+    console.log('[4/4] Opening Sales Report page...');
+    await openHmilSalesReport(page);
 
-    console.log('[INFO] Sales Report loaded successfully. Starting date chunk downloads...\n');
+    const reportContext = await findContextWithVisibleSelector(page, '#sDateFromDate', {
+      timeout: 60000,
+      label: 'Hyundai Sales Report Date From'
+    });
+    await reportContext.locator('#sDateToDate').first().waitFor({ state: 'visible', timeout: 30000 });
+    console.log('[SUCCESS] Hyundai Sales Report page ready.\n');
 
-    let totalSaved = 0;
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      console.log(`\n>>> [CHUNK ${i + 1} / ${chunks.length}] : ${chunk.startPortal} to ${chunk.endPortal}`);
-      const res = await exportAndSaveChunk(reportContext, chunk, chunkDir);
-      totalSaved += res.rowCount;
-      await sleep(2000);
+    const markerPath = baseName => path.join(chunkDir, `${baseName}.saved.json`);
+    const alreadySaved = baseName => fs.readFile(markerPath(baseName), 'utf8').then(() => true).catch(() => false);
+
+    let totalSavedRows = 0;
+    let completedChunks = 0;
+    let skippedChunks = 0;
+    const failedChunks = [];
+
+    for (const [index, chunk] of chunks.entries()) {
+      const baseName = chunkFileName(chunk);
+      const progress = `[${index + 1}/${chunks.length}]`;
+      const dateRangeStr = `${chunk.startPortal} to ${chunk.endPortal}`;
+
+      if (await alreadySaved(baseName)) {
+        skippedChunks += 1;
+        console.log(`${progress} SKIP ${dateRangeStr} (already saved)`);
+        continue;
+      }
+
+      console.log(`${progress} FETCHING ${dateRangeStr} ...`);
+
+      try {
+        await applyDateRangeAndSearch(reportContext, chunk);
+
+        const chunkFiles = await exportAllGridPagesToFiles(reportContext, {
+          outputDir: chunkDir,
+          filenameBase: baseName,
+          downloadTimeoutMs: 180000
+        }) ?? [];
+
+        let rowCount = 0;
+        if (chunkFiles.length) {
+          const merged = dropGridTotalRows(await mergeExcelFiles(chunkFiles));
+          const enrichedDataset = enrichDataset(merged, DEALER_CODE);
+
+          const dbResult = await saveReportSheetToSupabase({
+            brand: 'hyundai',
+            sheetName: 'hyundai_sales_report',
+            headers: enrichedDataset.headers,
+            rows: enrichedDataset.rows
+          });
+
+          rowCount = enrichedDataset.rows.length;
+          totalSavedRows += rowCount;
+          console.log(`    --> SUCCESS: ${rowCount} rows saved to database (inserted: ${dbResult.insertedCount ?? 0}, updated: ${dbResult.updatedCount ?? 0})`);
+        } else {
+          console.log(`    --> NO DATA (0 rows in this date range)`);
+        }
+
+        await fs.writeFile(
+          markerPath(baseName),
+          JSON.stringify({
+            dealerCode: DEALER_CODE,
+            start: chunk.startIso,
+            end: chunk.endIso,
+            rowCount,
+            savedAt: new Date().toISOString()
+          }, null, 2)
+        );
+
+        for (const file of chunkFiles) {
+          await fs.unlink(file).catch(() => {});
+        }
+
+        completedChunks += 1;
+      } catch (chunkError) {
+        console.error(`    --> ERROR on chunk ${dateRangeStr}: ${chunkError.message}`);
+        logger.error('Error processing sales report chunk', {
+          dealerCode: DEALER_CODE,
+          chunk: progress,
+          error: chunkError.message
+        });
+        failedChunks.push({ chunk: progress, range: dateRangeStr, error: chunkError.message });
+      }
+
+      const betweenDelay = config.hyundaiSalesReportBetweenChunksDelayMs || 4000;
+      await sleep(betweenDelay);
     }
 
     console.log('\n===============================================================');
-    console.log(`🎉 COMPLETED ALL CHUNKS FOR CHANNI / GK (${DEALER_CODE})`);
-    console.log(`   Total Rows Inserted: ${totalSaved}`);
+    console.log('  HISTORICAL FETCH COMPLETE (CHANNI / GK - N6819)');
     console.log('===============================================================');
+    console.log(`  Dealer Code      : ${DEALER_CODE}`);
+    console.log(`  Date Range       : ${START_DATE} to ${END_DATE}`);
+    console.log(`  Total Chunks     : ${chunks.length}`);
+    console.log(`  Completed        : ${completedChunks}`);
+    console.log(`  Skipped (Cached) : ${skippedChunks}`);
+    console.log(`  Failed Chunks    : ${failedChunks.length}`);
+    console.log(`  Total Rows Saved : ${totalSavedRows}`);
+    console.log('===============================================================\n');
 
-  } catch (err) {
-    console.error(`\n❌ Error during execution: ${err.message}`);
-    const errorShot = path.join(downloadDir, `kathua-sales-error-${Date.now()}.png`);
-    await page.screenshot({ path: errorShot, fullPage: true }).catch(() => {});
-    console.log(`Saved failure screenshot: ${errorShot}`);
-    throw err;
+    if (failedChunks.length > 0) {
+      console.log('Failed Chunks Detail:');
+      console.table(failedChunks);
+      console.log('Tip: You can re-run the exact same command to automatically retry failed chunks.\n');
+    }
   } finally {
-    await browser.close();
+    console.log('[INFO] Closing browser session...');
+    await browser.close().catch(() => {});
+    console.log('[DONE] Process finished.');
   }
 }
 
 main().catch(err => {
-  console.error(err);
+  console.error('\n[FATAL ERROR]', err);
   process.exit(1);
 });

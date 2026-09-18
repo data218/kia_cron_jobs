@@ -20,12 +20,14 @@ const REPORT_ID = 'kia-stock-management';
 
 async function clearStockTableForDealer(dealerCode) {
   return withPostgresClient(async client => {
-    logger.info(`Deleting existing stock records for dealer ${dealerCode}`);
+    logger.info(`Deleting existing non-invoice stock records for dealer ${dealerCode}`);
     const res = await client.query(
-      `DELETE FROM public.kia_stock_management WHERE upper(trim(order_dealer)) = upper(trim($1))`,
+      `DELETE FROM public.kia_stock_management 
+       WHERE upper(trim(order_dealer)) = upper(trim($1))
+         AND upper(trim(coalesce(stock_status, ''))) != 'INVOICE'`,
       [dealerCode]
     );
-    logger.info(`Deleted ${res.rowCount} existing stock records for dealer ${dealerCode}`);
+    logger.info(`Deleted ${res.rowCount} existing non-invoice stock records for dealer ${dealerCode}`);
   });
 }
 
@@ -106,11 +108,8 @@ export async function downloadKiaStockManagementReport(page) {
 
   const merged = await mergeExcelFiles(exportFiles);
 
-  // Exclude rows where stock_status is 'Invoice' (case-insensitive) for kia_stock_management daily snapshot
-  const stockManagementRows = merged.rows.filter(row => {
-    const status = getRowValue(row, 'stock_status', 'Stock Status', 'Stock_Status').toLowerCase();
-    return status !== 'invoice';
-  });
+  // Save all rows including Invoice to kia_stock_management
+  const stockManagementRows = merged.rows;
 
   if (merged.rows.length > 0) {
     const uniqueDealers = [...new Set(merged.rows.map(row => getRowValue(row, 'order_dealer', 'Order Dealer', 'Order_Dealer', 'dealer_code')).filter(Boolean))];
@@ -119,8 +118,8 @@ export async function downloadKiaStockManagementReport(page) {
       report: REPORT_NAME
     });
     for (const dealer of uniqueDealers) {
-      // Delete + re-insert fresh data for kia_stock_management (daily snapshot).
-      // kia_stock_report keeps all historical records — no delete.
+      // Delete non-invoice records + re-insert fresh data for kia_stock_management.
+      // Retain existing Invoice stock permanently.
       await clearStockTableForDealer(dealer);
     }
   }

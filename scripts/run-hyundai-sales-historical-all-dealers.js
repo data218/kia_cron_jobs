@@ -31,10 +31,13 @@ if (!START_DATE) {
 
 const END_DATE_OVERRIDE = flag('end') || null;
 const RUN_HEADLESS = process.argv.includes('--headless');
-const DEALER_CODES = (flag('dealers') || 'N5216,N6844,N6845,N6846,N6847,N6848')
-  .split(',')
-  .map(code => code.trim().toUpperCase())
-  .filter(Boolean);
+const NO_DEALER_SWITCH = !process.argv.includes('--switch-dealers');
+const DEALER_CODES = NO_DEALER_SWITCH
+  ? [flag('dealers') ? flag('dealers').split(',')[0].trim().toUpperCase() : 'N5216']
+  : (flag('dealers') || 'N5216,N6844,N6845,N6846,N6847,N6848')
+      .split(',')
+      .map(code => code.trim().toUpperCase())
+      .filter(Boolean);
 
 async function ensureSession(sessionRef, account) {
   if (!sessionRef.current || !sessionRef.current.page || sessionRef.current.page.isClosed()) {
@@ -58,6 +61,7 @@ async function main() {
   logger.info('Starting Hyundai Sales Report run for current month', {
     userId: account.userId,
     dealerCodes: DEALER_CODES,
+    noDealerSwitch: NO_DEALER_SWITCH,
     startDate: START_DATE,
     endDate,
     headless: account.headless
@@ -73,24 +77,26 @@ async function main() {
 
       let session = await ensureSession(sessionRef, account);
 
-      try {
-        if (activeDealerCode !== dealerCode) {
-          logger.info('Switching active HMIL dealer code...', { from: activeDealerCode, to: dealerCode });
-          await changeActiveDealerForDms(session.page, dealerCode, {
-            homeUrl: account.homeUrl,
-            systemLabel: account.systemLabel
+      if (!NO_DEALER_SWITCH) {
+        try {
+          if (activeDealerCode !== dealerCode) {
+            logger.info('Switching active HMIL dealer code...', { from: activeDealerCode, to: dealerCode });
+            await changeActiveDealerForDms(session.page, dealerCode, {
+              homeUrl: account.homeUrl,
+              systemLabel: account.systemLabel
+            });
+            activeDealerCode = dealerCode;
+            logger.info('Active HMIL dealer code set', { activeDealerCode });
+          }
+        } catch (switchError) {
+          logger.error('Failed to switch HMIL dealer code; skipping dealer', {
+            dealerCode,
+            error: switchError.message
           });
-          activeDealerCode = dealerCode;
-          logger.info('Active HMIL dealer code set', { activeDealerCode });
+          summary.push({ dealerCode, status: 'dealer_switch_failed', error: switchError.message });
+          activeDealerCode = null;
+          continue;
         }
-      } catch (switchError) {
-        logger.error('Failed to switch HMIL dealer code; skipping dealer', {
-          dealerCode,
-          error: switchError.message
-        });
-        summary.push({ dealerCode, status: 'dealer_switch_failed', error: switchError.message });
-        activeDealerCode = null;
-        continue;
       }
 
       session = await ensureSession(sessionRef, account);

@@ -116,7 +116,7 @@ function hmilSecondaryProfile() {
     sessionStatePath: config.hmilSecondarySessionStatePath,
     downloadDir: path.resolve(config.rootDir, './downloads/hmil-secondary'),
     reportChunksDir: path.resolve(config.rootDir, './downloads/report-chunks/hmil-secondary'),
-    dealerCodes: config.hmilSecondaryDealerCodes,
+    dealerCodes: [config.hmilSecondaryDealerCodes[0] || 'N5216'],
     reportsToRun: config.hmilReportsToRun,
     headless: config.headless,
     repairOrderSheetName: config.hmilRepairOrderSheetName,

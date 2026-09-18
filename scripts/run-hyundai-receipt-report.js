@@ -43,12 +43,15 @@ async function ensureSession(sessionRef, account) {
 
 async function main() {
   const account = createGdmsAccountProfile('hmil-secondary');
-  account.headless = RUN_HEADLESS;
-  const dealerCodes = DEALER_OVERRIDE ?? account.dealerCodes;
+  const NO_DEALER_SWITCH = !process.argv.includes('--switch-dealers');
+  const dealerCodes = NO_DEALER_SWITCH
+    ? [DEALER_OVERRIDE ? DEALER_OVERRIDE[0] : (account.dealerCodes[0] || 'N5216')]
+    : (DEALER_OVERRIDE ?? account.dealerCodes);
 
   logger.info('Starting Hyundai Receipt Report run', {
     userId: account.userId,
     dealerCodes,
+    noDealerSwitch: NO_DEALER_SWITCH,
     startDate: START_DATE,
     endDate: END_DATE,
     headless: account.headless
@@ -67,24 +70,26 @@ async function main() {
 
       let currentSession = await ensureSession(sessionRef, account);
 
-      try {
-        if (activeDealerCode !== dealerCode) {
-          logger.info('Switching active Hyundai dealer...', { from: activeDealerCode, to: dealerCode });
-          await changeActiveDealerForDms(currentSession.page, dealerCode, {
-            homeUrl: account.homeUrl,
-            systemLabel: account.systemLabel
+      if (!NO_DEALER_SWITCH) {
+        try {
+          if (activeDealerCode !== dealerCode) {
+            logger.info('Switching active Hyundai dealer...', { from: activeDealerCode, to: dealerCode });
+            await changeActiveDealerForDms(currentSession.page, dealerCode, {
+              homeUrl: account.homeUrl,
+              systemLabel: account.systemLabel
+            });
+            activeDealerCode = dealerCode;
+            logger.info('Active Hyundai dealer set', { activeDealerCode });
+          }
+        } catch (switchError) {
+          logger.error('Failed to switch Hyundai dealer; skipping dealer', {
+            dealerCode,
+            error: switchError.message
           });
-          activeDealerCode = dealerCode;
-          logger.info('Active Hyundai dealer set', { activeDealerCode });
+          summary.push({ dealerCode, status: 'dealer_switch_failed', error: switchError.message });
+          activeDealerCode = null;
+          continue;
         }
-      } catch (switchError) {
-        logger.error('Failed to switch Hyundai dealer; skipping dealer', {
-          dealerCode,
-          error: switchError.message
-        });
-        summary.push({ dealerCode, status: 'dealer_switch_failed', error: switchError.message });
-        activeDealerCode = null;
-        continue;
       }
 
       currentSession = await ensureSession(sessionRef, account);

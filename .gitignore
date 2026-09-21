@@ -9,3 +9,6 @@ playwright-report/
 test-results/
 apps/*/runtime/
 *.log
+
+.vercel
+.env*

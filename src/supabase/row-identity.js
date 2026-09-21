@@ -24,6 +24,9 @@ export const TABLE_IDENTITY_COLUMNS = {
     ['complaint_no', 'sr_no'],
     ['complaint_no']
   ],
+  kia_insurance: [
+    ['policyno', 'vinno', 'create_date']
+  ],
   open_ro_yearly: [
     ['dealer_code', 'r_o_no'],
     ['r_o_no'],

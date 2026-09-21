@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kia Insurance Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f172a;--panel:#1e293b;--card:#334155;--border:#475569;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--orange:#f59e0b;--purple:#8b5cf6}
+body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+.topbar h1{font-size:16px;font-weight:700}
+.topbar .meta{font-size:11px;color:var(--muted)}
+.topbar .actions{display:flex;gap:8px;align-items:center}
+.btn{padding:8px 16px;border-radius:8px;border:none;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:#2563eb}
+.btn-primary:disabled{background:#475569;cursor:not-allowed}
+.btn-secondary{background:var(--card);color:var(--text);border:1px solid var(--border)}
+.btn-secondary:hover{background:var(--border)}
+.btn-green{background:var(--green);color:#fff}
+.btn-green:hover{background:#16a34a}
+.container{max-width:1400px;margin:0 auto;padding:16px 24px}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--panel);border-radius:10px;padding:16px;border-left:3px solid var(--accent)}
+.kpi.b-green{border-left-color:var(--green)}.kpi.b-orange{border-left-color:var(--orange)}.kpi.b-red{border-left-color:var(--red)}.kpi.b-purple{border-left-color:var(--purple)}
+.k-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.k-value{font-size:24px;font-weight:700;margin:4px 0}
+.k-sub{font-size:11px;color:var(--muted)}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
+.filters select{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px}
+.chart-section{background:var(--panel);border-radius:10px;padding:16px;margin-bottom:16px}
+.chart-section h3{font-size:13px;margin-bottom:12px}
+.chart-wrap{height:300px;position:relative}
+.table-section{background:var(--panel);border-radius:10px;padding:16px;margin-bottom:16px}
+.t-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.t-header h3{font-size:13px}
+.t-info{font-size:11px;color:var(--muted)}
+.table-wrap{overflow-x:auto;max-height:500px;overflow-y:auto}
+table{width:100%;border-collapse:collapse;font-size:11px}
+thead{position:sticky;top:0;z-index:1}
+th{background:var(--card);padding:8px 10px;text-align:left;font-weight:600;color:var(--muted);border-bottom:2px solid var(--border);white-space:nowrap}
+td{padding:6px 10px;border-bottom:1px solid rgba(71,85,105,.3);white-space:nowrap}
+tr:hover td{background:rgba(59,130,246,.08)}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
+.badge-new{background:rgba(59,130,246,.15);color:var(--accent)}
+.badge-renewal{background:rgba(34,197,94,.15);color:var(--green)}
+.loader{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px;color:var(--muted)}
+.spin{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.fetch-panel{background:var(--panel);border-radius:10px;padding:16px;margin-bottom:16px;border:1px solid var(--border)}
+.fetch-panel h3{font-size:13px;margin-bottom:8px}
+.fetch-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.fetch-row input{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;width:140px}
+.fetch-status{margin-top:8px;font-size:12px;color:var(--muted);min-height:18px}
+.fetch-status.ok{color:var(--green)}.fetch-status.error{color:var(--red)}.fetch-status.running{color:var(--orange)}
+.tab-row{display:flex;gap:4px;margin-bottom:16px}
+.tab{padding:6px 14px;border-radius:6px;background:var(--card);color:var(--muted);border:1px solid transparent;cursor:pointer;font-size:11px;font-weight:600;transition:all .2s}
+.tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.month-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;margin-bottom:16px}
+.month-card{background:var(--card);border-radius:8px;padding:10px;text-align:center;cursor:pointer;border:2px solid transparent;transition:all .2s}
+.month-card:hover{border-color:var(--accent)}
+.month-card .m-label{font-size:10px;color:var(--muted)}.month-card .m-count{font-size:18px;font-weight:700}
+
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;align-items:center;justify-content:center}
+.modal-overlay.active{display:flex}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:32px;max-width:520px;width:90%;max-height:85vh;overflow-y:auto}
+.modal h2{font-size:18px;margin-bottom:4px}
+.modal .sub{font-size:12px;color:var(--muted);margin-bottom:20px}
+.modal .step{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(71,85,105,.3)}
+.modal .step:last-child{border-bottom:none}
+.step-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;background:var(--card);color:var(--muted)}
+.step-icon.done{background:rgba(34,197,94,.15);color:var(--green)}
+.step-icon.running{background:rgba(59,130,246,.15);color:var(--accent);animation:pulse 1s infinite}
+.step-icon.error{background:rgba(239,68,68,.15);color:var(--red)}
+.step-icon.pending{background:var(--card);color:var(--muted)}
+.step-text{flex:1;font-size:12px}
+.step-text .step-title{font-weight:600;margin-bottom:2px}
+.step-text .step-detail{color:var(--muted);font-size:11px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.install-result{margin-top:16px;padding:16px;border-radius:10px;text-align:center;font-size:14px;font-weight:600}
+.install-result.success{background:rgba(34,197,94,.1);border:1px solid var(--green);color:var(--green)}
+.install-result.fail{background:rgba(239,68,68,.1);border:1px solid var(--red);color:var(--red)}
+.install-actions{margin-top:20px;display:flex;gap:8px;justify-content:center}
+.log-box{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:16px;font-family:monospace;font-size:10px;color:var(--muted);max-height:200px;overflow-y:auto;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div>
+    <h1>Kia Insurance Dashboard</h1>
+    <div class="meta">Last updated: <span id="updatedAt">-</span></div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-secondary" onclick="loadData()">Refresh</button>
+  </div>
+</div>
+
+<div class="container">
+  <div id="fetchPanel" class="fetch-panel">
+    <h3>Live Fetch from Kia Safety Portal</h3>
+    <div class="fetch-row">
+      <label style="font-size:11px;color:var(--muted)">From:</label>
+      <input type="date" id="fetchFrom">
+      <label style="font-size:11px;color:var(--muted)">To:</label>
+      <input type="date" id="fetchTo">
+      <button class="btn btn-primary" id="fetchBtn" onclick="startFetch()">Fetch Kia Data</button>
+      <button class="btn btn-secondary" id="fetchNowBtn" onclick="startFetchToday()">Fetch Today</button>
+    </div>
+    <div class="fetch-status" id="fetchStatus"></div>
+  </div>
+
+  <div id="kpiArea"></div>
+
+  <div class="tab-row">
+    <button class="tab active" onclick="setTab('trend',this)">Trend</button>
+    <button class="tab" onclick="setTab('model',this)">Models</button>
+    <button class="tab" onclick="setTab('company',this)">Companies</button>
+    <button class="tab" onclick="setTab('state',this)">States</button>
+  </div>
+
+  <div class="filters">
+    <select id="yearFilter" onchange="applyFilters()"><option value="all">All Years</option></select>
+    <select id="monthFilter" onchange="applyFilters()"><option value="all">All Months</option></select>
+    <select id="modelFilter" onchange="applyFilters()"><option value="all">All Models</option></select>
+    <select id="companyFilter" onchange="applyFilters()"><option value="all">All Companies</option></select>
+    <select id="typeFilter" onchange="applyFilters()"><option value="all">All Types</option><option value="New">New</option><option value="Renewal">Renewal</option></select>
+  </div>
+
+  <div class="chart-section">
+    <h3 id="chartTitle">Monthly Trend</h3>
+    <div class="chart-wrap"><canvas id="mainChart"></canvas></div>
+  </div>
+
+  <div id="monthGrid" class="month-grid"></div>
+
+  <div class="table-section">
+    <div class="t-header">
+      <h3 id="tableTitle">Policies</h3>
+      <span class="t-info" id="tableCount">0 entries</span>
+    </div>
+    <div class="table-wrap">
+      <table><thead id="tableHead"></thead><tbody id="tableBody"></tbody></table>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="installModal">
+  <div class="modal">
+    <h2 id="installTitle">Setup Required</h2>
+    <div class="sub" id="installSub">Some dependencies are missing. Click Install to set everything up automatically.</div>
+    <div id="installSteps"></div>
+    <div id="installResult"></div>
+    <div class="log-box" id="installLog" style="display:none"></div>
+    <div class="install-actions">
+      <button class="btn btn-green" id="installBtn" onclick="runInstall()">Install Now</button>
+      <button class="btn btn-secondary" id="closeInstallBtn" onclick="closeInstall()" style="display:none">Close</button>
+      <button class="btn btn-primary" id="fetchAfterInstall" onclick="closeInstall();doFetch(lastFetchFrom,lastFetchTo)" style="display:none">Fetch Data</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let allData=[], chart=null, curTab='trend';
+let lastFetchFrom='', lastFetchTo='';
+const fmt=n=>(n||0).toLocaleString('en-IN');
+
+async function loadData(){
+  try{
+    const[dR,sR]=await Promise.all([fetch('/api/data'),fetch('/api/summary')]);
+    const d=await dR.json(), s=await sR.json();
+    if(d.error)throw Error(d.error);
+    allData=d.rows;
+    renderKPIs(s); populateFilters(s); renderMonthGrid(s); renderChart(); renderTable();
+    document.getElementById('updatedAt').textContent=new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+  }catch(e){
+    document.getElementById('kpiArea').innerHTML='<div class="loader" style="color:var(--red)">Error: '+e.message+'</div>';
+  }
+}
+
+function renderKPIs(s){
+  const tp=s.totalPremium, tidv=s.totalIDV;
+  const hasToday=s.todayCount>0;
+  document.getElementById('kpiArea').innerHTML=`
+    <div class="kpi-row">
+      <div class="kpi b-green"><div class="k-label">Today</div><div class="k-value">${fmt(s.todayCount)}</div><div class="k-sub">${hasToday?fmt(s.todayNew)+' New / '+fmt(s.todayRenewal)+' Renewal':'No data yet'} · ${s.todayDate||'-'}</div></div>
+      <div class="kpi"><div class="k-label">Total Policies</div><div class="k-value">${fmt(s.totalPolicies)}</div><div class="k-sub">${fmt(s.newPolicies)} New / ${fmt(s.renewalPolicies)} Renewal</div></div>
+      <div class="kpi b-orange"><div class="k-label">Gross Premium</div><div class="k-value">${'₹'+(tp/100000).toFixed(1)+'L'}</div><div class="k-sub">Avg ${'₹'+fmt(Math.round(tp/(s.totalPolicies||1)))}</div></div>
+      <div class="kpi b-red"><div class="k-label">Unique VINs</div><div class="k-value">${fmt(s.uniqueVINs)}</div><div class="k-sub">${s.models.length} models</div></div>
+      <div class="kpi b-purple"><div class="k-label">Total IDV</div><div class="k-value">${'₹'+(tidv/10000000).toFixed(1)+'Cr'}</div><div class="k-sub">${s.companies.length} insurers</div></div>
+      <div class="kpi"><div class="k-label">Months</div><div class="k-value">${s.months.length}</div><div class="k-sub">${s.months[0]} to ${s.months[s.months.length-1]}</div></div>
+    </div>`;
+}
+
+function populateFilters(s){
+  const ySel=document.getElementById('yearFilter');
+  const years=[...new Set(s.months.map(m=>m.substring(0,4)))].sort();
+  ySel.innerHTML='<option value="all">All Years</option>'+years.map(y=>'<option value="'+y+'">'+y+'</option>').join('');
+  document.getElementById('monthFilter').innerHTML='<option value="all">All Months</option>'+s.months.map(m=>'<option value="'+m+'">'+m+'</option>').join('');
+  document.getElementById('modelFilter').innerHTML='<option value="all">All Models</option>'+s.models.map(m=>'<option value="'+m+'">'+m+'</option>').join('');
+  document.getElementById('companyFilter').innerHTML='<option value="all">All Companies</option>'+s.companies.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
+}
+
+function getFiltered(){
+  let d=allData;
+  const y=document.getElementById('yearFilter').value, m=document.getElementById('monthFilter').value;
+  const mo=document.getElementById('modelFilter').value, c=document.getElementById('companyFilter').value, t=document.getElementById('typeFilter').value;
+  if(y!=='all')d=d.filter(r=>r.create_date?.startsWith(y));
+  if(m!=='all')d=d.filter(r=>r.create_date?.startsWith(m));
+  if(mo!=='all')d=d.filter(r=>r.model===mo);
+  if(c!=='all')d=d.filter(r=>r.insurancecompany===c);
+  if(t!=='all')d=d.filter(r=>r.policytype===t);
+  return d;
+}
+
+function setTab(tab,el){curTab=tab;document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));if(el)el.classList.add('active');renderChart();}
+
+function renderChart(){
+  if(chart){chart.destroy();chart=null}
+  const d=getFiltered(), ctx=document.getElementById('mainChart').getContext('2d');
+  if(curTab==='trend'){
+    const m={};d.forEach(r=>{const k=r.create_date?.substring(0,7);if(!k)return;if(!m[k])m[k]={p:0,pr:0};m[k].p++;m[k].pr+=Number(r.netodpremiuma)||0;});
+    const labels=Object.keys(m).sort();
+    document.getElementById('chartTitle').textContent='Monthly Trend';
+    chart=new Chart(ctx,{type:'bar',data:{labels,datasets:[
+      {label:'Policies',data:labels.map(k=>m[k].p),backgroundColor:'#f59e0b',borderRadius:4,order:1},
+      {label:'Premium (₹K)',data:labels.map(k=>Math.round(m[k].pr/1000)),backgroundColor:'#3b82f6',borderRadius:4,yAxisID:'y1',order:0}
+    ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{boxWidth:10,color:'#94a3b8',padding:8}}},scales:{
+      x:{ticks:{color:'#94a3b8',font:{size:9}},grid:{color:'rgba(0,0,0,.2)'}},
+      y:{beginAtZero:true,ticks:{color:'#94a3b8',font:{size:9}},grid:{color:'rgba(0,0,0,.2)'},title:{display:true,text:'Policies',color:'#94a3b8'}},
+      y1:{position:'right',beginAtZero:true,ticks:{color:'#94a3b8',font:{size:9}},grid:{drawOnChartArea:false},title:{display:true,text:'Premium (₹K)',color:'#94a3b8'}}
+    }}});
+  }else if(curTab==='model'){
+    const m={};d.forEach(r=>{if(r.model)m[r.model]=(m[r.model]||0)+1;});
+    const s=Object.entries(m).sort((a,b)=>b[1]-a[1]);
+    document.getElementById('chartTitle').textContent='Model Distribution';
+    chart=new Chart(ctx,{type:'bar',data:{labels:s.map(x=>x[0]),datasets:[{label:'Policies',data:s.map(x=>x[1]),backgroundColor:'#22c55e',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,ticks:{color:'#94a3b8',font:{size:9}},grid:{color:'rgba(0,0,0,.2)'}},y:{ticks:{color:'#94a3b8',font:{size:9}},grid:{color:'rgba(0,0,0,.2)'}}}}});
+  }else if(curTab==='company'){
+    const m={};d.forEach(r=>{if(r.insurancecompany)m[r.insurancecompany]=(m[r.insurancecompany]||0)+1;});
+    const s=Object.entries(m).sort((a,b)=>b[1]-a[1]);
+    const colors=['#f59e0b','#3b82f6','#22c55e','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899'];
+    document.getElementById('chartTitle').textContent='Insurance Companies';
+    chart=new Chart(ctx,{type:'doughnut',data:{labels:s.map(x=>x[0].length>25?x[0].substring(0,22)+'...':x[0]),datasets:[{data:s.map(x=>x[1]),backgroundColor:colors.slice(0,s.length),borderWidth:2,borderColor:'#1e293b'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{boxWidth:10,color:'#94a3b8',font:{size:10},padding:6}}},cutout:'60%'}});
+  }else if(curTab==='state'){
+    const m={};d.forEach(r=>{if(r.state)m[r.state]=(m[r.state]||0)+1;});
+    const s=Object.entries(m).sort((a,b)=>b[1]-a[1]);
+    document.getElementById('chartTitle').textContent='State Distribution';
+    chart=new Chart(ctx,{type:'bar',data:{labels:s.map(x=>x[0]),datasets:[{label:'Policies',data:s.map(x=>x[1]),backgroundColor:'#3b82f6',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,ticks:{color:'#94a3b8',font:{size:9}},grid:{color:'rgba(0,0,0,.2)'}},y:{ticks:{color:'#94a3b8',font:{size:9}},grid:{color:'rgba(0,0,0,.2)'}}}}});
+  }
+}
+
+function renderMonthGrid(s){
+  const d=getFiltered(), mc={};
+  d.forEach(r=>{const m=r.create_date?.substring(0,7);if(m)mc[m]=(mc[m]||0)+1;});
+  const sorted=Object.entries(mc).sort((a,b)=>a[0].localeCompare(b[0]));
+  document.getElementById('monthGrid').innerHTML=sorted.map(([m,c])=>`<div class="month-card" onclick="selectMonth('${m}')"><div class="m-label">${m}</div><div class="m-count">${c}</div></div>`).join('');
+}
+
+function selectMonth(m){document.getElementById('monthFilter').value=m;applyFilters();}
+function applyFilters(){renderChart();renderTable();renderMonthGrid({});}
+
+function renderTable(){
+  const d=getFiltered().slice(0,200);
+  document.getElementById('tableTitle').textContent='Policies ('+getFiltered().length+' total, showing '+d.length+')';
+  document.getElementById('tableCount').textContent=d.length+' entries';
+  document.getElementById('tableHead').innerHTML='<tr><th>Policy No</th><th>Customer</th><th>Model</th><th>Insurance</th><th>Premium</th><th>Type</th><th>Create Date</th><th>State</th></tr>';
+  document.getElementById('tableBody').innerHTML=d.map(r=>`<tr>
+    <td style="font-family:monospace;font-size:10px">${r.policyno||'-'}</td>
+    <td>${r.customer_name||'-'}</td>
+    <td>${r.model||'-'}</td>
+    <td>${(r.insurancecompany||'-').substring(0,22)}</td>
+    <td><strong>${'₹'+fmt(Number(r.netodpremiuma)||0)}</strong></td>
+    <td><span class="badge ${r.policytype==='New'?'badge-new':'badge-renewal'}">${r.policytype||'-'}</span></td>
+    <td>${r.create_date||'-'}</td>
+    <td>${r.state||'-'}</td>
+  </tr>`).join('');
+}
+
+async function startFetch(){
+  const from=document.getElementById('fetchFrom').value;
+  const to=document.getElementById('fetchTo').value;
+  if(!from||!to){document.getElementById('fetchStatus').textContent='Select dates first';return;}
+  checkAndFetch(from,to);
+}
+function startFetchToday(){
+  const t=new Date();
+  const d=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+  checkAndFetch(d,d);
+}
+
+async function checkAndFetch(from,to){
+  const st=document.getElementById('fetchStatus');
+  st.className='fetch-status running';st.textContent='Checking system setup...';
+  try{
+    const r=await fetch('/api/setup-check');
+    const j=await r.json();
+    if(j.ready){
+      doFetch(from,to);
+    }else{
+      lastFetchFrom=from;lastFetchTo=to;
+      showInstallPopup(j.checks);
+    }
+  }catch(e){
+    st.className='fetch-status error';st.textContent='Cannot reach server: '+e.message;
+  }
+}
+
+const SETUP_STEPS=[
+  {id:'node',label:'Node.js',check:c=>c.node?.ok,detail:'Runtime environment'},
+  {id:'npm',label:'NPM',check:c=>c.npm?.ok,detail:'Package manager'},
+  {id:'nodeModules',label:'Dependencies',check:c=>c.nodeModules?.ok,detail:'npm install'},
+  {id:'playwright',label:'Playwright',check:c=>c.playwright?.ok,detail:'Browser automation'},
+  {id:'browsers',label:'Chromium',check:c=>c.browsers?.ok,detail:'Browser for portal scraping'},
+  {id:'supabase',label:'Supabase Client',check:c=>c.supabase?.ok,detail:'Database connection'},
+  {id:'express',label:'Express',check:c=>c.express?.ok,detail:'Web server'},
+  {id:'env',label:'.env Config',check:c=>c.env?.ok,detail:'Credentials file'}
+];
+
+function showInstallPopup(checks){
+  const modal=document.getElementById('installModal');
+  const stepsDiv=document.getElementById('installSteps');
+  document.getElementById('installResult').innerHTML='';
+  document.getElementById('installLog').style.display='none';
+  document.getElementById('installBtn').style.display='';
+  document.getElementById('closeInstallBtn').style.display='none';
+  document.getElementById('fetchAfterInstall').style.display='none';
+  document.getElementById('installTitle').textContent='Setup Required';
+  document.getElementById('installSub').textContent='Some components are missing. Click Install to set everything up automatically.';
+
+  stepsDiv.innerHTML=SETUP_STEPS.map(s=>{
+    const ok=s.check(checks);
+    const icon=ok?'done':'pending';
+    const symbol=ok?'&#10003;':'+';
+    const detail=ok?'Installed':'Needs setup';
+    return `<div class="step" id="step-${s.id}"><div class="step-icon ${icon}">${symbol}</div><div class="step-text"><div class="step-title">${s.label}</div><div class="step-detail">${detail} — ${s.detail}</div></div></div>`;
+  }).join('');
+
+  modal.classList.add('active');
+}
+
+function closeInstall(){document.getElementById('installModal').classList.remove('active');}
+
+async function runInstall(){
+  const installBtn=document.getElementById('installBtn');
+  const stepsDiv=document.getElementById('installSteps');
+  const resultDiv=document.getElementById('installResult');
+  const logBox=document.getElementById('installLog');
+  installBtn.disabled=true;installBtn.textContent='Installing...';
+  resultDiv.innerHTML='';
+  logBox.style.display='block';logBox.textContent='';
+
+  try{
+    const r=await fetch('/api/install',{method:'POST'});
+    const j=await r.json();
+    if(j.status==='busy'){resultDiv.innerHTML='<div class="install-result fail">Installation already running. Wait...</div>';installBtn.disabled=false;return;}
+
+    let lastCount=0;
+    const poll=async()=>{
+      try{
+        const sr=await fetch('/api/install-status');
+        const sj=await sr.json();
+        if(sj.logs.length>lastCount){
+          for(let i=lastCount;i<sj.logs.length;i++){
+            logBox.textContent+=sj.logs[i].msg+'\n';
+            logBox.scrollTop=logBox.scrollHeight;
+            updateInstallStep(sj.logs[i].msg);
+          }
+          lastCount=sj.logs.length;
+        }
+        if(sj.done){
+          resultDiv.innerHTML='<div class="install-result success">Installation Complete! System is ready to fetch data.</div>';
+          installBtn.style.display='none';
+          document.getElementById('closeInstallBtn').style.display='';
+          document.getElementById('fetchAfterInstall').style.display='';
+          SETUP_STEPS.forEach(s=>{
+            const el=document.getElementById('step-'+s.id);
+            if(el){el.querySelector('.step-icon').className='step-icon done';el.querySelector('.step-icon').innerHTML='&#10003;';}
+          });
+          return;
+        }
+        if(sj.error){
+          resultDiv.innerHTML='<div class="install-result fail">Error: '+sj.error+'</div>';
+          installBtn.disabled=false;installBtn.textContent='Retry Install';
+          return;
+        }
+        setTimeout(poll,2000);
+      }catch(e){setTimeout(poll,2000);}
+    };
+    setTimeout(poll,2000);
+  }catch(e){
+    resultDiv.innerHTML='<div class="install-result fail">Failed: '+e.message+'</div>';
+    installBtn.disabled=false;installBtn.textContent='Retry Install';
+  }
+}
+
+function updateInstallStep(msg){
+  const steps=[
+    {id:'nodeModules',match:'npm install'},
+    {id:'playwright',match:'Playwright'},
+    {id:'browsers',match:'Chromium'},
+    {id:'env',match:'.env'},
+  ];
+  for(const s of steps){
+    if(msg.toLowerCase().includes(s.match.toLowerCase())){
+      const el=document.getElementById('step-'+s.id);
+      if(el){
+        const icon=el.querySelector('.step-icon');
+        if(msg.includes('COMPLETE'))icon.className='step-icon done';
+        else if(msg.includes('ERROR'))icon.className='step-icon error';
+        else{icon.className='step-icon running';icon.innerHTML='...';}
+      }
+    }
+  }
+}
+
+const today=new Date();
+const ds=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+document.getElementById('fetchFrom').value=ds;
+document.getElementById('fetchTo').value=ds;
+
+loadData();
+</script>
+</body>
+</html>

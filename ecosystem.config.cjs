@@ -238,6 +238,25 @@ module.exports = {
       }
     },
     {
+      name: 'kia-safety-cron-job',
+      script: './src/cron/kia-safety-scheduler.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      watch: false,
+      cron_restart: '0 10 * * *',
+      max_memory_restart: '1G',
+      time: true,
+      merge_logs: true,
+      out_file: './logs/pm2-kia-safety-out.log',
+      error_file: './logs/pm2-kia-safety-error.log',
+      env: {
+        NODE_ENV: 'production',
+        LOG_SERVICE_NAME: 'kia-safety-cron-job',
+        KIA_SAFETY_DAILY_MODE_ENABLED: 'true'
+      }
+    },
+    {
       name: 'kia-otp-webhook',
       script: './src/otp/webhook-server.js',
       instances: 1,

@@ -290,7 +290,17 @@ export const config = {
   amPlatinumRepairOrderStartDate: env('AM_PLATINUM_REPAIR_ORDER_START_DATE', env('HMIL_REPAIR_ORDER_START_DATE', '2026-05-01')),
   amPlatinumRepairOrderEndDate: env('AM_PLATINUM_REPAIR_ORDER_END_DATE', env('HMIL_REPAIR_ORDER_END_DATE', '2026-05-31')),
   amPlatinumRepairOrderPostSearchDelayMs: envDelayMs('AM_PLATINUM_REPAIR_ORDER_POST_SEARCH_DELAY_MS', envInt('HMIL_REPAIR_ORDER_POST_SEARCH_DELAY_MS', 0)),
-  amPlatinumHistoricalOtpProvider: env('AM_PLATINUM_HISTORICAL_OTP_PROVIDER', 'manual')
+  amPlatinumHistoricalOtpProvider: env('AM_PLATINUM_HISTORICAL_OTP_PROVIDER', 'manual'),
+  kiaSafetyLoginUrl: env('KIA_SAFETY_LOGIN_URL', 'https://www.kiasafety.com/VISOF/Login.aspx'),
+  kiaSafetyUrl: env('KIA_SAFETY_URL', 'https://www.kiasafety.com/VISOF/Report/VSPolicy_SummaryReport.aspx'),
+  kiaSafetyUserId: env('KIA_SAFETY_USER_ID', 'JK40202'),
+  kiaSafetyPassword: env('KIA_SAFETY_PASSWORD', ''),
+  kiaSafetySessionStatePath: path.resolve(rootDir, env('KIA_SAFETY_SESSION_STATE_PATH', './storage/kia-safety-state.json')),
+  kiaSafetySheetName: env('KIA_SAFETY_SHEET_NAME', 'kia_insurance'),
+  kiaSafetyHistoricalBackfillEnabled: envBool('KIA_SAFETY_HISTORICAL_BACKFILL_ENABLED', false),
+  kiaSafetyBackfillStartDate: env('KIA_SAFETY_BACKFILL_START_DATE', '2025-01-01'),
+  kiaSafetyBackfillEndDate: env('KIA_SAFETY_BACKFILL_END_DATE', ''),
+  kiaSafetyDailyModeEnabled: envBool('KIA_SAFETY_DAILY_MODE_ENABLED', true)
 };
 
 export function requireSecret(name, value) {

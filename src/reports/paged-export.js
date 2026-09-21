@@ -491,6 +491,11 @@ export async function cleanupReportExportDir(exportDir) {
     throw new Error(`Refusing to delete export directory outside report chunks root: ${resolvedExportDir}`);
   }
 
+  if (process.env.KIA_KEEP_EXPORT_FILES === '1') {
+    logger.info('KIA_KEEP_EXPORT_FILES=1 set; skipping deletion of export files', { exportDir: resolvedExportDir });
+    return;
+  }
+
   await fs.rm(resolvedExportDir, { recursive: true, force: true });
   logger.info('Deleted local report export files after successful Supabase upload', {
     exportDir: resolvedExportDir

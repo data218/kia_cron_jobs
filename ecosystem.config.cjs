@@ -427,6 +427,22 @@ module.exports = {
     // because it drives the same HMIL login and the active dealer is server-side state —
     // two automations switching dealers at once would cross-contaminate each other.
     {
+      name: 'platinum-booking-report',
+      script: './scripts/run-hyundai-booking-report.js',
+      args: '--accounts=am-platinum --headless',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      cron_restart: '15 17 * * *',
+      watch: false,
+      out_file: './logs/pm2-platinum-booking-report-out.log',
+      error_file: './logs/pm2-platinum-booking-report-error.log',
+      env: {
+        NODE_ENV: 'production',
+        TZ: 'Asia/Kolkata'
+      }
+    },
+    {
       name: 'hyundai-booking-report',
       script: './scripts/run-hyundai-booking-report.js',
       args: '--accounts=hmil-booking --headless',

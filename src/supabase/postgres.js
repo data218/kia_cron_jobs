@@ -41,6 +41,7 @@ export async function withPostgresClient(fn) {
 
   await client.connect();
   try {
+    await client.query('SET default_transaction_read_only = off; SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE;').catch(() => {});
     return await fn(client);
   } finally {
     await client.end().catch(() => {});

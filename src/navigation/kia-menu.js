@@ -480,9 +480,8 @@ export async function openDealerChangePage(page) {
   const dealerChangeLink = page.locator([
     'li.nav_cmm a.menuItem[data-viewid="VIEW-D-00046"]',
     'li.nav_cmm a.menuItem[data-url="/cmm/cmmh/selectDealerChangeMain.dms"]',
-    'li.nav_cmm a.menuItem[data-title="Dealer Change"]',
-    'li.nav_cmm a.menuItem:has-text("Dealer Change")'
-  ].join(',')).first();
+    'li.nav_cmm a.menuItem[data-title="Dealer Change"]'
+  ].join(',')).filter({ hasNotText: 'Request' }).first();
 
   if (!await personalInfoLink.isVisible({ timeout: 2000 }).catch(() => false)) {
     const masterMenuButton = page.locator('li.nav_cmm > a').first();

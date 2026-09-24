@@ -483,28 +483,22 @@ export async function changeActiveDealerForDms(page, dealerCode, {
 
   if (isHmilDms(homeUrl)) {
     const hmilHomeUrl = `${expectedOrigin}/cmm/cmmd/selectHome.dms`;
-    if (!isHmilHomeOrDealerChangeUrl(currentUrl)) {
-      logger.info('Resetting HMIL session to home before dealer change', {
-        fromUrl: currentUrl,
-        hmilHomeUrl
-      });
-      await page.goto(hmilHomeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-    }
+    logger.info('Navigating to HMIL home before dealer change', {
+      fromUrl: page.url(),
+      hmilHomeUrl
+    });
+    await page.goto(hmilHomeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
+    await sleep(1000);
 
     try {
-      await openHmilDealerChangePageDirect(page, expectedOrigin);
-    } catch (directError) {
-      logger.warn('HMIL direct dealer change URL failed, falling back to menu navigation', {
+      await openDealerChangePage(page);
+    } catch (menuError) {
+      logger.warn('HMIL menu dealer change navigation failed, trying direct URL', {
         dealerCode: normalizedDealerCode,
-        error: directError.message
+        error: menuError.message
       });
-      await openDealerChangePage(page).catch(async error => {
-        logger.warn(`HMIL Dealer Change navigation failed from current page; retrying from home`, {
-          dealerCode: normalizedDealerCode,
-          currentUrl: page.url(),
-          error: error.message
-        });
+      await openHmilDealerChangePageDirect(page, expectedOrigin).catch(async () => {
         await page.goto(hmilHomeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
         await openDealerChangePage(page);
       });

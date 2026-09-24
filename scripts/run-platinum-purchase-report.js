@@ -42,7 +42,7 @@ async function ensureSession(sessionRef, account) {
 }
 
 async function main() {
-  const NO_DEALER_SWITCH = !process.argv.includes('--switch-dealers');
+  const NO_DEALER_SWITCH = process.argv.includes('--no-switch-dealers');
   const accountGroups = NO_DEALER_SWITCH
     ? [{ accountKey: 'am-platinum', dealerCodes: ['N6250'] }]
     : [

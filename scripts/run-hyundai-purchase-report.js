@@ -43,7 +43,7 @@ async function ensureSession(sessionRef, account) {
 
 async function main() {
   const account = createGdmsAccountProfile('hmil-secondary');
-  const NO_DEALER_SWITCH = !process.argv.includes('--switch-dealers');
+  const NO_DEALER_SWITCH = process.argv.includes('--no-switch-dealers');
   const dealerCodes = NO_DEALER_SWITCH
     ? [DEALER_OVERRIDE ? DEALER_OVERRIDE[0] : (account.dealerCodes[0] || 'N5216')]
     : (DEALER_OVERRIDE ?? account.dealerCodes);

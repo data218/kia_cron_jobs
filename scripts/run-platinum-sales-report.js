@@ -49,8 +49,7 @@ async function main() {
   // Set explicitly: .env carries HEADLESS=true and dotenv runs during the imports above,
   // so anything derived from it would silently be headless.
   account.headless = RUN_HEADLESS;
-
-  const NO_DEALER_SWITCH = !process.argv.includes('--switch-dealers');
+  const NO_DEALER_SWITCH = process.argv.includes('--no-switch-dealers');
   const dealerCodes = NO_DEALER_SWITCH
     ? [DEALER_OVERRIDE ? DEALER_OVERRIDE[0] : (account.dealerCode || 'N6250')]
     : (DEALER_OVERRIDE ?? account.dealerCodes);

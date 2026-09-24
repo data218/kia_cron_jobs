@@ -31,7 +31,7 @@ if (!START_DATE) {
 
 const END_DATE_OVERRIDE = flag('end') || null;
 const RUN_HEADLESS = process.argv.includes('--headless');
-const NO_DEALER_SWITCH = !process.argv.includes('--switch-dealers');
+const NO_DEALER_SWITCH = process.argv.includes('--no-switch-dealers');
 const DEALER_CODES = NO_DEALER_SWITCH
   ? [flag('dealers') ? flag('dealers').split(',')[0].trim().toUpperCase() : 'N5216']
   : (flag('dealers') || 'N5216,N6844,N6845,N6846,N6847,N6848')

@@ -12,6 +12,7 @@ export const NON_BUSINESS_HASH_COLUMNS = new Set([
   'serial_no',
   'sl_no',
   'no',
+  'delivery_in_days',
   'source_login_id'
 ]);
 

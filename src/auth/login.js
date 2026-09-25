@@ -114,6 +114,26 @@ export async function loginToKiaDms(sessionOrOptions = {}) {
       logger.info('KIA DMS login page navigation completed', { url: page.url() });
     }
 
+    page.on('dialog', async dialog => {
+      logger.warn('KIA DMS alert dialog appeared during login', {
+        message: dialog.message(),
+        type: dialog.type()
+      });
+      await dialog.accept().catch(() => {});
+    });
+
+    page.on('response', async response => {
+      if (response.url().includes('selectLoginAction.json')) {
+        try {
+          const body = await response.text();
+          logger.info('KIA DMS selectLoginAction response', {
+            status: response.status(),
+            body: body.slice(0, 500)
+          });
+        } catch {}
+      }
+    });
+
     if (config.pageReadyDelayMs > 0) {
       logger.info('Login page loaded; waiting briefly before entering credentials', {
         delayMs: config.pageReadyDelayMs

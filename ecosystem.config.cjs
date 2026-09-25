@@ -579,6 +579,22 @@ module.exports = {
         NODE_ENV: 'production',
         TZ: 'Asia/Kolkata'
       }
+    },
+    {
+      name: 'daily-reports-summary-email',
+      script: './scripts/daily-reports-summary-email.js',
+      args: '--once',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      cron_restart: '00 21 * * *',
+      watch: false,
+      out_file: './logs/pm2-daily-summary-email-out.log',
+      error_file: './logs/pm2-daily-summary-email-error.log',
+      env: {
+        NODE_ENV: 'production',
+        TZ: 'Asia/Kolkata'
+      }
     }
   ]
 };

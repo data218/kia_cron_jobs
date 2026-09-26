@@ -65,13 +65,41 @@ async function waitForOtpInputOrHome(page, timeoutMs) {
   throw new Error(`Could not find visible KIA OTP input or logged-in home within ${timeoutMs}ms`);
 }
 
+async function detectKiaLoginError(page) {
+  const text = await page.locator('#errorMessageContext, .text_warning, body').allInnerTexts().then(t => t.join(' ')).catch(() => '');
+  if (/password\s+expired/i.test(text)) {
+    return `Password expired for Kia DMS user ${config.userId}. Portal forces a password reset before login can succeed.`;
+  }
+  if (/account\s+is\s+locked/i.test(text)) {
+    return `Account is locked for Kia DMS user ${config.userId}. Please reset password on portal.`;
+  }
+  if (/otp\s+(?:number\s+)?does\s+not\s+match|invalid\s+otp/i.test(text)) {
+    return 'OTP Number does not match.';
+  }
+  if (/invalid\s+(?:user\s*id|password)|check\s+user\s*id/i.test(text)) {
+    return 'Please check User ID or Password.';
+  }
+  return null;
+}
+
 async function ensureKiaHome(page) {
+  const loginErr = await detectKiaLoginError(page);
+  if (loginErr) {
+    logger.error('KIA DMS login failed with portal error', { reason: loginErr, userId: config.userId });
+    throw new Error(loginErr);
+  }
+
   const homeMenuVisible = await page.locator('li.nav_sal, li.nav_ser_mis, li.nav_ser, li.nav_cmm, #gnb, .gnb').first()
-    .waitFor({ state: 'visible', timeout: 30000 })
+    .waitFor({ state: 'visible', timeout: 15000 })
     .then(() => true)
     .catch(() => false);
 
   if (!homeMenuVisible || /selectLoginAction\.json/i.test(page.url())) {
+    const errorAfterWait = await detectKiaLoginError(page);
+    if (errorAfterWait) {
+      throw new Error(errorAfterWait);
+    }
+
     logger.warn('KIA DMS home menu not visible after login step; opening home page directly', {
       currentUrl: page.url()
     });
@@ -79,6 +107,12 @@ async function ensureKiaHome(page) {
       waitUntil: 'domcontentloaded',
       timeout: config.loginTimeoutMs
     });
+
+    const finalErr = await detectKiaLoginError(page);
+    if (finalErr) {
+      throw new Error(finalErr);
+    }
+
     await page.locator('li.nav_sal, li.nav_ser_mis, li.nav_ser, li.nav_cmm, #gnb, .gnb').first()
       .waitFor({ state: 'visible', timeout: config.loginTimeoutMs });
   }
@@ -128,7 +162,7 @@ export async function loginToKiaDms(sessionOrOptions = {}) {
           const body = await response.text();
           logger.info('KIA DMS selectLoginAction response', {
             status: response.status(),
-            body: body.slice(0, 500)
+            body: body.slice(0, 2000)
           });
         } catch {}
       }
@@ -169,10 +203,12 @@ export async function loginToKiaDms(sessionOrOptions = {}) {
     });
     const otp = await getOtp({ notBefore: otpRequestedAt, purpose: 'kia' });
     await otpInput.fill(otp);
+    await sleep(500);
 
     logger.info('Submitting OTP');
     const submitButton = await firstVisible(page, selectors.submit, 5000);
     await clickAndWait(page, submitButton, config.loginTimeoutMs);
+    await sleep(2000);
 
     await ensureKiaHome(page);
 

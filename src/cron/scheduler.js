@@ -371,12 +371,6 @@ async function runKiaDmsJobUnlocked(modeInput = 'configured') {
   const requestedModes = normalizeModeList(modeInput);
   const initialMode = requestedModes[0] || 'configured';
 
-  if (running) {
-    appendQueuedModes(requestedModes, 'another KIA scheduler job is already running');
-    return;
-  }
-
-  running = true;
   let session;
   const startedAt = Date.now();
   let jobFailed = false;
@@ -621,6 +615,7 @@ export async function runKiaDmsJob(modeInput = 'configured') {
     appendQueuedModes(requestedModes, 'another KIA scheduler job is already running');
     return;
   }
+  running = true;
 
   // Use a separate lock file for RSA reports to prevent scheduling conflicts with regular Kia reports
   const isRsaOnly = requestedModes.length === 1 && requestedModes[0] === 'rsa-report';
@@ -644,6 +639,7 @@ export async function runKiaDmsJob(modeInput = 'configured') {
       }
     );
   } catch (error) {
+    running = false;
     if (error.message?.includes('Timed out waiting for filesystem lock')) {
       if (requestedModes.includes('rsa-report')) {
         logger.warn('RSA scheduler could not acquire filesystem lock; will retry on the next scheduled run', {

@@ -868,7 +868,7 @@ function prepareBatchRows(tableName, columns, batch, uploadedAt, stats, usesBusi
   });
 }
 
-async function filterExistingFullRowDuplicates(client, tableName, preparedRows) {
+async function filterExistingFullRowDuplicates(client, tableName, preparedRows, uploadedAt) {
   const hashes = [...new Set(
     preparedRows
       .map(row => row.fullRowHash)
@@ -897,6 +897,17 @@ async function filterExistingFullRowDuplicates(client, tableName, preparedRows) 
 
   if (!existing.size) {
     return { rows: preparedRows, skippedCount: 0 };
+  }
+
+  if (uploadedAt) {
+    const existingHashes = [...existing];
+    for (let index = 0; index < existingHashes.length; index += 1000) {
+      const batch = existingHashes.slice(index, index + 1000);
+      await client.query(
+        `update ${table} set uploaded_at = $1::timestamptz where full_row_hash = any($2::text[])`,
+        [uploadedAt, batch]
+      );
+    }
   }
 
   const rows = [];
@@ -1013,7 +1024,7 @@ async function ensureExactRowUniqueIndex(client, tableName) {
   `);
 }
 
-async function upsertPreparedRows(client, tableName, columns, preparedRows, usesBusinessKey, usesExactRowDedupe, conflictTarget) {
+async function upsertPreparedRows(client, tableName, columns, preparedRows, usesBusinessKey, usesExactRowDedupe, conflictTarget, uploadedAt) {
   if (!preparedRows.length) {
     return { insertedCount: 0, updatedCount: 0, skippedExistingExactDuplicateCount: 0 };
   }
@@ -1022,7 +1033,7 @@ async function upsertPreparedRows(client, tableName, columns, preparedRows, uses
     rows: filteredRows,
     skippedCount: skippedExistingExactDuplicateCount
   } = usesExactRowDedupe
-    ? await filterExistingFullRowDuplicates(client, tableName, preparedRows)
+    ? await filterExistingFullRowDuplicates(client, tableName, preparedRows, uploadedAt)
     : { rows: preparedRows, skippedCount: 0 };
 
   if (!filteredRows.length) {
@@ -1129,7 +1140,8 @@ async function insertBatch(client, tableName, columns, batch, uploadedAt, stats)
       preparedRows,
       false,
       usesExactRowDedupe,
-      conflictTarget
+      conflictTarget,
+      uploadedAt
     );
   }
 
@@ -1142,7 +1154,8 @@ async function insertBatch(client, tableName, columns, batch, uploadedAt, stats)
     withBusinessKey,
     true,
     usesExactRowDedupe,
-    'business_identity_key'
+    'business_identity_key',
+    uploadedAt
   );
   const rowHashResult = await upsertPreparedRows(
     client,
@@ -1151,7 +1164,8 @@ async function insertBatch(client, tableName, columns, batch, uploadedAt, stats)
     withoutBusinessKey,
     true,
     usesExactRowDedupe,
-    'row_hash'
+    'row_hash',
+    uploadedAt
   );
 
   return {
